@@ -109,7 +109,7 @@ minecraft-p2p-vc/
 | `yakvc-ffi` | cdylib | client | `extern "C"` exports + `cbindgen` header, handle management, panic barrier, error codes, event queue encoding |
 | `yakvc-cli` | bin | client, shared | Dev and diagnostics commands (see yakvc-cli section) |
 | `yakvc-server` | bin + lib | shared | Rendezvous protocol, Mojang verification, ticket signing, matcher, embedded `iroh-relay`, metrics |
-| `yakvc-testkit` | lib (dev) | server, client | Spawns a server and simulated clients in one process for integration tests |
+| `yakvc-testkit` | lib (dev) | server, client | Spawns a server and simulated clients in one process for integration tests, with optional per-peer network impairment |
 | `xtask` | bin (root) | none | `cargo xtask natives`, `header`, `dist`, `server-image`, `dev`: cross-builds `yakvc-ffi`, regenerates its C header, stages libraries into the mod, runs Gradle |
 
 **Dependency graph** (arrow = "depends on"; dashed = dev-only crate or runtime load)
@@ -301,7 +301,8 @@ Voice is 48 kHz mono Opus in 20 ms frames, sent as unreliable QUIC datagrams on 
 
 - `join` reads stdin commands (`pos 10 64 -3`, `ptt on`, `mute <uuid>`) so a test script can move fake players around.
 - Output is human-readable by default, with `--json` for scripted assertions in CI.
-- `bot` uses `yakvc-client`'s `sim` module (behind a `sim` feature: fake game inputs, WAV source, null sink). `yakvc-testkit` builds on the same module, so load tests and integration tests can't drift apart, and the CLI never depends on the server crate.
+- `bot` uses `yakvc-client`'s `sim` module (behind a `sim` feature: fake game inputs, WAV source, null sink, network impairment).
+- **Network impairment:** in-process tests run over perfect loopback, which would never exercise the jitter buffer, FEC or PLC. The `sim` module can wrap a peer's datagram path with seeded, deterministic loss (uniform or bursty), added delay with jitter, reordering and duplication. These are applied to voice datagrams after receipt, before the jitter buffer, so they need no hook into Iroh's transport. `join` and `bot` expose them as `--loss`, `--delay`, `--jitter` and `--reorder`, and testkit tests set them per peer. The null sink records the decoded output, so tests can assert on concealed-frame counts and on playout delay staying within the jitter-buffer bounds. `yakvc-testkit` builds on the same module, so load tests and integration tests can't drift apart, and the CLI never depends on the server crate.
 
 ## Fabric mod and FFM bridge
 
@@ -457,7 +458,7 @@ Build order runs Rust-first: every networking and audio milestone is provable wi
 3. **M2 Direct call.** Datagram header in `shared`, voice send/receive in `client`, `cli call listen/dial`, `cli net report`.
    - Exit: two machines on different home networks talk; with UDP blocked the call continues over the relay.
 4. **M3 Rendezvous (dev auth).** Server protocol, matcher, tickets; client rendezvous session; `cli join` and `cli bot`; `yakvc-testkit` integration tests.
-   - Exit: three CLI clients with overlapping fake tab lists connect only to mutual matches, and gain/pan follow `pos` commands.
+   - Exit: three CLI clients with overlapping fake tab lists connect only to mutual matches, and gain/pan follow `pos` commands. A testkit test with 5% bursty loss and 30 ms of jitter plays continuous audio: every lost frame is covered by FEC or PLC, and playout delay stays within the jitter-buffer bounds.
 5. **M4 Mod integration.** Fabric project, `NativeLoader`, `yakvc-ffi` + `NativeBridge` (FFM), `GameStateFeeder`, push-to-talk, dev mode.
    - Exit: two dev clients on a local vanilla server hear each other spatially.
 6. **M5 Real auth.** Mojang challenge on server and client, `SessionJoiner`, ticket cache.
