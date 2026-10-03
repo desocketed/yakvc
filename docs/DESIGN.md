@@ -1,6 +1,6 @@
 # Yak VC — Design
 
-As of 2026-10-03 (revised after review the same day). This file is the source of truth; the earlier hosted copy (https://claude.ai/code/artifact/3cb80f7d-8b37-49e3-a651-cee86022d28b) predates the revision.
+As of 2026-10-03, with all open questions resolved. This file is the source of truth; the earlier hosted copy (https://claude.ai/code/artifact/3cb80f7d-8b37-49e3-a651-cee86022d28b) predates both review rounds and is out of date.
 
 ## Overview
 
@@ -202,7 +202,7 @@ Voice is 48 kHz mono Opus in 20 ms frames, sent as unreliable QUIC datagrams on 
 | Sample rate / channels | 48 kHz, mono capture; stereo output |
 | Frame | 20 ms (960 samples) |
 | Codec | Opus, `VOIP` application, 24 kbps (16–64), in-band FEC on, DTX on |
-| Voice range | 48 blocks; full volume within 4 blocks |
+| Voice range | 48 blocks; full volume within 4 blocks. Per player; between two players the shorter range applies |
 | Jitter buffer | adaptive, target 40 ms, bounds 20–200 ms |
 | Activation | push-to-talk (default) or VAD with 300 ms hangover |
 
@@ -218,7 +218,7 @@ Voice is 48 kHz mono Opus in 20 ms frames, sent as unreliable QUIC datagrams on 
 1. Datagrams from unverified connections are dropped. Verified ones go into a per-peer jitter buffer ordered by `seq`.
 2. A mixer thread pulls one frame per peer every 20 ms: decode, use Opus FEC if the next packet is present, else PLC, and reset the stream after `end_of_talk`.
 3. **Spatialization:** Java pushes the listener pose (position, yaw, pitch) and positions of tracked players by UUID every tick (20 Hz), and the mixer interpolates between snapshots. Players whose tab-list game mode is spectator are left out of this set (vanilla does send spectator player entities to other clients and only hides them client-side), so the "no tracked entity" rule below covers them in both directions. While the local player is a spectator, the engine neither sends nor plays audio. Gain = 1 within 4 blocks, linear to 0 at the voice range. Equal-power stereo pan from azimuth relative to listener yaw, with mild attenuation for sources behind the listener.
-4. **Range is enforced by the receiver:** if the speaker has no tracked entity (out of tracking range, other backend, vanished) or is beyond range, the frame is discarded. The sender-side filter only saves bandwidth.
+4. **Range is enforced by the receiver:** if the speaker has no tracked entity (out of tracking range, other backend, vanished) or is beyond range, the frame is discarded. The sender-side filter only saves bandwidth. Range is a per-player setting, and the sender filters by its own range while the receiver filters by its own, so between two players the shorter range applies. A listener can never hear further than the speaker allows. The settings screen says so next to the range slider.
 5. Per-peer volume and mute, master volume, the game's Voice/Speech slider and a soft limiter are applied, then the result is written to the `cpal` output ring. Output stays on `cpal` with our own panning in v1; routing PCM into Minecraft's OpenAL (for HRTF) would mean a 50 Hz per-peer stream across FFI and is post-v1. The default output device is the one whose name best matches Minecraft's selected sound device, falling back to the system default.
 
 **Connection lifecycle**
@@ -226,7 +226,7 @@ Voice is 48 kHz mono Opus in 20 ms frames, sent as unreliable QUIC datagrams on 
 - On `PeerAvailable` the engine connects eagerly, tracked peers nearest first, then untracked ones, up to 64 open peer connections. Hole-punching takes up to a few seconds, so connecting only on approach would clip the first words. This matters because Spigot/Paper default to a 48-block player tracking range, so a peer often becomes tracked only at the edge of voice range.
 - Idle connections cost only QUIC keepalives, so matched peers stay connected whether or not they are tracked; closing untracked peers would undo the eager connect. Connections close on `PeerGone`. When the cap is reached, the peer that has been untracked longest (or is farthest) is evicted, and it is reconnected when it becomes tracked again.
 - Iroh picks the path (direct UDP vs relay) and migrates transparently (multipath since 1.0). The engine reports the selected path per peer from `Connection::paths()` for the UI and the CLI.
-- At most 4 peers may be on a relay-only path at once, chosen as the nearest tracked ones. Any other relay-only peer is suspended (no datagrams) and shown as `relay_full` until a slot frees up or a direct path appears. Direct peers are not limited by this.
+- Relayed sends share a per-client budget of 512 kbps (estimated wire cost, relay framing included). Recipients on a relay-only path are served nearest-first. If they don't all fit at 24 kbps (about 8 peers), the encoder steps down to 16 kbps (about 11 peers), using the same step-down as above 16 recipients. Because there is one encoder, direct peers get the lower bitrate too. Relayed recipients that still don't fit get no datagrams and show as `relay_full` until budget frees up or a direct path appears. Direct peers never count against the budget. This keeps `relay_only` users and players behind strict NATs usable in a crowd while keeping relay cost per user bounded.
 - The endpoint is built with `Builder::empty()` plus our own `RelayMode::Custom` relay map. Iroh's default n0 DNS/pkarr address lookup and n0 relays are not used, because peer addresses come from the rendezvous and publishing them to a third party would leak IPs. `relay_only` uses `Builder::clear_ip_transports()`.
 
 **Threads**
@@ -271,7 +271,7 @@ Voice is 48 kHz mono Opus in 20 ms frames, sent as unreliable QUIC datagrams on 
 - At most 2,048 pair tokens per session and 10 pair updates per second.
 - 5 s timeout on Mojang calls with one retry; auth fails closed on Mojang outage (cached tickets keep working).
 - On a Mojang HTTP 429 the server stops calling `hasJoined` until Mojang's `Retry-After` (or 10 s) has passed and answers pending auths with `RetryAfter { secs }`. Clients back off exponentially (10 s doubling to 10 min, with jitter) and keep using any unexpired cached ticket meanwhile.
-- Relay: each client may relay through at most 4 peers at a time (enforced by the client), backed by a per-client byte-rate limit in `iroh-relay` of 48 KB/s (about 4 streams at 64 kbps, plus headroom). The server also tracks monthly relay transfer against a configured budget and exposes it as a metric.
+- Relay: each client keeps its relayed sends within a 512 kbps budget (see connection lifecycle). The server backs this with a per-client send-rate limit in `iroh-relay` of 80 KB/s (640 kbps, leaving headroom for control traffic and bursts). The server also tracks monthly relay transfer against a configured budget and exposes it as a metric.
 
 **Dev mode**
 
@@ -280,7 +280,7 @@ Voice is 48 kHz mono Opus in 20 ms frames, sent as unreliable QUIC datagrams on 
 **Deployment**
 
 - Docker image + example `config.toml` + systemd unit in `deploy/`. For v1 the project maintainer hosts the default rendezvous and relay on a single small VPS with a public IP in US East, which gives the best average latency to both North American and European players.
-- Relay bandwidth is the main cost: about 55–60 kbps in and the same out per relayed voice stream while talking. v1 is planned around the 1–5 TB/month included with a typical VPS. 1 TB/month of outbound transfer covers about 500 relayed streams around the clock if each talks 10% of the time. Metrics track the relayed share and the monthly total so capacity can be planned. The per-client relay cap (see limits) keeps any one user's cost bounded.
+- Relay bandwidth is the main cost: about 55–60 kbps in and the same out per relayed voice stream while talking. v1 is planned around the 1–5 TB/month included with a typical VPS. 1 TB/month of outbound transfer covers about 500 relayed streams around the clock if each talks 10% of the time. Metrics track the relayed share and the monthly total so capacity can be planned. The per-client relay budget (see limits) keeps any one user's cost bounded.
 - Clients ship with the default server's EndpointId and relay URL. Self-hosters change two config values and add their issuer key to `trusted_issuers`.
 - Single instance in v1. If needed later, add regions or shards that share the issuer key, with a shared pub/sub for cross-instance matches.
 
@@ -431,7 +431,7 @@ The design rule is **you only send voice to, and only play voice from, players y
 | Eavesdropping in transit | QUIC/TLS 1.3 end to end between peers; relays forward ciphertext only |
 | Remote eavesdropper (not on the server) | Discovery needs mutual tab-list presence; the sender only transmits to peers with a tracked entity in range |
 | Vanished staff / spectators listening | No tracked entity means no audio is sent to them or played from them. Peers whose tab-list game mode is spectator are excluded both ways. |
-| Peers learn your IP address | Inherent to direct P2P. Because matched peers connect eagerly, every Yak VC user on the same server (or network, with a global tab list) learns your IP, not just nearby players. The README and settings screen say so plainly. A `relay_only` setting (opt-in, off by default) removes Iroh's IP transports (`Builder::clear_ip_transports()`), so no direct addresses are advertised and all traffic goes through the relay. |
+| Peers learn your IP address | Inherent to direct P2P. Because matched peers connect eagerly, every Yak VC user on the same server (or network, with a global tab list) learns your IP, not just nearby players. The README and settings screen say so plainly. A `relay_only` setting (opt-in, off by default) removes Iroh's IP transports (`Builder::clear_ip_transports()`), so no direct addresses are advertised and all traffic goes through the relay. Under the relay budget, that means up to about 11 nearby listeners at once. |
 | Rendezvous learns who plays with whom | Only co-located mod users and their IPs; other tab-list entries stay hashed. No logs of pairs are kept; documented in a privacy note. |
 | Harassment | Per-player mute and volume persisted by UUID; players blocked in vanilla Social Interactions are muted both ways (`mute_blocked_players`, default on); "only hear friends" mode (a UUID allow-list in the client config); deafen. Mutes also tell the speaker to stop sending (`ReceiveState`). |
 | Flooding a peer | Per-peer cap of 100 datagrams/s and 400 B/frame; overflow drops packets, and sustained abuse closes the connection with a 10-minute ban |
@@ -475,7 +475,7 @@ Each item below needs an answer before the milestone named in brackets; none of 
 - [x] **Project name:** Yak VC, identifier `yakvc`. Nothing is published to crates.io. The `yakvc` and `yak-vc` Modrinth slugs were free on 2026-10-03; CurseForge still needs checking before M6. The Java package `dev.yakvc` stays a placeholder until there is a domain to root it in. [M0]
 - [x] **License:** `MIT OR Apache-2.0` for the mod, crates and server, the usual Rust dual license. The SPDX expression goes in `[workspace.package]` and `fabric.mod.json`. Dependencies must stay compatible (e.g. libopus and `nnnoiseless` are BSD-3-Clause, Iroh is MIT/Apache); `cargo deny check licenses` enforces this in CI. [M0]
 - [x] **Crate split:** keep all seven. `ffi` must be its own cdylib, `testkit` depends on both `server` and `client`, and a separate `audio` crate enforces the rule that `net` knows nothing about audio, at little cost. [M0]
-- [x] **Iroh version:** pin `iroh` 1.3 (current stable, 2026-09-28; 1.0 shipped June 2026). Confirmed against its docs: `Connection::send_datagram` / `read_datagram` / `max_datagram_size`, `remote_id()`, path reporting via `paths()`, relay-only via `Builder::clear_ip_transports()`, and default n0 address lookup removable with `Builder::empty()` / `clear_address_lookup()`. Still to check at M2: which `iroh-relay` server features (QUIC address discovery, ACME, relay access control) are on in the pinned version. [M2]
+- [x] **Iroh version:** pin `iroh` 1.3 (current stable, 2026-09-28; 1.0 shipped June 2026). Confirmed against its docs: `Connection::send_datagram` / `read_datagram` / `max_datagram_size`, `remote_id()`, path reporting via `paths()`, relay-only via `Builder::clear_ip_transports()`, and default n0 address lookup removable with `Builder::empty()` / `clear_address_lookup()`. Still to check at M2: which `iroh-relay` server features (QUIC address discovery, ACME, relay access control, per-client rate limits) are on in the pinned version. [M2]
 - [x] **Separate ticket-signing key:** yes. Tickets are signed by an issuer key distinct from the rendezvous endpoint key, so several instances can share one issuer and either key can rotate on its own. [M3]
 - [x] **Target Minecraft version:** Minecraft 26.3 on Java 25. Fabric uses Mojang mappings there, and Fabric API names match them (e.g. `KeyMappingHelper`). [M4]
 - [x] **JNI or FFM for the bridge:** FFM, over a `cbindgen`-generated C ABI (see the Fabric mod section). [M4]
@@ -484,4 +484,4 @@ Each item below needs an answer before the milestone named in brackets; none of 
 - [x] **Default keybinds:** push-to-talk on `V`; mute, deafen and voice menu unbound. Re-check against popular modpacks before M6. [M4]
 - [x] **Mojang `hasJoined` limits:** third-party reports put `sessionserver` at about 400 requests per 10 s per source IP (HTTP 429 above that); Mojang does not document it officially. Tickets last 24 h and are renewed at a random point in the last 2 h, so even 100k active users average about 1–1.5 auths/s. A burst after mass expiry or a client bug is handled by the 429 policy in the server limits (server pause + `RetryAfter`, client exponential backoff). Still measure real limits at M5. [M5]
 - [x] **Opt-out mechanism:** MOTD marker only in v1. A rendezvous denylist would require sending server addresses to the rendezvous, which the privacy model avoids. If owners object to a visible marker, add a DNS TXT record (`_yakvc.<host>`) that the client checks locally. [M6]
-- [x] **Hosting:** the project maintainer runs the default rendezvous and relay on a single VPS in US East, planned around the 1–5 TB/month a VPS includes. Relay cost is bounded by a 4-peer relay cap per client; resize from relayed-share metrics during beta. [M6]
+- [x] **Hosting:** the project maintainer runs the default rendezvous and relay on a single VPS in US East, planned around the 1–5 TB/month a VPS includes. Relay cost is bounded by a 512 kbps relayed-send budget per client; resize from relayed-share metrics during beta. [M6]
