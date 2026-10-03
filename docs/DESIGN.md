@@ -1,10 +1,21 @@
 # Yak VC — Design
 
-As of 2026-10-03, with all open questions resolved. This file is the source of truth; the earlier hosted copy (https://claude.ai/code/artifact/3cb80f7d-8b37-49e3-a651-cee86022d28b) predates both review rounds and is out of date.
+As of 2026-10-03. This file is the source of truth; the earlier hosted copy (https://claude.ai/code/artifact/3cb80f7d-8b37-49e3-a651-cee86022d28b) predates both design reviews and is out of date. Checks that can only be done later are listed as tasks under the milestone that needs them.
 
 ## Overview
 
 Yak VC is a client-only Fabric mod that gives players on any online-mode vanilla server proximity voice chat, with audio flowing peer-to-peer over Iroh. A small optional public service (`yakvc-server`) handles discovery, identity attestation and relay fallback; no Minecraft server mod or plugin is ever required. `yakvc` is the identifier form of the name, used for crate prefixes, the Fabric mod ID, the Java package, protocol IDs and the container image.
+
+**Baseline**
+
+| Area | Decision |
+| --- | --- |
+| Game | Minecraft 26.3 on Java 25, Fabric Loader + Fabric API, client only. Older versions are not supported. |
+| Networking | `iroh` 1.3 (see dependency rules) |
+| Bridge | Java's FFM API over a C ABI; no JNI |
+| License | `MIT OR Apache-2.0` for the mod, crates and server (see licensing) |
+| Distribution | Mod jar on Modrinth (slugs `yakvc` and `yak-vc` were free on 2026-10-03) and CurseForge; server image on GHCR; nothing on crates.io |
+| Hosting | One maintainer-run VPS in US East for the default rendezvous and relay |
 
 **Goals**
 
@@ -112,6 +123,8 @@ minecraft-p2p-vc/
 | `yakvc-testkit` | lib (dev) | server, client | Spawns a server and simulated clients in one process for integration tests, with optional per-peer network impairment |
 | `xtask` | bin (root) | none | `cargo xtask natives`, `header`, `dist`, `server-image`, `dev`: cross-builds `yakvc-ffi`, regenerates its C header, stages libraries into the mod, runs Gradle |
 
+Each of the seven crates is needed: `yakvc-ffi` must be its own cdylib, `yakvc-testkit` depends on both `server` and `client` so it can't live in either, and a separate `yakvc-audio` crate lets the compiler enforce that networking code never touches audio, at little cost.
+
 **Dependency graph** (arrow = "depends on"; dashed = dev-only crate or runtime load)
 
 ```
@@ -138,6 +151,7 @@ minecraft-p2p-vc/
 - `yakvc-shared` depends on `iroh-base` (key and EndpointId types) rather than full `iroh`, and gates the Mojang HTTP client behind a `mojang` feature.
 - Binaries contain no logic beyond argument parsing and wiring; anything worth testing lives in a lib.
 - Inside `yakvc-client`, `net` knows nothing about audio. It provides verified peers (EndpointId ↔ UUID), per-peer connections, and a `Protocol` trait that receives a peer's control stream and datagrams for one protocol ID. `voice` is the only `Protocol` in v1 and uses `net` only through that trait. This keeps groups/radio, and a possible generic API for other mods (see milestones), as new protocols rather than changes to `net`. `net` could later move into its own crate without touching `voice`.
+- `iroh` is pinned at 1.3 (current stable as of 2026-09-28; 1.0 shipped June 2026). The design relies on these 1.x APIs, checked against its docs: `Connection::send_datagram` / `read_datagram` / `max_datagram_size`, `remote_id()`, `paths()` for path reporting, `Builder::clear_ip_transports()` for relay-only, and `Builder::empty()` / `clear_address_lookup()` to drop n0's default address lookup. Which `iroh-relay` server features are on in 1.3 is checked at M2.
 - All third-party versions are declared once in root `[workspace.dependencies]`; crates use `dep = { workspace = true }`. Edition, license (`MIT OR Apache-2.0`) and `[workspace.lints]` (`unsafe_code = "deny"` everywhere except `yakvc-ffi`) are inherited the same way.
 - Nothing is published to crates.io: `[workspace.package] publish = false`, inherited by every crate. The crates are internal support code for the shipped artifacts (mod jar, server image, CLI binary), so their APIs can change freely between commits.
 
@@ -217,7 +231,7 @@ Voice is 48 kHz mono Opus in 20 ms frames, sent as unreliable QUIC datagrams on 
 
 1. Datagrams from unverified connections are dropped. Verified ones go into a per-peer jitter buffer ordered by `seq`.
 2. A mixer thread pulls one frame per peer every 20 ms: decode, use Opus FEC if the next packet is present, else PLC, and reset the stream after `end_of_talk`.
-3. **Spatialization:** Java pushes the listener pose (position, yaw, pitch) and positions of tracked players by UUID every tick (20 Hz), and the mixer interpolates between snapshots. Players whose tab-list game mode is spectator are left out of this set (vanilla does send spectator player entities to other clients and only hides them client-side), so the "no tracked entity" rule below covers them in both directions. While the local player is a spectator, the engine neither sends nor plays audio. Gain = 1 within 4 blocks, linear to 0 at the voice range. Equal-power stereo pan from azimuth relative to listener yaw, with mild attenuation for sources behind the listener.
+3. **Spatialization:** Java pushes the listener pose (position, yaw, pitch) and positions of tracked players by UUID every tick (20 Hz), and the mixer interpolates between snapshots. Players whose tab-list game mode is spectator are left out of this set. Entity tracking alone can't be used for this, because vanilla does send spectator player entities to other clients and only hides them client-side (unless the spectator is viewing through another entity). Filtering by game mode means the "no tracked entity" rule below covers them in both directions. While the local player is a spectator, the engine neither sends nor plays audio. Gain = 1 within 4 blocks, linear to 0 at the voice range. Equal-power stereo pan from azimuth relative to listener yaw, with mild attenuation for sources behind the listener.
 4. **Range is enforced by the receiver:** if the speaker has no tracked entity (out of tracking range, other backend, vanished) or is beyond range, the frame is discarded. The sender-side filter only saves bandwidth. Range is a per-player setting, and the sender filters by its own range while the receiver filters by its own, so between two players the shorter range applies. A listener can never hear further than the speaker allows. The settings screen says so next to the range slider.
 5. Per-peer volume and mute, master volume, the game's Voice/Speech slider and a soft limiter are applied, then the result is written to the `cpal` output ring. Output stays on `cpal` with our own panning in v1; routing PCM into Minecraft's OpenAL (for HRTF) would mean a 50 Hz per-peer stream across FFI and is post-v1. The default output device is the one whose name best matches Minecraft's selected sound device, falling back to the system default.
 
@@ -398,7 +412,7 @@ libopus is built from source and linked statically (needs `cmake` in CI), so the
 
 - `cargo xtask natives [--target host|all|<triple>]` builds `yakvc-ffi` in release and copies it to `mod/src/main/resources/natives/<os>-<arch>/` (gitignored), with a `natives.sha256` manifest.
 - `cargo xtask header [--check]` regenerates `yakvc.h` with `cbindgen`, or fails if the checked-in copy is stale.
-- `cargo xtask dist` stages natives from `--from <dir>` (CI artifacts) or builds them, runs `./gradlew build`, generates `THIRD_PARTY_LICENSES` (with `cargo-about`) into the jar and the server image, and writes the jar to `dist/`. MIT, Apache-2.0 and the BSD licenses of statically linked libraries like libopus require their notices to ship with the binaries.
+- `cargo xtask dist` stages natives from `--from <dir>` (CI artifacts) or builds them, runs `./gradlew build`, generates `THIRD_PARTY_LICENSES` (see licensing) into the jar and the server image, and writes the jar to `dist/`.
 - `cargo xtask server-image` builds the `yakvc-server` Docker image.
 - `cargo xtask dev` starts a dev-mode server and prints the config snippet for `runClient` / the CLI.
 
@@ -415,6 +429,12 @@ libopus is built from source and linked statically (needs `cmake` in CI), so the
 2. `natives` (matrix: ubuntu, windows, macos): `cargo xtask natives --target <list>`, upload artifacts.
 3. `mod`: download natives, `cargo xtask dist --from artifacts/`, run Fabric client gametests (load mod, create engine, destroy). Loom runs them under Xvfb on Linux when `CI` is set.
 4. `release` (on tag): publish the jar to Modrinth/CurseForge, the server image to GHCR, and `yakvc-cli` binaries (for `net report` in bug reports) as GitHub release assets.
+
+**Licensing**
+
+- Everything in the repo is `MIT OR Apache-2.0`, the usual Rust dual license. The SPDX expression is set once in `[workspace.package]` and repeated in `fabric.mod.json`.
+- Dependencies must stay compatible: for example libopus and `nnnoiseless` are BSD-3-Clause, and Iroh is MIT/Apache-2.0. `deny.toml` lists the allowed licenses and `cargo deny check licenses` enforces them in CI.
+- MIT, Apache-2.0 and the BSD licenses of statically linked libraries like libopus require their notices to ship with the binaries, so `cargo xtask dist` generates `THIRD_PARTY_LICENSES` with `cargo-about`.
 
 **Versioning**
 
@@ -440,49 +460,36 @@ The design rule is **you only send voice to, and only play voice from, players y
 | Relay used by unrelated Iroh apps | Relay access restricted to EndpointIds with a live rendezvous session |
 | Restricted (e.g. child) accounts | Voice is disabled when the Microsoft profile or launcher disables chat (`respect_chat_restrictions`, default on) |
 | Tampered native library | Releases built only in CI and downloaded from Modrinth/CurseForge with their file hashes. The in-jar SHA-256 manifest only catches a corrupted or swapped extracted copy; anyone who can modify the jar can modify the manifest too. |
-| Server owner doesn't want voice | No technical control exists. The client honours an opt-out marker `[no-yakvc]` in the server MOTD and disables itself there. The MOTD arrives after join in the server-data packet, so this works for direct connects too, not just the server list. Voice waits for that packet before starting. |
+| Server owner doesn't want voice | No technical control exists. The client honours an opt-out marker `[no-yakvc]` in the server MOTD and disables itself there. The MOTD arrives after join in the server-data packet, so this works for direct connects too, not just the server list. Voice waits for that packet before starting. See server opt-out below. |
+
+**Server opt-out**
+
+v1 uses only the MOTD marker. A denylist on the rendezvous would require clients to send it server addresses, which the privacy model avoids. If owners object to a visible marker, the planned alternative is a DNS TXT record (`_yakvc.<host>`) that the client checks locally, which also keeps server addresses on the client.
 
 **Dependencies on Mojang**
 
 - Auth relies on the public `sessionserver` `hasJoined` endpoint and authlib's `joinServer`, the same mechanism third-party Minecraft login services use. If Mojang changes or rate-limits it, cached tickets keep existing users working for up to 24 h while a fix ships.
+- Mojang does not document `sessionserver` limits; third-party reports put them at about 400 requests per 10 s per source IP, with HTTP 429 above that. With 24 h tickets renewed at a random point in their last 2 h, even 100k active users average about 1–1.5 auths/s from the rendezvous. Bursts (mass expiry, a client bug) are handled by the 429 policy under server limits. Real limits are measured at M5.
 - Mojang access tokens never cross into Rust or leave the machine except to Mojang through authlib.
 
 ## Milestones
 
 Build order runs Rust-first: every networking and audio milestone is provable with the CLI before any Java exists, and the mod arrives at M4 as a thin integration layer.
 
-1. **M0 Skeleton.** Virtual workspace, all seven crates as stubs with the final dependency graph, `xtask` stub, CI running fmt/clippy/test.
+1. **M0 Skeleton.** Virtual workspace, all seven crates as stubs with the final dependency graph, license metadata and `deny.toml`, `xtask` stub, CI running fmt/clippy/deny/test.
    - Exit: `cargo test --workspace` is green; `cargo tree -p yakvc-server -e normal` shows no `cpal`/`opus`.
 2. **M1 Audio.** `yakvc-audio` (devices, Opus, jitter buffer, mixer) and `cli audio loopback`.
    - Exit: loopback runs 10 min with no underruns; added latency ≤ 60 ms.
-3. **M2 Direct call.** Datagram header in `shared`, voice send/receive in `client`, `cli call listen/dial`, `cli net report`.
+3. **M2 Direct call.** Datagram header in `shared`, voice send/receive in `client`, `cli call listen/dial`, `cli net report`. Confirm which `iroh-relay` server features are available in 1.3: QUIC address discovery, ACME, relay access control and per-client rate limits.
    - Exit: two machines on different home networks talk; with UDP blocked the call continues over the relay.
 4. **M3 Rendezvous (dev auth).** Server protocol, matcher, tickets; client rendezvous session; `cli join` and `cli bot`; `yakvc-testkit` integration tests.
    - Exit: three CLI clients with overlapping fake tab lists connect only to mutual matches, and gain/pan follow `pos` commands. A testkit test with 5% bursty loss and 30 ms of jitter plays continuous audio: every lost frame is covered by FEC or PLC, and playout delay stays within the jitter-buffer bounds.
 5. **M4 Mod integration.** Fabric project, `NativeLoader`, `yakvc-ffi` + `NativeBridge` (FFM), `GameStateFeeder`, push-to-talk, dev mode.
-   - Exit: two dev clients on a local vanilla server hear each other spatially.
-6. **M5 Real auth.** Mojang challenge on server and client, `SessionJoiner`, ticket cache.
+   - Exit: two dev clients on a local vanilla server hear each other spatially. A gametest confirms spectators are excluded in both directions.
+6. **M5 Real auth.** Mojang challenge on server and client, `SessionJoiner`, ticket cache, Mojang 429 handling. Measure the real `sessionserver` rate limits.
    - Exit: two real accounts on a public online-mode server, no dev flags.
-7. **M6 Beta.** All-platform natives, settings and peer UI, talking indicators, relay-only mode, MOTD opt-out, production server deployed.
+7. **M6 Beta.** All-platform natives, settings and peer UI, talking indicators, relay-only mode, MOTD opt-out, production server deployed. Check the CurseForge project name is free, and check the default keybinds against popular modpacks. During the beta, resize the VPS from relayed-share and monthly-transfer metrics.
    - Exit: the same jar works on Windows, macOS and Linux; public beta on Modrinth.
 8. **Post-v1.** Serverless discovery, OpenAL/HRTF output, groups, NeoForge port.
    - **Read-only Java API for other mods:** talking and peer-state events, plus per-player mute and volume, so HUD and social mods can integrate without data channels.
    - **Generic P2P channels for other mods**, only if mod authors ask for it. This would extract `net` into a separate library mod that other mods register protocols with. It must first solve: per-protocol consent (a mod can't send to peers that haven't installed it), relay quotas per protocol, the fact that every peer learns your IP, a server opt-out covering all protocols, and a stable Java API. Generic position-sharing channels make PvP radar cheats easy, so server-owner opt-out matters more here than for voice.
-
-## Open questions
-
-Each item below needs an answer before the milestone named in brackets; none of them blocks M0.
-
-- [x] **Project name:** Yak VC, identifier `yakvc`. Nothing is published to crates.io. The `yakvc` and `yak-vc` Modrinth slugs were free on 2026-10-03; CurseForge still needs checking before M6. The Java package `dev.yakvc` stays a placeholder until there is a domain to root it in. [M0]
-- [x] **License:** `MIT OR Apache-2.0` for the mod, crates and server, the usual Rust dual license. The SPDX expression goes in `[workspace.package]` and `fabric.mod.json`. Dependencies must stay compatible (e.g. libopus and `nnnoiseless` are BSD-3-Clause, Iroh is MIT/Apache); `cargo deny check licenses` enforces this in CI. [M0]
-- [x] **Crate split:** keep all seven. `ffi` must be its own cdylib, `testkit` depends on both `server` and `client`, and a separate `audio` crate enforces the rule that `net` knows nothing about audio, at little cost. [M0]
-- [x] **Iroh version:** pin `iroh` 1.3 (current stable, 2026-09-28; 1.0 shipped June 2026). Confirmed against its docs: `Connection::send_datagram` / `read_datagram` / `max_datagram_size`, `remote_id()`, path reporting via `paths()`, relay-only via `Builder::clear_ip_transports()`, and default n0 address lookup removable with `Builder::empty()` / `clear_address_lookup()`. Still to check at M2: which `iroh-relay` server features (QUIC address discovery, ACME, relay access control, per-client rate limits) are on in the pinned version. [M2]
-- [x] **Separate ticket-signing key:** yes. Tickets are signed by an issuer key distinct from the rendezvous endpoint key, so several instances can share one issuer and either key can rotate on its own. [M3]
-- [x] **Target Minecraft version:** Minecraft 26.3 on Java 25. Fabric uses Mojang mappings there, and Fabric API names match them (e.g. `KeyMappingHelper`). [M4]
-- [x] **JNI or FFM for the bridge:** FFM, over a `cbindgen`-generated C ABI (see the Fabric mod section). [M4]
-- [x] **Output path:** `cpal` + our own panning in v1, scaled by the game's Voice/Speech slider (`yakvc_set_game_volume`). OpenAL/HRTF stays post-v1. [M4]
-- [x] **Spectator tracking:** vanilla clients do receive spectator player entities and render them invisible client-side, unless the spectator is viewing through another entity. Exclusion therefore uses the tab-list game mode, not entity tracking (see the receive path). Re-check in a gametest at M4. [M4]
-- [x] **Default keybinds:** push-to-talk on `V`; mute, deafen and voice menu unbound. Re-check against popular modpacks before M6. [M4]
-- [x] **Mojang `hasJoined` limits:** third-party reports put `sessionserver` at about 400 requests per 10 s per source IP (HTTP 429 above that); Mojang does not document it officially. Tickets last 24 h and are renewed at a random point in the last 2 h, so even 100k active users average about 1–1.5 auths/s. A burst after mass expiry or a client bug is handled by the 429 policy in the server limits (server pause + `RetryAfter`, client exponential backoff). Still measure real limits at M5. [M5]
-- [x] **Opt-out mechanism:** MOTD marker only in v1. A rendezvous denylist would require sending server addresses to the rendezvous, which the privacy model avoids. If owners object to a visible marker, add a DNS TXT record (`_yakvc.<host>`) that the client checks locally. [M6]
-- [x] **Hosting:** the project maintainer runs the default rendezvous and relay on a single VPS in US East, planned around the 1–5 TB/month a VPS includes. Relay cost is bounded by a 512 kbps relayed-send budget per client; resize from relayed-share metrics during beta. [M6]
