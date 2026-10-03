@@ -156,12 +156,12 @@ A client proves its UUID to the rendezvous once with a Mojang session challenge 
 
 1. Client dials the rendezvous EndpointId. QUIC/TLS gives the server the client's EndpointId cryptographically.
 2. Client sends `Hello { proto, mod_version, uuid, name, endpoint_addr, cached_ticket: Option<Ticket> }`.
-3. If `cached_ticket` was signed by the issuer key this server holds, names this EndpointId and UUID, and has more than 1 h left, the server registers the session and skips to step 8, returning the same ticket. Otherwise it continues with step 4.
+3. If `cached_ticket` was signed by the issuer key this server holds, names this EndpointId and UUID, and has more than 2 h left, the server registers the session and skips to step 8, returning the same ticket. Otherwise it continues with step 4.
 4. Server sends `Challenge { nonce: [u8; 32] }`.
 5. Client derives `server_id = mc_hex_digest(SHA-1("yakvc-auth-v1" ‖ nonce ‖ client_endpoint_id ‖ rendezvous_endpoint_id))` and asks Java to call `MinecraftSessionService.joinServer(uuid, token, server_id)`.
 6. Client sends `Joined`.
 7. Server calls `GET https://sessionserver.mojang.com/session/minecraft/hasJoined?username=<name>&serverId=<server_id>` and requires the returned UUID to equal the claimed one.
-8. Server replies `Ticket { uuid, name, endpoint_id, issued_at, expires_at, issuer, dev, sig }` (ed25519 by the issuer key, 12 h lifetime). Client caches it on disk and renews it once less than 1 h remains, with random jitter.
+8. Server replies `Ticket { uuid, name, endpoint_id, issued_at, expires_at, issuer, dev, sig }` (ed25519 by the issuer key, 24 h lifetime). Client caches it on disk and renews it once less than 2 h remains, at a random point in that window so renewals don't bunch up.
 
 The `joinServer` call must never happen while the game is logging in to a server: it would replace the game's own pending session join and break the login. The client authenticates at title screen / after login completes, and the cached ticket makes this rare.
 
@@ -226,6 +226,7 @@ Voice is 48 kHz mono Opus in 20 ms frames, sent as unreliable QUIC datagrams on 
 - On `PeerAvailable` the engine connects eagerly, tracked peers nearest first, then untracked ones, up to 64 open peer connections. Hole-punching takes up to a few seconds, so connecting only on approach would clip the first words. This matters because Spigot/Paper default to a 48-block player tracking range, so a peer often becomes tracked only at the edge of voice range.
 - Idle connections cost only QUIC keepalives, so matched peers stay connected whether or not they are tracked; closing untracked peers would undo the eager connect. Connections close on `PeerGone`. When the cap is reached, the peer that has been untracked longest (or is farthest) is evicted, and it is reconnected when it becomes tracked again.
 - Iroh picks the path (direct UDP vs relay) and migrates transparently (multipath since 1.0). The engine reports the selected path per peer from `Connection::paths()` for the UI and the CLI.
+- At most 4 peers may be on a relay-only path at once, chosen as the nearest tracked ones. Any other relay-only peer is suspended (no datagrams) and shown as `relay_full` until a slot frees up or a direct path appears. Direct peers are not limited by this.
 - The endpoint is built with `Builder::empty()` plus our own `RelayMode::Custom` relay map. Iroh's default n0 DNS/pkarr address lookup and n0 relays are not used, because peer addresses come from the rendezvous and publishing them to a third party would leak IPs. `relay_only` uses `Builder::clear_ip_transports()`.
 
 **Threads**
@@ -269,6 +270,8 @@ Voice is 48 kHz mono Opus in 20 ms frames, sent as unreliable QUIC datagrams on 
 - 5 auth attempts per EndpointId per minute; 30 per source IP per minute.
 - At most 2,048 pair tokens per session and 10 pair updates per second.
 - 5 s timeout on Mojang calls with one retry; auth fails closed on Mojang outage (cached tickets keep working).
+- On a Mojang HTTP 429 the server stops calling `hasJoined` until Mojang's `Retry-After` (or 10 s) has passed and answers pending auths with `RetryAfter { secs }`. Clients back off exponentially (10 s doubling to 10 min, with jitter) and keep using any unexpired cached ticket meanwhile.
+- Relay: each client may relay through at most 4 peers at a time (enforced by the client), backed by a per-client byte-rate limit in `iroh-relay` of 48 KB/s (about 4 streams at 64 kbps, plus headroom). The server also tracks monthly relay transfer against a configured budget and exposes it as a metric.
 
 **Dev mode**
 
@@ -276,8 +279,8 @@ Voice is 48 kHz mono Opus in 20 ms frames, sent as unreliable QUIC datagrams on 
 
 **Deployment**
 
-- Docker image + example `config.toml` + systemd unit in `deploy/`. For v1 the project maintainer hosts the default rendezvous and relay on a single small VPS with a public IP, in one region.
-- Relay bandwidth is the main cost: about 55–60 kbps in and the same out per relayed voice stream while talking. Metrics track the relayed share so capacity can be planned.
+- Docker image + example `config.toml` + systemd unit in `deploy/`. For v1 the project maintainer hosts the default rendezvous and relay on a single small VPS with a public IP in US East, which gives the best average latency to both North American and European players.
+- Relay bandwidth is the main cost: about 55–60 kbps in and the same out per relayed voice stream while talking. v1 is planned around the 1–5 TB/month included with a typical VPS. 1 TB/month of outbound transfer covers about 500 relayed streams around the clock if each talks 10% of the time. Metrics track the relayed share and the monthly total so capacity can be planned. The per-client relay cap (see limits) keeps any one user's cost bounded.
 - Clients ship with the default server's EndpointId and relay URL. Self-hosters change two config values and add their issuer key to `trusted_issuers`.
 - Single instance in v1. If needed later, add regions or shards that share the issuer key, with a shared pub/sub for cross-instance matches.
 
@@ -363,7 +366,7 @@ size_t   yakvc_last_error(uint8_t *buf, size_t cap);         // message for this
 - **Header:** `cbindgen` generates `crates/yakvc-ffi/include/yakvc.h`, which is checked in. `cargo xtask header --check` fails CI when it is stale, so changes to the ABI show up in review. Java bindings are hand-written (14 functions) rather than generated with `jextract`, which is not part of the JDK.
 - **ABI check:** Java calls `yakvc_abi_version()` before anything else and refuses to continue on a mismatch; `yakvc_create` checks again.
 - **Memory:** each wrapper call uses a confined `Arena` for strings and small buffers, freed on return. `yakvc_push_world` and `yakvc_poll_events` run every tick, so their handles use `Linker.Option.critical(true)`, and Java passes `MemorySegment.ofArray(...)` heap arrays with no copy. Native code never keeps a pointer after the call returns.
-- **Events** are little-endian TLV records `u16 type | u16 len | payload` written into a reusable buffer: `JoinRequest{id, server_id}`, `RendezvousState`, `PeerState{uuid, connecting|direct|relayed|failed}`, `Talking{uuid, bool}`, `MicLevel{f32}`, `Error{code, msg}`. Records are never split; if the buffer fills, the rest stay queued for the next poll.
+- **Events** are little-endian TLV records `u16 type | u16 len | payload` written into a reusable buffer: `JoinRequest{id, server_id}`, `RendezvousState`, `PeerState{uuid, connecting|direct|relayed|relay_full|failed}`, `Talking{uuid, bool}`, `MicLevel{f32}`, `Error{code, msg}`. Records are never split; if the buffer fills, the rest stay queued for the next poll.
 - **Threads:** `YakVcEngine` is `Send + Sync`. Every function except `yakvc_destroy` may be called from any thread: the client thread feeds the world on each tick, and `SessionJoiner`'s worker calls `complete_join`. Java makes `yakvc_destroy` the last call with a closed flag.
 - **Rust side (`yakvc-ffi`):** the handle is `Box<Bridge>` passed as an opaque pointer. Every export is `#[unsafe(no_mangle)] pub extern "C"` and runs inside an `ffi_guard` that does `catch_unwind` (a panic crossing `extern "C"` would abort the game) and maps errors and panics to codes plus the thread-local `last_error` message. After a panic the engine is marked poisoned, later calls return `YAKVC_ERR_POISONED`, and the mod disables voice with a toast. This is the only crate with `unsafe` allowed.
 - **`yakvc-client` API** is FFI-agnostic: `Engine::start(Config) -> (EngineHandle, EventReceiver)`, where `EngineHandle` has the same operations as above with typed arguments. The CLI uses it directly; `yakvc-ffi` is only marshalling. `yakvc-ffi` has its own Rust tests that call the `extern "C"` functions directly, so the ABI is tested without a JVM.
@@ -440,7 +443,7 @@ The design rule is **you only send voice to, and only play voice from, players y
 
 **Dependencies on Mojang**
 
-- Auth relies on the public `sessionserver` `hasJoined` endpoint and authlib's `joinServer`, the same mechanism third-party Minecraft login services use. If Mojang changes or rate-limits it, cached tickets keep existing users working for up to 12 h while a fix ships.
+- Auth relies on the public `sessionserver` `hasJoined` endpoint and authlib's `joinServer`, the same mechanism third-party Minecraft login services use. If Mojang changes or rate-limits it, cached tickets keep existing users working for up to 24 h while a fix ships.
 - Mojang access tokens never cross into Rust or leave the machine except to Mojang through authlib.
 
 ## Milestones
@@ -479,6 +482,6 @@ Each item below needs an answer before the milestone named in brackets; none of 
 - [x] **Output path:** `cpal` + our own panning in v1, scaled by the game's Voice/Speech slider (`yakvc_set_game_volume`). OpenAL/HRTF stays post-v1. [M4]
 - [x] **Spectator tracking:** vanilla clients do receive spectator player entities and render them invisible client-side, unless the spectator is viewing through another entity. Exclusion therefore uses the tab-list game mode, not entity tracking (see the receive path). Re-check in a gametest at M4. [M4]
 - [x] **Default keybinds:** push-to-talk on `V`; mute, deafen and voice menu unbound. Re-check against popular modpacks before M6. [M4]
-- [ ] **Mojang `hasJoined` limits:** third-party reports put `sessionserver` at about 400 requests per 10 s per source IP (HTTP 429 above that); Mojang does not document it officially. With 12 h cached tickets, even 100k active users average about 2–3 auths/s, so steady state fits. The risk is a burst after mass ticket expiry or a client bug, so renew tickets with jitter and back off on 429. Measure at M5. [M5]
+- [x] **Mojang `hasJoined` limits:** third-party reports put `sessionserver` at about 400 requests per 10 s per source IP (HTTP 429 above that); Mojang does not document it officially. Tickets last 24 h and are renewed at a random point in the last 2 h, so even 100k active users average about 1–1.5 auths/s. A burst after mass expiry or a client bug is handled by the 429 policy in the server limits (server pause + `RetryAfter`, client exponential backoff). Still measure real limits at M5. [M5]
 - [x] **Opt-out mechanism:** MOTD marker only in v1. A rendezvous denylist would require sending server addresses to the rendezvous, which the privacy model avoids. If owners object to a visible marker, add a DNS TXT record (`_yakvc.<host>`) that the client checks locally. [M6]
-- [ ] **Hosting:** the project maintainer runs the default rendezvous and relay on a single VPS in one region. Still open: which region, and the bandwidth budget. [M6]
+- [x] **Hosting:** the project maintainer runs the default rendezvous and relay on a single VPS in US East, planned around the 1–5 TB/month a VPS includes. Relay cost is bounded by a 4-peer relay cap per client; resize from relayed-share metrics during beta. [M6]
