@@ -29,7 +29,8 @@ Yak VC is a client-only Fabric mod that gives players on any online-mode vanilla
 | Rendezvous | `yakvc-server`: discovery + attestation service, itself an Iroh endpoint. |
 | EndpointId | Iroh endpoint identity: an ed25519 public key. One per client install. (Called `NodeId` in pre-1.0 Iroh releases.) |
 | Match set | The Yak VC clients that see each other in their tab lists. Computed by the rendezvous from pair tokens, never named or addressed. |
-| Ticket | Short-lived statement signed by the rendezvous: "EndpointId X is Minecraft UUID Y". |
+| Ticket | Short-lived statement signed by a rendezvous issuer key: "EndpointId X is Minecraft UUID Y". |
+| Issuer | The ed25519 key that signs tickets. Separate from any rendezvous EndpointId; clients trust a list of issuers. |
 | Core | `yakvc-client`: the Rust voice engine used by both the mod and the CLI. |
 
 ## System architecture
@@ -147,19 +148,20 @@ A client proves its UUID to the rendezvous once with a Mojang session challenge 
 **Identities**
 
 - **Client key:** one Iroh `SecretKey` per installation, stored in the mod config directory (`config/yakvc/node.key`, mode 0600). Its public half is the EndpointId.
-- **Rendezvous key:** the server's Iroh `SecretKey`. It is the server's dial address (EndpointId) *and* the ticket-signing key. Clients ship with the default rendezvous EndpointId and accept a list of trusted ones in config.
+- **Rendezvous endpoint key:** the server's Iroh `SecretKey`, used only as its dial address (EndpointId). Clients ship with the default rendezvous EndpointId and accept others in config.
+- **Issuer key:** a separate ed25519 key that signs tickets. Clients trust tickets from any key in `trusted_issuers`. Keeping it apart from the endpoint key lets several rendezvous instances (regions, shards) share one issuer, and lets either key rotate without changing the other.
 - **Minecraft identity:** UUID + name, proven via Mojang's session server. The Mojang access token never leaves Java (authlib makes the call).
 
 **Authentication (client → rendezvous, ALPN `yakvc/rdv/1`)**
 
 1. Client dials the rendezvous EndpointId. QUIC/TLS gives the server the client's EndpointId cryptographically.
 2. Client sends `Hello { proto, mod_version, uuid, name, endpoint_addr, cached_ticket: Option<Ticket> }`.
-3. If `cached_ticket` was issued by this rendezvous, names this EndpointId and UUID, and has more than 1 h left, the server registers the session and skips to step 8, returning the same ticket. Otherwise it continues with step 4.
+3. If `cached_ticket` was signed by the issuer key this server holds, names this EndpointId and UUID, and has more than 1 h left, the server registers the session and skips to step 8, returning the same ticket. Otherwise it continues with step 4.
 4. Server sends `Challenge { nonce: [u8; 32] }`.
 5. Client derives `server_id = mc_hex_digest(SHA-1("yakvc-auth-v1" ‖ nonce ‖ client_endpoint_id ‖ rendezvous_endpoint_id))` and asks Java to call `MinecraftSessionService.joinServer(uuid, token, server_id)`.
 6. Client sends `Joined`.
 7. Server calls `GET https://sessionserver.mojang.com/session/minecraft/hasJoined?username=<name>&serverId=<server_id>` and requires the returned UUID to equal the claimed one.
-8. Server replies `Ticket { uuid, name, endpoint_id, issued_at, expires_at, issuer, dev, sig }` (ed25519 by the rendezvous key, 12 h lifetime). Client caches it on disk.
+8. Server replies `Ticket { uuid, name, endpoint_id, issued_at, expires_at, issuer, dev, sig }` (ed25519 by the issuer key, 12 h lifetime). Client caches it on disk and renews it once less than 1 h remains, with random jitter.
 
 The `joinServer` call must never happen while the game is logging in to a server: it would replace the game's own pending session join and break the login. The client authenticates at title screen / after login completes, and the cached ticket makes this rare.
 
@@ -167,7 +169,7 @@ The challenge digest cannot be confused with a game login, in either direction. 
 
 **Discovery: mutual tab-list matching**
 
-Two clients are on the same server if each one's UUID is in the other's tab list (the vanilla player list packets). This needs no knowledge of server addresses, so SRV records, proxies and anycast IPs don't matter.
+Two clients are on the same server if each one's UUID is in the other's tab list (the vanilla player-info packets). The client uses every player-info entry (`getOnlinePlayers()`), not only listed ones: tab-layout plugins often hide real players with `listed = false` and show fake entries instead, and fake entries only add harmless unmatched tokens. This needs no knowledge of server addresses, so SRV records, proxies and anycast IPs don't matter.
 
 - For each tab-list entry `u`, the client computes a pair token `SHA-256("yakvc-pair-v1" ‖ min(me,u) ‖ max(me,u))` and sends the set to the rendezvous (`SetPairs`, then incremental `AddPairs` / `RemovePairs` as players join/leave).
 - The rendezvous matches identical tokens held by two sessions whose tickets name exactly that pair, then sends each side `PeerAvailable { ticket, endpoint_addr }`, and later `PeerGone { endpoint_id }`.
@@ -179,8 +181,9 @@ Two clients are on the same server if each one's UUID is in the other's tab list
 
 1. The peer with the lower EndpointId dials; the other dials only if nothing has arrived after 3 s. Duplicate connections are resolved by keeping the one dialled by the lower EndpointId.
 2. Both open a control bi-stream and send `PeerHello { proto, ticket, protocols: [(id, version)] }`.
-3. Each side accepts only if: the signature verifies against a trusted rendezvous key; `ticket.endpoint_id` equals the connection's remote EndpointId; the ticket is unexpired; `ticket.uuid` is in the local tab list and is not our own UUID.
-4. On success the connection is shared by every application protocol both sides list (v1 has one: `voice`, version 1). Each protocol gets its own control stream, opened with its protocol ID, and its datagrams start with a one-byte protocol ID. The peer control stream itself carries only `Ping` and `Close`. On any failure, close with an error code and do not retry for 60 s.
+3. Each side accepts only if: the signature verifies against a key in `trusted_issuers`; `ticket.endpoint_id` equals the connection's remote EndpointId; the ticket is unexpired; `ticket.uuid` is in the local tab list and is not our own UUID.
+4. On success the connection is shared by every application protocol both sides list (v1 has one: `voice`, version 1). Each protocol gets its own control stream, opened with its protocol ID, and its datagrams start with a one-byte protocol ID. The peer control stream itself carries only `Ping`, `TicketUpdate` and `Close`. On any failure, close with an error code and do not retry for 60 s.
+5. When a client renews its ticket it sends `TicketUpdate { ticket }` to every open peer, which re-runs the step 3 checks. A peer whose ticket expires without an update is closed.
 
 One connection per peer, multiplexed by protocol ID, means one handshake and one hole-punch per peer however many protocols are added later.
 
@@ -208,7 +211,7 @@ Voice is 48 kHz mono Opus in 20 ms frames, sent as unreliable QUIC datagrams on 
 1. `cpal` input callback writes samples into a lock-free SPSC ring (`rtrb`). The callback never allocates or locks.
 2. A dedicated audio thread resamples to 48 kHz if needed (`rubato`), applies optional noise suppression (`nnnoiseless`), gain and VAD, then encodes 20 ms frames.
 3. If activation is on and the player is not muted, the engine picks recipients: verified peers that have a tracked entity within `range + 8` blocks of the local player, that have not sent `ReceiveState { wants_audio: false }` (deafened or muted us), capped at the 32 nearest.
-4. Each frame is sent with `Connection::send_datagram`. Header: `proto: u8 (voice) | flags: u8 (end_of_talk, fec) | seq: u32 | ts: u32` then the Opus payload (60 B at the default 24 kbps, up to 160 B at 64 kbps; well under `Connection::max_datagram_size()`). The first byte is the peer layer's protocol ID; the voice version is agreed in `PeerHello`, so there is no per-packet version byte. The last frame of a talk spurt sets `end_of_talk`.
+4. Each frame is sent with `Connection::send_datagram`. Header: `proto: u8 (voice) | flags: u8 (end_of_talk) | seq: u32 | ts: u32` then the Opus payload (60 B at the default 24 kbps, up to 160 B at 64 kbps; well under `Connection::max_datagram_size()`). The first byte is the peer layer's protocol ID; the voice version is agreed in `PeerHello`, so there is no per-packet version byte. The last frame of a talk spurt sets `end_of_talk`. Opus in-band FEC travels inside the payload, so it needs no flag.
 
 **Receive path**
 
@@ -216,7 +219,7 @@ Voice is 48 kHz mono Opus in 20 ms frames, sent as unreliable QUIC datagrams on 
 2. A mixer thread pulls one frame per peer every 20 ms: decode, use Opus FEC if the next packet is present, else PLC, and reset the stream after `end_of_talk`.
 3. **Spatialization:** Java pushes the listener pose (position, yaw, pitch) and positions of tracked players by UUID every tick (20 Hz), and the mixer interpolates between snapshots. Players whose tab-list game mode is spectator are left out of this set (vanilla does send spectator player entities to other clients and only hides them client-side), so the "no tracked entity" rule below covers them in both directions. While the local player is a spectator, the engine neither sends nor plays audio. Gain = 1 within 4 blocks, linear to 0 at the voice range. Equal-power stereo pan from azimuth relative to listener yaw, with mild attenuation for sources behind the listener.
 4. **Range is enforced by the receiver:** if the speaker has no tracked entity (out of tracking range, other backend, vanished) or is beyond range, the frame is discarded. The sender-side filter only saves bandwidth.
-5. Per-peer volume and mute, master volume and a soft limiter are applied, then the result is written to the `cpal` output ring.
+5. Per-peer volume and mute, master volume, the game's Voice/Speech slider and a soft limiter are applied, then the result is written to the `cpal` output ring. Output stays on `cpal` with our own panning in v1; routing PCM into Minecraft's OpenAL (for HRTF) would mean a 50 Hz per-peer stream across FFI and is post-v1. The default output device is the one whose name best matches Minecraft's selected sound device, falling back to the system default.
 
 **Connection lifecycle**
 
@@ -244,20 +247,20 @@ Voice is 48 kHz mono Opus in 20 ms frames, sent as unreliable QUIC datagrams on 
 
 - Authenticate clients (Mojang challenge) and issue signed tickets.
 - Hold live sessions and match pair tokens; push `PeerAvailable` / `PeerGone`.
-- Relay fallback for peers whose NAT defeats hole-punching (embedded `iroh-relay`, HTTPS + QUIC address discovery).
-- Nothing durable apart from its secret key and relay TLS certificate: all session state is in memory, and clients re-register within seconds of a restart (cached tickets mean no Mojang burst).
+- Relay fallback for peers whose NAT defeats hole-punching (embedded `iroh-relay`, HTTPS + QUIC address discovery). The relay only serves EndpointIds with a live rendezvous session, using `iroh-relay`'s access control, so it is not an open relay for the wider Iroh ecosystem.
+- Nothing durable apart from its endpoint key, issuer key and relay TLS certificate: all session state is in memory, and clients re-register within seconds of a restart (cached tickets mean no Mojang burst).
 
 **Crate structure**
 
 | Module | Role |
 | --- | --- |
-| `main.rs` | `clap` CLI: `run --config <path>`, `keygen`, `endpoint-id`. Wiring only. |
+| `main.rs` | `clap` CLI: `run --config <path>`, `keygen [--issuer]`, `endpoint-id`, `issuer-id`. Wiring only. |
 | `lib.rs` | `Server::builder(config).spawn()` so `yakvc-testkit` can run it in-process |
-| `config` | TOML config: key paths, bind addresses, relay hostname + TLS (ACME or files), ticket lifetime, limits, metrics bind |
+| `config` | TOML config: endpoint and issuer key paths, bind addresses, relay hostname + TLS (ACME or files), ticket lifetime, limits, metrics bind |
 | `rdv` | Per-connection protocol handler for `yakvc/rdv/1` (state machine: Hello → Challenge → Joined → Registered) |
 | `auth` | Uses `yakvc_shared::mojang` to call `hasJoined`, signs tickets with the server key |
 | `matcher` | `HashMap<EndpointId, Session>` + `HashMap<PairToken, SmallVec<[EndpointId; 2]>>`; O(changed tokens) per update |
-| `relay` | Starts `iroh-relay` server when enabled |
+| `relay` | Starts `iroh-relay` server when enabled; its access check asks `matcher` whether the EndpointId has a live session |
 | `limits` | Token-bucket rate limits per EndpointId and per source IP |
 | `metrics` | Prometheus endpoint: sessions, auth ok/fail, matches, Mojang latency, relay bytes |
 
@@ -273,10 +276,10 @@ Voice is 48 kHz mono Opus in 20 ms frames, sent as unreliable QUIC datagrams on 
 
 **Deployment**
 
-- Docker image + example `config.toml` + systemd unit in `deploy/`. A single small VPS with a public IP serves v1.
+- Docker image + example `config.toml` + systemd unit in `deploy/`. For v1 the project maintainer hosts the default rendezvous and relay on a single small VPS with a public IP, in one region.
 - Relay bandwidth is the main cost: about 55–60 kbps in and the same out per relayed voice stream while talking. Metrics track the relayed share so capacity can be planned.
-- Clients ship with the default server's EndpointId and relay URL. Self-hosters change two config values and add their key to `trusted_issuers`.
-- Single instance in v1. If needed later, shard sessions by EndpointId with a shared pub/sub for cross-shard matches.
+- Clients ship with the default server's EndpointId and relay URL. Self-hosters change two config values and add their issuer key to `trusted_issuers`.
+- Single instance in v1. If needed later, add regions or shards that share the issuer key, with a shared pub/sub for cross-instance matches.
 
 ## yakvc-cli
 
@@ -321,12 +324,12 @@ Names below use Mojang's official mappings, which Fabric uses from 26.1 on (Mine
 | `YakVcClient` | `ClientModInitializer`: load natives, create engine, register events and keybinds |
 | `natives.NativeLoader` | Map `os.name`/`os.arch` to `natives/<os>-<arch>/`, extract the library to `config/yakvc/natives/<sha256>/`, open it with `SymbolLookup.libraryLookup(path, Arena.global())`. The library is never unloaded, because it owns live Tokio and audio threads. Unsupported platform: disable the mod and show a toast. |
 | `NativeBridge` | One `static final MethodHandle` per C function (below), built with `Linker.nativeLinker().downcallHandle`, plus thin typed wrappers that turn error codes into `YakVcException`. Nothing else. |
-| `VoiceSession` | Per-connection lifecycle on `ClientPlayConnectionEvents` JOIN/DISCONNECT; tracks whether a login is in progress |
-| `GameStateFeeder` | On `END_CLIENT_TICK`: listener pose from the camera; tracked players from `level.players()`, minus spectators; tab-list diff from `getListedOnlinePlayers()`; push to native; then drain events |
+| `VoiceSession` | Per-connection lifecycle on `ClientPlayConnectionEvents` JOIN/DISCONNECT; tracks whether a login is in progress. Voice stays off until the server-data packet arrives (5 s timeout), so the MOTD opt-out is checked first. It also stays off while `getChatStatus()` is `DISABLED_BY_PROFILE` or `DISABLED_BY_LAUNCHER` (`respect_chat_restrictions`) |
+| `GameStateFeeder` | On `END_CLIENT_TICK`: listener pose from the camera; tracked players from `level.players()`, minus spectators; tab-list diff from `getOnlinePlayers()`; local spectator state as an input flag; players blocked in Social Interactions as mutes (`mute_blocked_players`); the Voice/Speech slider; push to native; then drain events |
 | `SessionJoiner` | Handles `JoinRequest` events on a worker thread via authlib `MinecraftSessionService.joinServer`, refuses while logging in, replies with `completeJoin` |
-| `input` | Keybinds via `KeyMappingHelper`: push-to-talk, mute, deafen, open voice menu |
+| `input` | Keybinds via `KeyMappingHelper`: push-to-talk (default `V`, unused by vanilla); mute, deafen and open voice menu are unbound by default to avoid clashing with minimap and utility mods |
 | `ui` | Talking indicator over heads, own mic/connection HUD icon, peer list with volume/mute, settings (devices, PTT/VAD, range, bitrate, relay-only) |
-| `config` | TOML in `config/yakvc/client.toml`, passed to native as a string |
+| `config` | TOML in `config/yakvc/client.toml`, passed to native as a string. Includes `respect_chat_restrictions` and `mute_blocked_players`, both default `true` and both can be turned off |
 
 Fabric API events are preferred over mixins; the target is zero mixins in v1.
 
@@ -347,7 +350,8 @@ int32_t  yakvc_set_identity(YakVcEngine *e, const uint8_t uuid[16],
 int32_t  yakvc_set_tab_list(YakVcEngine *e, const uint8_t *uuids, size_t count);   // full replace, only when changed
 int32_t  yakvc_push_world(YakVcEngine *e, const double listener[5],               // x, y, z, yaw, pitch
                           const uint8_t *uuids, const double *xyz, size_t count); // tracked players
-int32_t  yakvc_set_input(YakVcEngine *e, uint32_t flags);                         // PTT | MUTED | DEAFENED
+int32_t  yakvc_set_input(YakVcEngine *e, uint32_t flags);                         // PTT | MUTED | DEAFENED | SPECTATOR
+int32_t  yakvc_set_game_volume(YakVcEngine *e, float voice);                     // game's Voice/Speech slider, 0..1
 int32_t  yakvc_set_peer_volume(YakVcEngine *e, const uint8_t uuid[16], float volume, bool muted);
 int32_t  yakvc_complete_join(YakVcEngine *e, uint32_t request_id, bool ok);
 int32_t  yakvc_poll_events(YakVcEngine *e, uint8_t *buf, size_t cap, size_t *written);
@@ -356,7 +360,7 @@ int32_t  yakvc_list_devices(YakVcEngine *e, uint8_t *buf, size_t cap, size_t *ne
 size_t   yakvc_last_error(uint8_t *buf, size_t cap);         // message for this thread's last failed call
 ```
 
-- **Header:** `cbindgen` generates `crates/yakvc-ffi/include/yakvc.h`, which is checked in. `cargo xtask header --check` fails CI when it is stale, so changes to the ABI show up in review. Java bindings are hand-written (13 functions) rather than generated with `jextract`, which is not part of the JDK.
+- **Header:** `cbindgen` generates `crates/yakvc-ffi/include/yakvc.h`, which is checked in. `cargo xtask header --check` fails CI when it is stale, so changes to the ABI show up in review. Java bindings are hand-written (14 functions) rather than generated with `jextract`, which is not part of the JDK.
 - **ABI check:** Java calls `yakvc_abi_version()` before anything else and refuses to continue on a mismatch; `yakvc_create` checks again.
 - **Memory:** each wrapper call uses a confined `Arena` for strings and small buffers, freed on return. `yakvc_push_world` and `yakvc_poll_events` run every tick, so their handles use `Linker.Option.critical(true)`, and Java passes `MemorySegment.ofArray(...)` heap arrays with no copy. Native code never keeps a pointer after the call returns.
 - **Events** are little-endian TLV records `u16 type | u16 len | payload` written into a reusable buffer: `JoinRequest{id, server_id}`, `RendezvousState`, `PeerState{uuid, connecting|direct|relayed|failed}`, `Talking{uuid, bool}`, `MicLevel{f32}`, `Error{code, msg}`. Records are never split; if the buffer fills, the rest stay queued for the next poll.
@@ -424,13 +428,15 @@ The design rule is **you only send voice to, and only play voice from, players y
 | Eavesdropping in transit | QUIC/TLS 1.3 end to end between peers; relays forward ciphertext only |
 | Remote eavesdropper (not on the server) | Discovery needs mutual tab-list presence; the sender only transmits to peers with a tracked entity in range |
 | Vanished staff / spectators listening | No tracked entity means no audio is sent to them or played from them. Peers whose tab-list game mode is spectator are excluded both ways. |
-| Peers learn your IP address | Inherent to direct P2P. A `relay_only` setting removes Iroh's IP transports (`Builder::clear_ip_transports()`), so no direct addresses are advertised and all traffic goes through the relay. |
+| Peers learn your IP address | Inherent to direct P2P. Because matched peers connect eagerly, every Yak VC user on the same server (or network, with a global tab list) learns your IP, not just nearby players. The README and settings screen say so plainly. A `relay_only` setting (opt-in, off by default) removes Iroh's IP transports (`Builder::clear_ip_transports()`), so no direct addresses are advertised and all traffic goes through the relay. |
 | Rendezvous learns who plays with whom | Only co-located mod users and their IPs; other tab-list entries stay hashed. No logs of pairs are kept; documented in a privacy note. |
-| Harassment | Per-player mute and volume persisted by UUID; "only hear friends" mode (a UUID allow-list in the client config); deafen. Mutes also tell the speaker to stop sending (`ReceiveState`). |
+| Harassment | Per-player mute and volume persisted by UUID; players blocked in vanilla Social Interactions are muted both ways (`mute_blocked_players`, default on); "only hear friends" mode (a UUID allow-list in the client config); deafen. Mutes also tell the speaker to stop sending (`ReceiveState`). |
 | Flooding a peer | Per-peer cap of 100 datagrams/s and 400 B/frame; overflow drops packets, and sustained abuse closes the connection with a 10-minute ban |
 | Rendezvous abuse | Rate limits per EndpointId and IP, pair-set caps, dev tickets rejected by production clients |
+| Relay used by unrelated Iroh apps | Relay access restricted to EndpointIds with a live rendezvous session |
+| Restricted (e.g. child) accounts | Voice is disabled when the Microsoft profile or launcher disables chat (`respect_chat_restrictions`, default on) |
 | Tampered native library | Releases built only in CI and downloaded from Modrinth/CurseForge with their file hashes. The in-jar SHA-256 manifest only catches a corrupted or swapped extracted copy; anyone who can modify the jar can modify the manifest too. |
-| Server owner doesn't want voice | No technical control exists. The client honours an opt-out marker `[no-yakvc]` in the server MOTD and disables itself there. The MOTD arrives after join in the server-data packet, so this works for direct connects too, not just the server list. |
+| Server owner doesn't want voice | No technical control exists. The client honours an opt-out marker `[no-yakvc]` in the server MOTD and disables itself there. The MOTD arrives after join in the server-data packet, so this works for direct connects too, not just the server list. Voice waits for that packet before starting. |
 
 **Dependencies on Mojang**
 
@@ -465,14 +471,14 @@ Each item below needs an answer before the milestone named in brackets; none of 
 
 - [x] **Project name:** Yak VC, identifier `yakvc`. Nothing is published to crates.io. The `yakvc` and `yak-vc` Modrinth slugs were free on 2026-10-03; CurseForge still needs checking before M6. The Java package `dev.yakvc` stays a placeholder until there is a domain to root it in. [M0]
 - [x] **License:** `MIT OR Apache-2.0` for the mod, crates and server, the usual Rust dual license. The SPDX expression goes in `[workspace.package]` and `fabric.mod.json`. Dependencies must stay compatible (e.g. libopus and `nnnoiseless` are BSD-3-Clause, Iroh is MIT/Apache); `cargo deny check licenses` enforces this in CI. [M0]
-- [ ] **Crate split:** keep `audio`, `client`, `ffi` and `testkit` as separate crates beyond `server` / `cli` / `shared`, or fold some together? [M0]
+- [x] **Crate split:** keep all seven. `ffi` must be its own cdylib, `testkit` depends on both `server` and `client`, and a separate `audio` crate enforces the rule that `net` knows nothing about audio, at little cost. [M0]
 - [x] **Iroh version:** pin `iroh` 1.3 (current stable, 2026-09-28; 1.0 shipped June 2026). Confirmed against its docs: `Connection::send_datagram` / `read_datagram` / `max_datagram_size`, `remote_id()`, path reporting via `paths()`, relay-only via `Builder::clear_ip_transports()`, and default n0 address lookup removable with `Builder::empty()` / `clear_address_lookup()`. Still to check at M2: which `iroh-relay` server features (QUIC address discovery, ACME, relay access control) are on in the pinned version. [M2]
-- [ ] **Separate ticket-signing key** from the server's endpoint key, so keys can rotate without changing the dial address? v1 assumes one key. [M3]
+- [x] **Separate ticket-signing key:** yes. Tickets are signed by an issuer key distinct from the rendezvous endpoint key, so several instances can share one issuer and either key can rotate on its own. [M3]
 - [x] **Target Minecraft version:** Minecraft 26.3 on Java 25. Fabric uses Mojang mappings there, and Fabric API names match them (e.g. `KeyMappingHelper`). [M4]
 - [x] **JNI or FFM for the bridge:** FFM, over a `cbindgen`-generated C ABI (see the Fabric mod section). [M4]
-- [ ] **Output path:** keep `cpal` + our own panning, or hand PCM to Minecraft's OpenAL for HRTF and the game's sound sliders? At minimum, scale by the game's Voice/Speech volume. [M4]
+- [x] **Output path:** `cpal` + our own panning in v1, scaled by the game's Voice/Speech slider (`yakvc_set_game_volume`). OpenAL/HRTF stays post-v1. [M4]
 - [x] **Spectator tracking:** vanilla clients do receive spectator player entities and render them invisible client-side, unless the spectator is viewing through another entity. Exclusion therefore uses the tab-list game mode, not entity tracking (see the receive path). Re-check in a gametest at M4. [M4]
-- [ ] **Default keybinds** that don't clash with vanilla or popular mods. [M4]
+- [x] **Default keybinds:** push-to-talk on `V`; mute, deafen and voice menu unbound. Re-check against popular modpacks before M6. [M4]
 - [ ] **Mojang `hasJoined` limits:** third-party reports put `sessionserver` at about 400 requests per 10 s per source IP (HTTP 429 above that); Mojang does not document it officially. With 12 h cached tickets, even 100k active users average about 2–3 auths/s, so steady state fits. The risk is a burst after mass ticket expiry or a client bug, so renew tickets with jitter and back off on 429. Measure at M5. [M5]
-- [ ] **Opt-out mechanism:** is a MOTD marker enough, or should the rendezvous also keep an admin-requested denylist (which needs a way to identify servers)? [M6]
-- [ ] **Hosting:** who runs the default rendezvous and relay, in which region(s), with what bandwidth budget. [M6]
+- [x] **Opt-out mechanism:** MOTD marker only in v1. A rendezvous denylist would require sending server addresses to the rendezvous, which the privacy model avoids. If owners object to a visible marker, add a DNS TXT record (`_yakvc.<host>`) that the client checks locally. [M6]
+- [ ] **Hosting:** the project maintainer runs the default rendezvous and relay on a single VPS in one region. Still open: which region, and the bandwidth budget. [M6]
