@@ -17,9 +17,9 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use tokio::sync::watch;
 use yakvc_audio::{
-    DeviceChoice, Encoder, FRAME_SAMPLES, FrameSink, FrameSource, InputConfig, InputProcessor,
-    JitterConfig, Microphone, Mixer, MonoFrame, Packet, Pulled, ReceiveStream, Speakers,
-    StereoFrame, StreamStats,
+    AudioError, DeviceChoice, Encoder, FRAME_SAMPLES, FrameSink, FrameSource, InputConfig,
+    InputProcessor, JitterConfig, Microphone, Mixer, MonoFrame, Packet, Pulled, ReceiveStream,
+    Speakers, StereoFrame, StreamStats,
 };
 use yakvc_shared::voice::{VERSION, VoiceHeader, VoiceMsg};
 use yakvc_shared::{ProtocolId, Uuid};
@@ -87,8 +87,6 @@ enum ToAudio {
         arrived: Instant,
     },
     PeerGone(Uuid),
-    /// The configured devices changed.
-    ReopenDevices,
 }
 
 impl Voice {
@@ -136,7 +134,14 @@ impl Voice {
     }
 
     pub(crate) fn set_world(&self, world: World) {
-        self.shared.state.lock().unwrap().world = world;
+        let mut state = self.shared.state.lock().unwrap();
+        state.set_world(world, Instant::now());
+    }
+
+    /// The audio thread notices the change and reopens the speakers if
+    /// they follow the game.
+    pub(crate) fn set_game_device(&self, name: Option<&str>) {
+        self.shared.state.lock().unwrap().game_device = name.map(str::to_owned);
     }
 
     pub(crate) fn set_input(&self, input: Input) {
@@ -162,18 +167,13 @@ impl Voice {
         self.shared.state.lock().unwrap().direct = direct;
     }
 
+    /// The audio thread reopens devices whose configured name changed.
     pub(crate) fn update_config(&self, config: &Config) {
-        let devices_changed = {
+        {
             let mut state = self.shared.state.lock().unwrap();
-            let changed = state.audio.input_device != config.audio.input_device
-                || state.audio.output_device != config.audio.output_device;
             state.audio = config.audio.clone();
             state.voice_range = config.voice_range;
             state.friends_only = config.friends_only.clone();
-            changed
-        };
-        if devices_changed {
-            self.shared.send_to_audio(ToAudio::ReopenDevices);
         }
         self.shared.receive_policy.send_replace(());
     }
@@ -337,11 +337,8 @@ struct AudioLoop {
     shared: Arc<Shared>,
     from_net: std_mpsc::Receiver<ToAudio>,
     stop: Arc<AtomicBool>,
-    source: Option<Box<dyn FrameSource>>,
-    sink: Option<Box<dyn FrameSink>>,
-    /// The caller supplied the source/sink, so config changes don't reopen it.
-    custom_source: bool,
-    custom_sink: bool,
+    source: Device<Box<dyn FrameSource>>,
+    sink: Device<Box<dyn FrameSink>>,
     input: InputProcessor,
     input_config: InputConfig,
     encoder: Option<Encoder>,
@@ -370,13 +367,12 @@ impl AudioLoop {
         io: AudioIo,
         stop: Arc<AtomicBool>,
     ) -> AudioLoop {
-        let audio = shared.state.lock().unwrap().audio.clone();
-        let input_config = input_config(&audio);
+        let state = shared.state.lock().unwrap().clone();
+        let audio = &state.audio;
+        let input_config = input_config(audio);
         AudioLoop {
-            custom_source: io.source.is_some(),
-            custom_sink: io.sink.is_some(),
-            source: io.source,
-            sink: io.sink,
+            source: Device::new("microphone", io.source, state.input_device()),
+            sink: Device::new("speakers", io.sink, state.output_device()),
             input: InputProcessor::new(input_config.clone()),
             input_config,
             encoder: None,
@@ -394,7 +390,6 @@ impl AudioLoop {
     }
 
     fn run(mut self) {
-        self.open_devices();
         self.encoder = match Encoder::new(self.bitrate) {
             Ok(encoder) => Some(encoder),
             Err(err) => {
@@ -404,8 +399,10 @@ impl AudioLoop {
         };
         let mut frame: MonoFrame = [0.0; FRAME_SAMPLES];
         while !self.stop.load(Ordering::Relaxed) {
+            self.maintain_devices();
             while self
                 .source
+                .io
                 .as_mut()
                 .is_some_and(|source| source.read(&mut frame))
             {
@@ -414,35 +411,35 @@ impl AudioLoop {
             while let Ok(msg) = self.from_net.try_recv() {
                 self.handle(msg);
             }
-            while self.sink.as_ref().is_some_and(|sink| sink.wants_frame()) {
+            while self.sink.io.as_ref().is_some_and(|sink| sink.wants_frame()) {
                 self.play();
             }
             std::thread::sleep(AUDIO_TICK);
         }
     }
 
-    /// Opens the configured microphone and speakers, unless the caller
-    /// supplied its own. A missing device is reported but not fatal: the
-    /// player can still hear without a microphone, and vice versa.
-    fn open_devices(&mut self) {
-        let audio = self.shared.state.lock().unwrap().audio.clone();
-        if !self.custom_source {
-            self.source = match Microphone::open(&device_choice(&audio.input_device)) {
-                Ok(mic) => Some(Box::new(mic)),
-                Err(err) => {
-                    self.error(format!("cannot open the microphone: {err}"));
-                    None
-                }
-            };
+    /// Opens, reopens and retries the microphone and speakers. A missing or
+    /// failed device is reported but not fatal: the player can still hear
+    /// without a microphone, and vice versa.
+    fn maintain_devices(&mut self) {
+        let now = Instant::now();
+        let (input, output) = {
+            let state = self.shared.state.lock().unwrap();
+            (state.input_device(), state.output_device())
+        };
+        let failure = self.source.io.as_ref().and_then(|source| source.failure());
+        let problem = self.source.maintain(failure, &input, now, |choice| {
+            Microphone::open(choice).map(|mic| Box::new(mic) as Box<dyn FrameSource>)
+        });
+        if let Some(problem) = problem {
+            self.error(problem);
         }
-        if !self.custom_sink {
-            self.sink = match Speakers::open(&device_choice(&audio.output_device)) {
-                Ok(speakers) => Some(Box::new(speakers)),
-                Err(err) => {
-                    self.error(format!("cannot open the speakers: {err}"));
-                    None
-                }
-            };
+        let failure = self.sink.io.as_ref().and_then(|sink| sink.failure());
+        let problem = self.sink.maintain(failure, &output, now, |choice| {
+            Speakers::open(choice).map(|speakers| Box::new(speakers) as Box<dyn FrameSink>)
+        });
+        if let Some(problem) = problem {
+            self.error(problem);
         }
     }
 
@@ -540,7 +537,7 @@ impl AudioLoop {
                 arrived,
             } => {
                 // With nothing to play to, buffering would only grow.
-                if self.sink.is_none() {
+                if self.sink.io.is_none() {
                     return;
                 }
                 let remote = self.remotes.entry(from).or_insert_with(|| Remote {
@@ -562,13 +559,13 @@ impl AudioLoop {
                 }
                 self.shared.stats.lock().unwrap().remove(&uuid);
             }
-            ToAudio::ReopenDevices => self.open_devices(),
         }
     }
 
     fn play(&mut self) {
         let now = Instant::now();
-        let state = self.shared.state.lock().unwrap().clone();
+        let mut state = self.shared.state.lock().unwrap().clone();
+        state.world = state.world_at(now);
         let mut voices: Vec<(MonoFrame, yakvc_audio::Spatial)> = Vec::new();
         let mut talking_changes = Vec::new();
         for (&uuid, remote) in &mut self.remotes {
@@ -599,7 +596,7 @@ impl AudioLoop {
             voices.iter().map(|(frame, spatial)| (frame, *spatial)),
             &mut out,
         );
-        if let Some(sink) = &mut self.sink {
+        if let Some(sink) = &mut self.sink.io {
             sink.write(&out);
         }
 
@@ -627,10 +624,79 @@ fn input_config(audio: &AudioConfig) -> InputConfig {
     }
 }
 
-fn device_choice(name: &Option<String>) -> DeviceChoice {
-    match name {
-        Some(name) => DeviceChoice::Named(name.clone()),
-        None => DeviceChoice::Default,
+/// The microphone or the speakers. A device the audio loop opened itself
+/// is reopened when the wanted device changes, and retried every
+/// [`REOPEN_INTERVAL`] while it is missing or has failed. One the caller
+/// supplied is never reopened.
+struct Device<T> {
+    /// "microphone" or "speakers", for messages.
+    name: &'static str,
+    io: Option<T>,
+    /// What `io` was opened (or last tried) as. `None` when the caller
+    /// supplied `io`.
+    opened_as: Option<DeviceChoice>,
+    retry_at: Instant,
+    /// The current problem has been reported. Cleared once the device works,
+    /// so each outage is reported once rather than at every retry.
+    reported: bool,
+}
+
+/// How often a missing or failed device is tried again.
+const REOPEN_INTERVAL: Duration = Duration::from_secs(2);
+
+impl<T> Device<T> {
+    /// The caller's `io`, or else our own device `wanted`, opened on the
+    /// first [`maintain`](Self::maintain).
+    fn new(name: &'static str, io: Option<T>, wanted: DeviceChoice) -> Self {
+        Device {
+            name,
+            opened_as: io.is_none().then_some(wanted),
+            io,
+            retry_at: Instant::now(),
+            reported: false,
+        }
+    }
+
+    /// Drops `io` once it reports a `failure`, and opens our own device if
+    /// it is due for a retry or `wanted` changed. Returns a problem to
+    /// report, if it is a new one.
+    fn maintain(
+        &mut self,
+        failure: Option<String>,
+        wanted: &DeviceChoice,
+        now: Instant,
+        open: impl FnOnce(&DeviceChoice) -> Result<T, AudioError>,
+    ) -> Option<String> {
+        let mut problem = None;
+        if let Some(reason) = failure {
+            self.io = None;
+            self.retry_at = now + REOPEN_INTERVAL;
+            problem = Some(format!("the {} stopped working: {reason}", self.name));
+        }
+        if let Some(opened_as) = &self.opened_as {
+            let changed = opened_as != wanted;
+            if changed || (self.io.is_none() && now >= self.retry_at) {
+                self.opened_as = Some(wanted.clone());
+                self.io = None;
+                match open(wanted) {
+                    Ok(io) => {
+                        self.io = Some(io);
+                        self.reported = false;
+                    }
+                    Err(err) => {
+                        self.retry_at = now + REOPEN_INTERVAL;
+                        // A different device is a new problem.
+                        self.reported &= !changed;
+                        problem = Some(format!("cannot open the {}: {err}", self.name));
+                    }
+                }
+            }
+        }
+        if problem.is_some() && !self.reported {
+            self.reported = true;
+            return problem;
+        }
+        None
     }
 }
 
@@ -646,5 +712,82 @@ impl std::fmt::Debug for AudioIo {
             .field("source", &self.source.is_some())
             .field("sink", &self.sink.is_some())
             .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn missing(choice: &DeviceChoice) -> Result<&'static str, AudioError> {
+        Err(AudioError::NoDevice(format!("{choice:?}")))
+    }
+
+    #[test]
+    fn a_missing_device_is_reported_once_and_retried() {
+        let mut mic = Device::new("microphone", None, DeviceChoice::Default);
+        let start = Instant::now();
+        let wanted = DeviceChoice::Default;
+        assert!(mic.maintain(None, &wanted, start, missing).is_some());
+        // Not retried before the interval, and not reported again after.
+        assert_eq!(mic.maintain(None, &wanted, start, |_| panic!()), None);
+        let later = start + REOPEN_INTERVAL;
+        assert_eq!(mic.maintain(None, &wanted, later, missing), None);
+        let later = later + REOPEN_INTERVAL;
+        assert_eq!(mic.maintain(None, &wanted, later, |_| Ok("mic")), None);
+        assert_eq!(mic.io, Some("mic"));
+    }
+
+    #[test]
+    fn a_failed_device_is_reported_and_reopened() {
+        let wanted = DeviceChoice::Default;
+        let mut mic = Device::new("microphone", None, wanted.clone());
+        let start = Instant::now();
+        mic.maintain(None, &wanted, start, |_| Ok("first"));
+        assert_eq!(mic.io, Some("first"));
+
+        let problem = mic.maintain(Some("unplugged".into()), &wanted, start, |_| panic!());
+        assert_eq!(
+            problem.as_deref(),
+            Some("the microphone stopped working: unplugged")
+        );
+        assert_eq!(mic.io, None);
+        let later = start + REOPEN_INTERVAL;
+        assert_eq!(mic.maintain(None, &wanted, later, |_| Ok("second")), None);
+        assert_eq!(mic.io, Some("second"));
+        // A later failure is a new outage, so it is reported too.
+        assert!(
+            mic.maintain(Some("again".into()), &wanted, later, |_| panic!())
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn a_new_wanted_device_is_opened_at_once() {
+        let mut speakers = Device::new("speakers", None, DeviceChoice::Default);
+        let start = Instant::now();
+        speakers.maintain(None, &DeviceChoice::Default, start, |_| Ok("default"));
+        assert_eq!(speakers.io, Some("default"));
+        let game = DeviceChoice::ClosestTo("Headphones".into());
+        speakers.maintain(None, &game, start, |choice| {
+            assert_eq!(*choice, game);
+            Ok("headphones")
+        });
+        assert_eq!(speakers.io, Some("headphones"));
+    }
+
+    #[test]
+    fn a_supplied_device_is_never_reopened() {
+        let start = Instant::now();
+        let later = start + REOPEN_INTERVAL;
+        let mut sink = Device::new("speakers", Some("recorder"), DeviceChoice::Default);
+        let other = DeviceChoice::Named("other".into());
+        assert_eq!(sink.maintain(None, &other, start, |_| panic!()), None);
+        assert!(
+            sink.maintain(Some("broke".into()), &other, start, |_| panic!())
+                .is_some()
+        );
+        assert_eq!(sink.maintain(None, &other, later, |_| panic!()), None);
+        assert_eq!(sink.io, None);
     }
 }

@@ -22,7 +22,7 @@ use std::time::{Duration, SystemTime};
 
 use bytes::Bytes;
 use iroh::endpoint::{Connection, RecvStream, SendStream, VarInt};
-use iroh::{Endpoint, EndpointAddr, EndpointId};
+use iroh::{Endpoint, EndpointAddr, EndpointId, Watcher};
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::AbortHandle;
@@ -191,6 +191,8 @@ struct Inner {
     peers: Mutex<HashMap<EndpointId, PeerEntry>>,
     banned: Bans,
     joins: Mutex<Joins>,
+    /// The rendezvous session task, stopped by direct-call mode.
+    rendezvous: Mutex<Option<AbortHandle>>,
 }
 
 /// Peers that flooded us, and until when they are refused.
@@ -208,6 +210,19 @@ struct PeerEntry {
     retry_after: Option<tokio::time::Instant>,
     /// The task that keeps a listed peer connected.
     dialer: Option<AbortHandle>,
+    /// How far away the player is, while it has a tracked entity.
+    distance: Option<f64>,
+    /// When the player was last tracked, or when we learned of it.
+    untracked_since: tokio::time::Instant,
+}
+
+/// How much a peer deserves one of the [`MAX_PEERS`] connections: tracked
+/// peers nearest first, then untracked ones, most recently tracked first.
+/// Lower is better; the derived order compares the variant first.
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+enum Rank {
+    Tracked { distance: f64 },
+    Untracked { for_secs: f64 },
 }
 
 /// A verified connection to a peer.
@@ -247,6 +262,10 @@ struct StatusFlags {
 /// Most open peer connections, see "Connection lifecycle" in DESIGN.md.
 const MAX_PEERS: usize = 64;
 
+/// How long to wait for the first net report. Iroh gives up on a report
+/// after 5 s, and the first one starts once the endpoint is bound.
+const NET_REPORT_WAIT: Duration = Duration::from_secs(10);
+
 /// How long a peer that failed the handshake is left alone.
 const RETRY_AFTER_FAILURE: Duration = Duration::from_secs(60);
 
@@ -271,10 +290,25 @@ impl Net {
             peers: Mutex::new(HashMap::new()),
             banned: Bans::default(),
             joins: Mutex::new(Joins::default()),
+            rendezvous: Mutex::new(None),
         });
         tokio::spawn(peer::accept_loop(inner.clone()));
         tokio::spawn(close_hidden_peers(inner.clone()));
+        tokio::spawn(evict_over_cap(inner.clone()));
         Net { inner }
+    }
+
+    /// The distance to each player with a tracked entity, as a hint for
+    /// which peers to keep connected when there are too many.
+    pub(crate) fn set_tracked(&self, distances: &HashMap<Uuid, f64>) {
+        let now = tokio::time::Instant::now();
+        let mut peers = self.inner.peers.lock().unwrap();
+        for entry in peers.values_mut() {
+            entry.distance = distances.get(&entry.uuid).copied();
+            if entry.distance.is_some() {
+                entry.untracked_since = now;
+            }
+        }
     }
 
     pub(crate) fn endpoint_id(&self) -> EndpointId {
@@ -310,9 +344,11 @@ impl Net {
     /// keeps the ticket fresh, sends pair tokens and connects to matches.
     pub(crate) fn start_rendezvous(&self, config: RendezvousConfig, ticket_cache: PathBuf) {
         let inner = self.inner.clone();
-        self.inner
+        let task = self
+            .inner
             .runtime
             .spawn(rendezvous::run(inner, config, ticket_cache));
+        *self.inner.rendezvous.lock().unwrap() = Some(task.abort_handle());
     }
 
     /// Answers a [`Event::JoinRequest`].
@@ -324,8 +360,13 @@ impl Net {
     }
 
     /// Switches to direct-call mode: peers are trusted on a self-signed
-    /// `ticket` and the tab list is ignored. For `yakvc-cli call`.
+    /// `ticket` and the tab list is ignored. For `yakvc-cli call`. The
+    /// rendezvous session stops, because nobody can answer its Mojang
+    /// challenge; the endpoint keeps the configured relay as a fallback path.
     pub(crate) fn enable_direct_calls(&self, ticket: SignedTicket) {
+        if let Some(rendezvous) = self.inner.rendezvous.lock().unwrap().take() {
+            rendezvous.abort();
+        }
         self.inner.trust.lock().unwrap().direct_calls = true;
         self.inner.own_ticket.send_replace(Some(ticket));
     }
@@ -356,6 +397,20 @@ impl Net {
                     .and_then(|link| selected_rtt(&link.conn)),
             })
             .collect()
+    }
+
+    /// The endpoint's latest net report, waiting a while for the first one.
+    /// `None` without a relay, because the probes go to relays.
+    pub(crate) async fn net_report(&self) -> Option<iroh::unstable_net_report::NetReport> {
+        let endpoint = self.inner.endpoint.clone();
+        // On the engine's runtime, so any async caller can await it.
+        let report = self.inner.runtime.spawn(async move {
+            let mut reports = endpoint.net_report();
+            tokio::time::timeout(NET_REPORT_WAIT, reports.initialized())
+                .await
+                .ok()
+        });
+        report.await.ok().flatten()
     }
 
     /// Closes every connection and the endpoint.
@@ -452,6 +507,26 @@ impl Inner {
         (id, rx)
     }
 
+    /// Peers we can see, best first (see [`Rank`]).
+    fn ranked(&self) -> Vec<EndpointId> {
+        let direct_calls = self.trust.lock().unwrap().direct_calls;
+        let visible = self.tab_list.borrow();
+        let now = tokio::time::Instant::now();
+        let peers = self.peers.lock().unwrap();
+        let ranks = peers
+            .iter()
+            .filter(|(_, entry)| direct_calls || visible.contains(&entry.uuid))
+            .map(|(&id, entry)| (id, entry.rank(now)))
+            .collect();
+        by_rank(ranks)
+    }
+
+    /// Whether `remote` ranks among the [`MAX_PEERS`] best peers, so it
+    /// deserves a connection even at the cap.
+    fn wants(&self, remote: EndpointId) -> bool {
+        self.ranked().iter().take(MAX_PEERS).any(|&id| id == remote)
+    }
+
     fn is_banned(&self, remote: EndpointId) -> bool {
         let mut banned = self.banned.lock().unwrap();
         banned.retain(|_, until| *until > tokio::time::Instant::now());
@@ -500,6 +575,48 @@ async fn close_hidden_peers(inner: Arc<Inner>) {
     }
 }
 
+/// Closes the worst-ranked connections while there are more than
+/// [`MAX_PEERS`]. That happens when a peer that now ranks higher, say one
+/// that just came into tracking range, connects at the cap.
+async fn evict_over_cap(inner: Arc<Inner>) {
+    let mut interval = tokio::time::interval(Duration::from_secs(1));
+    loop {
+        interval.tick().await;
+        let ranked = inner.ranked();
+        let peers = inner.peers.lock().unwrap();
+        let open: HashSet<EndpointId> = ranked
+            .iter()
+            .filter(|&id| peers.get(id).is_some_and(|e| e.open_conn().is_some()))
+            .copied()
+            .collect();
+        for id in evictions(&ranked, &open, MAX_PEERS) {
+            if let Some(conn) = peers.get(&id).and_then(PeerEntry::open_conn) {
+                tracing::debug!(remote = %id.fmt_short(), "too many peers, evicting");
+                close(conn, CloseCode::Normal);
+            }
+        }
+    }
+}
+
+/// Sorts peers best first.
+fn by_rank(mut peers: Vec<(EndpointId, Rank)>) -> Vec<EndpointId> {
+    peers.sort_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    peers.into_iter().map(|(id, _)| id).collect()
+}
+
+/// The `open` connections to close, worst first, to get down to `max`.
+/// `ranked` is best first.
+fn evictions(ranked: &[EndpointId], open: &HashSet<EndpointId>, max: usize) -> Vec<EndpointId> {
+    let excess = open.len().saturating_sub(max);
+    ranked
+        .iter()
+        .rev()
+        .filter(|&id| open.contains(id))
+        .take(excess)
+        .copied()
+        .collect()
+}
+
 impl PeerEntry {
     fn new(uuid: Uuid, name: String, events: &EventSender) -> PeerEntry {
         PeerEntry {
@@ -514,6 +631,17 @@ impl PeerEntry {
             }),
             retry_after: None,
             dialer: None,
+            distance: None,
+            untracked_since: tokio::time::Instant::now(),
+        }
+    }
+
+    fn rank(&self, now: tokio::time::Instant) -> Rank {
+        match self.distance {
+            Some(distance) => Rank::Tracked { distance },
+            None => Rank::Untracked {
+                for_secs: (now - self.untracked_since).as_secs_f64(),
+            },
         }
     }
 
@@ -661,6 +789,29 @@ mod tests {
             Err(CloseCode::BadTicket),
             "direct calls still bind the endpoint"
         );
+    }
+
+    #[test]
+    fn tracked_peers_rank_nearest_first_then_untracked_most_recent_first() {
+        let ids: Vec<EndpointId> = (0..5).map(|_| SecretKey::generate().public()).collect();
+        let ranked = by_rank(vec![
+            (ids[4], Rank::Untracked { for_secs: 600.0 }),
+            (ids[2], Rank::Tracked { distance: 90.0 }),
+            (ids[3], Rank::Untracked { for_secs: 5.0 }),
+            (ids[0], Rank::Tracked { distance: 3.0 }),
+            (ids[1], Rank::Tracked { distance: 40.0 }),
+        ]);
+        assert_eq!(ranked, ids);
+    }
+
+    #[test]
+    fn eviction_closes_the_worst_open_connections_down_to_the_cap() {
+        let ids: Vec<EndpointId> = (0..5).map(|_| SecretKey::generate().public()).collect();
+        // 1 isn't open; the other four are, one over a cap of three.
+        let open = HashSet::from([ids[0], ids[2], ids[3], ids[4]]);
+        assert_eq!(evictions(&ids, &open, 3), vec![ids[4]]);
+        assert_eq!(evictions(&ids, &open, 2), vec![ids[4], ids[3]]);
+        assert!(evictions(&ids, &open, 4).is_empty());
     }
 
     #[test]

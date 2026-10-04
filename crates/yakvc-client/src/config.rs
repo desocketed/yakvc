@@ -38,7 +38,11 @@ pub struct RendezvousConfig {
 /// example from `yakvc_server::Server::endpoint_addr`.
 impl From<EndpointAddr> for RendezvousConfig {
     fn from(addr: EndpointAddr) -> Self {
-        todo!("{addr:?}")
+        RendezvousConfig {
+            endpoint_id: addr.id,
+            addrs: addr.ip_addrs().copied().collect(),
+            relay: addr.relay_urls().next().cloned(),
+        }
     }
 }
 
@@ -186,6 +190,23 @@ mod tests {
         assert_eq!(rendezvous.endpoint_id, id);
         assert_eq!(rendezvous.addrs, vec!["127.0.0.1:4433".parse().unwrap()]);
         assert!(rendezvous.relay.is_some());
+    }
+
+    #[test]
+    fn rendezvous_config_from_an_endpoint_addr() {
+        use iroh::TransportAddr;
+
+        let id = iroh::SecretKey::generate().public();
+        let ip: SocketAddr = "192.0.2.1:4433".parse().unwrap();
+        let relay: RelayUrl = "https://relay.example.com/".parse().unwrap();
+        let addr = EndpointAddr::from_parts(
+            id,
+            [TransportAddr::Ip(ip), TransportAddr::Relay(relay.clone())],
+        );
+        let config = RendezvousConfig::from(addr);
+        assert_eq!(config.endpoint_id, id);
+        assert_eq!(config.addrs, vec![ip]);
+        assert_eq!(config.relay, Some(relay));
     }
 
     #[test]

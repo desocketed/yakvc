@@ -13,7 +13,9 @@ sim = []
 
 [dependencies]
 bytes.workspace = true
-iroh.workspace = true
+# The port mapper (UPnP, NAT-PMP, PCP) helps hole-punching behind home
+# routers. The net report is for `yakvc net report`.
+iroh = { workspace = true, features = ["portmapper", "unstable-net-report"] }
 rand.workspace = true
 serde.workspace = true
 thiserror.workspace = true
@@ -24,6 +26,7 @@ yakvc-audio.workspace = true
 yakvc-shared.workspace = true
 
 [dev-dependencies]
+iroh-relay.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time", "macros"] }
 
 [lints]

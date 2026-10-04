@@ -2,19 +2,20 @@
 //! and audio pipeline", as plain functions over a snapshot of game state.
 
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
-use yakvc_audio::Spatial;
+use yakvc_audio::{DeviceChoice, Spatial};
 use yakvc_shared::Uuid;
 
 use crate::config::{Activation, AudioConfig};
 use crate::engine::PeerAudio;
-use crate::world::{Input, Pose, Vec3, World};
+use crate::world::{Input, Pose, Vec3, World, distance, interpolate};
 
 /// Within this distance a speaker plays at full volume.
 const FULL_VOLUME_DISTANCE: f64 = 4.0;
-/// The sender adds this to its range, since its view of positions may lag
-/// the receiver's. The receiver enforces the exact range.
-const SEND_MARGIN: f64 = 8.0;
+/// Snapshots further apart than this are not interpolated: the game paused
+/// or lagged, so gliding would only move voices late.
+const MAX_SNAPSHOT_GAP: Duration = Duration::from_millis(250);
 /// Directly behind the listener a speaker is this much quieter.
 const BEHIND_ATTENUATION: f64 = 0.3;
 const MAX_RECIPIENTS: usize = 32;
@@ -33,13 +34,22 @@ const PACKETS_PER_SECOND: u32 = 50;
 #[derive(Debug, Clone)]
 pub(crate) struct VoiceState {
     pub own_uuid: Option<Uuid>,
+    /// The latest snapshot, which decides who is sent to and heard.
     pub world: World,
+    /// The snapshot before `world`, and when each arrived, so playback can
+    /// glide between them.
+    previous_world: World,
+    previous_at: Instant,
+    world_at: Instant,
     pub input: Input,
     pub game_volume: f32,
     pub peer_audio: HashMap<Uuid, PeerAudio>,
     pub voice_range: f32,
     pub friends_only: Option<Vec<Uuid>>,
     pub audio: AudioConfig,
+    /// The game's selected sound device, which output follows unless
+    /// `audio.output_device` is set.
+    pub game_device: Option<String>,
     /// A direct call with no game (`yakvc-cli call`): every peer is heard at
     /// full volume and sent to, whatever the world says.
     pub direct: bool,
@@ -68,16 +78,55 @@ impl VoiceState {
         voice_range: f32,
         friends_only: Option<Vec<Uuid>>,
     ) -> Self {
+        let now = Instant::now();
         VoiceState {
             own_uuid: None,
             world: World::default(),
+            previous_world: World::default(),
+            previous_at: now,
+            world_at: now,
             input: Input::default(),
             game_volume: 1.0,
             peer_audio: HashMap::new(),
             voice_range,
             friends_only,
             audio,
+            game_device: None,
             direct: false,
+        }
+    }
+
+    pub(crate) fn set_world(&mut self, world: World, now: Instant) {
+        self.previous_world = std::mem::replace(&mut self.world, world);
+        self.previous_at = std::mem::replace(&mut self.world_at, now);
+    }
+
+    /// The world as playback should hear it at `now`: one snapshot behind,
+    /// moving smoothly from the previous snapshot to the latest, so gain and
+    /// pan don't step at every 20 Hz tick.
+    pub(crate) fn world_at(&self, now: Instant) -> World {
+        let interval = self.world_at.saturating_duration_since(self.previous_at);
+        if interval.is_zero() || interval > MAX_SNAPSHOT_GAP {
+            return self.world.clone();
+        }
+        let since = now.saturating_duration_since(self.world_at);
+        let t = since.as_secs_f64() / interval.as_secs_f64();
+        interpolate(&self.previous_world, &self.world, t.min(1.0))
+    }
+
+    pub(crate) fn input_device(&self) -> DeviceChoice {
+        match &self.audio.input_device {
+            Some(name) => DeviceChoice::Named(name.clone()),
+            None => DeviceChoice::Default,
+        }
+    }
+
+    /// The configured output device, else the one closest to the game's.
+    pub(crate) fn output_device(&self) -> DeviceChoice {
+        match (&self.audio.output_device, &self.game_device) {
+            (Some(name), _) => DeviceChoice::Named(name.clone()),
+            (None, Some(game)) => DeviceChoice::ClosestTo(game.clone()),
+            (None, None) => DeviceChoice::Default,
         }
     }
 
@@ -119,7 +168,7 @@ impl VoiceState {
         })
     }
 
-    /// The distance to `peer` if it is close enough to send to. Whether the
+    /// The distance to `peer` if it is within our voice range. Whether the
     /// peer wants our audio is up to the peer and checked separately.
     pub(crate) fn send_distance(&self, peer: Uuid) -> Option<f64> {
         if !self.is_friend(peer) {
@@ -129,7 +178,7 @@ impl VoiceState {
             return Some(0.0);
         }
         let distance = distance(self.world.listener.pos, self.position(peer)?);
-        (distance <= f64::from(self.voice_range) + SEND_MARGIN).then_some(distance)
+        (distance <= f64::from(self.voice_range)).then_some(distance)
     }
 
     fn position(&self, peer: Uuid) -> Option<Vec3> {
@@ -189,11 +238,6 @@ pub(crate) fn spatial(listener: &Pose, source: Vec3, range: f32) -> Option<Spati
         gain: gain as f32,
         pan: pan as f32,
     })
-}
-
-fn distance(a: Vec3, b: Vec3) -> f64 {
-    let (dx, dy, dz) = (a.x - b.x, a.y - b.y, a.z - b.z);
-    (dx * dx + dy * dy + dz * dz).sqrt()
 }
 
 /// Picks recipients nearest first, steps the bitrate down for big crowds,
@@ -299,14 +343,20 @@ mod tests {
     }
 
     #[test]
-    fn receiver_range_is_its_own() {
-        let mut state = state();
-        state.voice_range = 20.0;
-        state.world.players = vec![(uuid(1), at(25.0, 0.0))];
-        // Within the sender margin, so a sender with the same range would
-        // still send, but we don't play it.
-        assert_eq!(state.playback(uuid(1)), None);
-        assert!(state.send_distance(uuid(1)).is_some());
+    fn the_shorter_range_applies_between_two_players() {
+        // Alice's range is 20, Bob's 48, and they stand 25 apart.
+        let mut alice = state();
+        alice.voice_range = 20.0;
+        alice.world.players = vec![(uuid(2), at(25.0, 0.0))];
+        let mut bob = state();
+        bob.world.players = vec![(uuid(1), at(25.0, 0.0))];
+
+        // Alice doesn't send to Bob, nor play what Bob sends her.
+        assert_eq!(alice.send_distance(uuid(2)), None);
+        assert_eq!(alice.playback(uuid(2)), None);
+        // Bob would send and play, but Alice's side stops both directions.
+        assert!(bob.send_distance(uuid(1)).is_some());
+        assert!(bob.playback(uuid(1)).is_some());
     }
 
     #[test]
@@ -378,12 +428,56 @@ mod tests {
     }
 
     #[test]
-    fn send_range_includes_the_margin() {
+    fn send_range_is_exactly_the_voice_range() {
         let mut state = state();
-        state.world.players = vec![(uuid(1), at(55.0, 0.0)), (uuid(2), at(57.0, 0.0))];
-        assert_eq!(state.send_distance(uuid(1)), Some(55.0));
+        state.world.players = vec![(uuid(1), at(48.0, 0.0)), (uuid(2), at(48.5, 0.0))];
+        assert_eq!(state.send_distance(uuid(1)), Some(48.0));
         assert_eq!(state.send_distance(uuid(2)), None);
         assert_eq!(state.send_distance(uuid(3)), None, "untracked");
+    }
+
+    #[test]
+    fn playback_glides_between_snapshots() {
+        let mut state = state();
+        let start = Instant::now();
+        let tick = Duration::from_millis(50);
+        let world = |x: f64| World {
+            listener: listener(0.0),
+            players: vec![(uuid(1), at(x, 0.0))],
+        };
+        state.set_world(world(10.0), start);
+        state.set_world(world(20.0), start + tick);
+
+        let x_at = |t: Duration| state.world_at(start + t).players[0].1.x;
+        assert_eq!(x_at(tick), 10.0, "one snapshot behind");
+        assert_eq!(x_at(tick + tick / 2), 15.0);
+        assert_eq!(x_at(tick * 2), 20.0);
+        assert_eq!(x_at(tick * 10), 20.0, "stops at the latest");
+
+        // After a long gap there is nothing sensible to glide from.
+        state.set_world(world(40.0), start + Duration::from_secs(5));
+        assert_eq!(
+            state.world_at(start + Duration::from_secs(5)).players[0]
+                .1
+                .x,
+            40.0
+        );
+    }
+
+    #[test]
+    fn output_follows_the_game_device_unless_configured() {
+        let mut state = state();
+        assert_eq!(state.output_device(), DeviceChoice::Default);
+        state.game_device = Some("OpenAL Soft on Headphones".into());
+        assert_eq!(
+            state.output_device(),
+            DeviceChoice::ClosestTo("OpenAL Soft on Headphones".into())
+        );
+        state.audio.output_device = Some("Speakers".into());
+        assert_eq!(
+            state.output_device(),
+            DeviceChoice::Named("Speakers".into())
+        );
     }
 
     #[test]
