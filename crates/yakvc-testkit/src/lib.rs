@@ -20,15 +20,13 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use yakvc_audio::{
-    FRAME_DURATION, FrameSource, MonoFrame, NullSink, Recording, ToneSource, WavSource,
-};
+use yakvc_audio::{FrameSource, NullSink, Recording, SilenceSource, ToneSource, WavSource};
 use yakvc_client::sim::Impairment;
 use yakvc_client::{
-    Config, Engine, Event, Events, Input, PeerState, Pose, RendezvousConfig, RendezvousState,
-    StreamStats, Uuid, Vec3, World,
+    Config, Engine, Event, Events, Input, PeerState, Pose, RendezvousState, StreamStats, Uuid,
+    Vec3, World,
 };
 use yakvc_server::{RelayOptions, Server};
 use yakvc_shared::{IssuerKey, SecretKey};
@@ -65,7 +63,7 @@ pub struct ClientBuilder<'a> {
     name: Option<String>,
     voice: Voice,
     impairment: Impairment,
-    relay_only: bool,
+    config: Config,
 }
 
 /// A simulated player: an [`Engine`] with test audio I/O, driven by the
@@ -77,6 +75,9 @@ pub struct TestClient {
     events: Events,
     recording: Recording,
     players: Players,
+    /// The last input sent to the engine, so [`TestClient::talk`] and
+    /// [`TestClient::set_spectator`] each change only their own flag.
+    input: Mutex<Input>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -91,6 +92,9 @@ type Players = Arc<Mutex<Vec<Player>>>;
 struct Player {
     uuid: Uuid,
     pos: Vec3,
+    /// Left out of everyone else's snapshots, as the mod leaves out players
+    /// whose tab-list game mode is spectator.
+    spectator: bool,
     /// Weak, so dropping the [`TestClient`] shuts its engine down.
     engine: Weak<Engine>,
 }
@@ -118,13 +122,8 @@ impl TestNet {
             .await
             .expect("test server starts");
 
-        let addr = server.endpoint_addr();
         let config = Config {
-            rendezvous: Some(RendezvousConfig {
-                endpoint_id: addr.id,
-                addrs: addr.ip_addrs().copied().collect(),
-                relay: server.relay_url(),
-            }),
+            rendezvous: Some(server.endpoint_addr().into()),
             trusted_issuers: vec![server.issuer_id()],
             dev_mode: true,
             ..Config::default()
@@ -164,7 +163,7 @@ impl TestNet {
             name: None,
             voice: Voice::Silence,
             impairment: Impairment::default(),
-            relay_only: false,
+            config: self.config.clone(),
         }
     }
 }
@@ -179,7 +178,8 @@ impl Drop for TestNet {
     }
 }
 
-/// One game tick: sends each client the players within tracking range of it.
+/// One game tick: sends each client the non-spectators within tracking range
+/// of it.
 fn push_worlds(players: &Mutex<Vec<Player>>) {
     let mut players = players.lock().expect("players lock");
     players.retain(|p| p.engine.strong_count() > 0);
@@ -189,7 +189,11 @@ fn push_worlds(players: &Mutex<Vec<Player>>) {
         };
         let visible = players
             .iter()
-            .filter(|other| other.uuid != me.uuid && distance(me.pos, other.pos) <= TRACKING_RANGE)
+            .filter(|other| {
+                other.uuid != me.uuid
+                    && !other.spectator
+                    && distance(me.pos, other.pos) <= TRACKING_RANGE
+            })
             .map(|other| (other.uuid, other.pos))
             .collect();
         engine.set_world(World {
@@ -247,7 +251,14 @@ impl<'a> ClientBuilder<'a> {
     }
 
     pub fn relay_only(mut self) -> Self {
-        self.relay_only = true;
+        self.config.relay_only = true;
+        self
+    }
+
+    /// Changes this client's config, which starts as the [`TestNet`]'s
+    /// (rendezvous, trusted issuer and dev mode set).
+    pub fn config(mut self, change: impl FnOnce(&mut Config)) -> Self {
+        change(&mut self.config);
         self
     }
 
@@ -257,24 +268,20 @@ impl<'a> ClientBuilder<'a> {
         let name = self.name.unwrap_or_else(|| format!("player{n}"));
         let uuid = uuid_for(&name);
 
-        let config = Config {
-            relay_only: self.relay_only,
-            ..self.net.config.clone()
-        };
-        let (sink, recording) = NullSink::new();
-        let builder = Engine::builder(config)
-            .data_dir(self.net.dir.join(&name))
-            .audio_sink(sink)
-            .impairment(self.impairment);
-        let builder = match self.voice {
-            Voice::Silence => builder.audio_source(Silence::new()),
-            Voice::Tone(hz) => builder.audio_source(ToneSource::new(hz)),
-            Voice::Wav(path) => builder.audio_source(
+        let source: Box<dyn FrameSource> = match self.voice {
+            Voice::Silence => Box::new(SilenceSource::new()),
+            Voice::Tone(hz) => Box::new(ToneSource::new(hz)),
+            Voice::Wav(path) => Box::new(
                 WavSource::open(&path, true)
                     .unwrap_or_else(|e| panic!("open {}: {e}", path.display())),
             ),
         };
-        let (engine, events) = builder
+        let (sink, recording) = NullSink::new();
+        let (engine, events) = Engine::builder(self.config)
+            .data_dir(self.net.dir.join(&name))
+            .audio_source(source)
+            .audio_sink(sink)
+            .impairment(self.impairment)
             .start()
             .unwrap_or_else(|e| panic!("start {name}: {e}"));
         engine.set_identity(uuid, &name);
@@ -283,6 +290,7 @@ impl<'a> ClientBuilder<'a> {
         self.net.players.lock().expect("players lock").push(Player {
             uuid,
             pos: Vec3::default(),
+            spectator: false,
             engine: Arc::downgrade(&engine),
         });
 
@@ -292,6 +300,7 @@ impl<'a> ClientBuilder<'a> {
             events,
             recording,
             players: self.net.players.clone(),
+            input: Mutex::new(Input::default()),
         };
         client
             .wait_for("registration", |e| {
@@ -318,18 +327,27 @@ impl TestClient {
     }
 
     pub fn move_to(&self, pos: Vec3) {
-        let mut players = self.players.lock().expect("players lock");
-        if let Some(me) = players.iter_mut().find(|p| p.uuid == self.uuid) {
-            me.pos = pos;
-        }
+        self.update_player(|me| me.pos = pos);
     }
 
     /// Holds or releases push-to-talk.
     pub fn talk(&self, talking: bool) {
-        self.engine.set_input(Input {
-            push_to_talk: talking,
-            ..Input::default()
-        });
+        self.update_input(|input| input.push_to_talk = talking);
+    }
+
+    /// Switches to or from spectator mode, as the game would: this client
+    /// leaves everyone else's snapshots, and its engine is told it is a
+    /// spectator.
+    pub fn set_spectator(&self, spectator: bool) {
+        self.update_player(|me| me.spectator = spectator);
+        self.update_input(|input| input.spectator = spectator);
+    }
+
+    /// Sends `input` to the engine as is. Unlike [`TestClient::set_spectator`],
+    /// `input.spectator` doesn't change what the others see, so a test can
+    /// play a client that ignores the spectator rule.
+    pub fn set_input(&self, input: Input) {
+        self.update_input(|current| *current = input);
     }
 
     /// Everything this client has played.
@@ -387,6 +405,19 @@ impl TestClient {
         .await
         .map(|_| ())
     }
+
+    fn update_player(&self, change: impl FnOnce(&mut Player)) {
+        let mut players = self.players.lock().expect("players lock");
+        if let Some(me) = players.iter_mut().find(|p| p.uuid == self.uuid) {
+            change(me);
+        }
+    }
+
+    fn update_input(&self, change: impl FnOnce(&mut Input)) {
+        let mut input = self.input.lock().expect("input lock");
+        change(&mut input);
+        self.engine.set_input(*input);
+    }
 }
 
 /// Makes every client in `clients` see every other one.
@@ -401,33 +432,6 @@ pub fn see_each_other(clients: &[&TestClient]) {
     }
 }
 
-/// A silent microphone: zeroed frames, paced in real time.
-#[derive(Debug)]
-struct Silence {
-    start: Instant,
-    frames: u32,
-}
-
-impl Silence {
-    fn new() -> Self {
-        Silence {
-            start: Instant::now(),
-            frames: 0,
-        }
-    }
-}
-
-impl FrameSource for Silence {
-    fn read(&mut self, frame: &mut MonoFrame) -> bool {
-        if self.start + FRAME_DURATION * (self.frames + 1) > Instant::now() {
-            return false;
-        }
-        self.frames += 1;
-        frame.fill(0.0);
-        true
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -437,21 +441,6 @@ mod tests {
         assert_eq!(uuid_for("alice"), uuid_for("alice"));
         assert_ne!(uuid_for("alice"), uuid_for("bob"));
         assert_eq!(uuid_for("a").as_bytes()[0], b'a');
-    }
-
-    #[test]
-    fn silence_is_paced_in_real_time() {
-        let mut silence = Silence::new();
-        let mut frame = [1.0; yakvc_audio::FRAME_SAMPLES];
-        assert!(!silence.read(&mut frame), "no frame is due yet");
-
-        std::thread::sleep(FRAME_DURATION * 3);
-        let mut produced = 0;
-        while silence.read(&mut frame) {
-            produced += 1;
-        }
-        assert!((3..=5).contains(&produced), "{produced} frames in 60 ms");
-        assert!(frame.iter().all(|&s| s == 0.0));
     }
 
     #[test]
