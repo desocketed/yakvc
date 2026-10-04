@@ -11,7 +11,7 @@ How the implementation is built: milestones from [DESIGN.md](DESIGN.md), worked 
 | Contract pass | Drafted 2026-10-04 (public APIs as compiling `todo!()` stubs in every crate); awaiting user review before fan-out. |
 | M1–M3 | Planned as one parallel push (see below). |
 
-**Decisions settled 2026-10-04:** wire encoding (see DESIGN.md wire format); Java package `io.github.desocketed.yakvc` under the maintainer's domain `desocketed.github.io`.
+**Decisions settled 2026-10-04:** wire encoding (see DESIGN.md wire format); Java package `io.github.desocketed.yakvc` under the maintainer's domain `desocketed.github.io`; `yakvc-server` is Linux-only for good (the mod still targets every Minecraft Java platform).
 
 ## Parallel development with consumer-driven contracts
 

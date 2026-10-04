@@ -16,6 +16,7 @@ Yak VC is a client-only Fabric mod that gives players on any online-mode vanilla
 | License | `MIT OR Apache-2.0` for the mod, crates and server (see licensing) |
 | Distribution | Mod jar on Modrinth (slugs `yakvc` and `yak-vc` were free on 2026-10-03) and CurseForge; server image on GHCR; nothing on crates.io |
 | Hosting | One maintainer-run VPS in US East for the default rendezvous and relay |
+| Platforms | Mod: every platform Minecraft Java runs on (Windows, macOS, Linux). `yakvc-server`: Linux only, permanently, so it may rely on Linux-specific features (see deployment) |
 
 **Goals**
 
@@ -306,6 +307,7 @@ Voice is 48 kHz mono Opus in 20 ms frames, sent as unreliable QUIC datagrams on 
 
 **Deployment**
 
+- Linux only. Linux-specific choices are welcome where they make the server simpler to run or safer: for example a static musl binary in a `scratch` image, systemd `Type=notify` readiness and watchdog, keys passed as systemd credentials (`LoadCredential=`), and a hardened unit (`DynamicUser=`, `AmbientCapabilities=CAP_NET_BIND_SERVICE` for ports 80/443, `ProtectSystem=strict`). Keep such code in `main.rs` and `deploy/`, so the library that `yakvc-testkit` runs in-process stays portable.
 - Docker image + example `config.toml` + systemd unit in `deploy/`. For v1 the project maintainer hosts the default rendezvous and relay on a single small VPS with a public IP in US East, which gives the best average latency to both North American and European players.
 - Relay bandwidth is the main cost: about 55–60 kbps in and the same out per relayed voice stream while talking. v1 is planned around the 1–5 TB/month included with a typical VPS. 1 TB/month of outbound transfer covers about 500 relayed streams around the clock if each talks 10% of the time. Metrics track the relayed share and the monthly total so capacity can be planned. The per-client relay budget (see limits) keeps any one user's cost bounded.
 - Clients ship with the default server's EndpointId and relay URL. Self-hosters change two config values and add their issuer key to `trusted_issuers`.
