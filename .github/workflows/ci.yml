@@ -1,15 +1,16 @@
 name: CI
 
-# Changes that only touch documentation don't run CI. GitHub doesn't apply
-# path filters to tags, so a release tag always runs.
+# Actions minutes are limited while the repository is private (macOS bills
+# 10x, Windows 2x), and scripts/ci-local.sh already runs every Linux check
+# before each push to main. So pushes to main don't run CI: a version tag
+# runs everything and publishes the release, and Claude dispatches a run by
+# hand for changes that could break Windows or macOS.
 on:
   push:
-    branches: [main]
     # A version tag (v<workspace version>) also publishes the release.
     tags: ["v*"]
-    paths-ignore: &docs ["**.md", "docs/**", "LICENSE-*"]
   pull_request:
-    paths-ignore: *docs
+    paths-ignore: ["**.md", "docs/**", "LICENSE-*"]
   workflow_dispatch:
 
 permissions:
