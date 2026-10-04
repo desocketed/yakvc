@@ -48,14 +48,38 @@ pub struct PeerInfo {
     pub stream: Option<StreamStats>,
 }
 
+/// How this machine reaches the network. `Display` prints a short
+/// human-readable report.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct NetReport {
+    pub udp_v4: bool,
+    pub udp_v6: bool,
+    /// Our address as seen from outside, if UDP works.
+    pub public_v4: Option<std::net::SocketAddrV4>,
+    pub public_v6: Option<std::net::SocketAddrV6>,
+    /// `Some(true)` is a symmetric NAT: hole-punching usually fails and
+    /// peers fall back to the relay.
+    pub symmetric_nat: Option<bool>,
+    /// Round-trip time to each configured relay.
+    pub relay_latency: Vec<(yakvc_shared::RelayUrl, Duration)>,
+}
+
+impl std::fmt::Display for NetReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let _ = f;
+        todo!()
+    }
+}
+
+/// Errors from [`EngineBuilder::start`]. Audio devices are not among them:
+/// a missing or failing device is reported as [`Event::Error`] and the
+/// engine runs without it.
 #[derive(Debug, thiserror::Error)]
 pub enum StartError {
     #[error(transparent)]
     Config(#[from] ConfigError),
     #[error("could not read or create the client key: {0}")]
     Key(#[source] std::io::Error),
-    #[error("audio: {0}")]
-    Audio(#[from] yakvc_audio::AudioError),
     #[error("network: {0}")]
     Network(String),
 }
@@ -114,6 +138,19 @@ impl Engine {
         self.voice.set_game_volume(volume);
     }
 
+    /// The name of the game's selected sound device (`None` for the system
+    /// default). Output follows the closest-named device unless
+    /// `audio.output_device` overrides it.
+    pub fn set_game_device(&self, name: Option<&str>) {
+        todo!("{name:?}")
+    }
+
+    /// Measures how this machine reaches the network, for bug reports
+    /// (`yakvc net report`). Takes a few seconds.
+    pub async fn net_report(&self) -> NetReport {
+        todo!()
+    }
+
     pub fn set_peer_audio(&self, uuid: Uuid, audio: PeerAudio) {
         self.voice.set_peer_audio(uuid, audio);
     }
@@ -148,8 +185,7 @@ impl Engine {
     /// Switches to direct-call mode for `yakvc-cli call` (M2): no
     /// rendezvous, a self-signed ticket, and every peer heard at full volume
     /// whatever the world says. Never used by the game.
-    #[allow(dead_code, reason = "awaiting a public direct-call API")]
-    pub(crate) fn enable_direct_calls(&self, uuid: Uuid, name: &str) {
+    pub fn enable_direct_calls(&self, uuid: Uuid, name: &str) {
         let body = TicketBody {
             dev: true,
             ..TicketBody::new(
@@ -167,14 +203,12 @@ impl Engine {
     }
 
     /// Our address, for the other side of a direct call.
-    #[allow(dead_code, reason = "awaiting a public direct-call API")]
-    pub(crate) fn endpoint_addr(&self) -> EndpointAddr {
+    pub fn endpoint_addr(&self) -> EndpointAddr {
         self.net.addr()
     }
 
     /// Dials a direct call. Needs [`Engine::enable_direct_calls`] on both sides.
-    #[allow(dead_code, reason = "awaiting a public direct-call API")]
-    pub(crate) fn call(&self, addr: EndpointAddr) {
+    pub fn call(&self, addr: EndpointAddr) {
         self.net.call(addr);
     }
 }

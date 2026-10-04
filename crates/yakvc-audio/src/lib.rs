@@ -24,7 +24,7 @@ pub use crate::device::{DeviceChoice, DeviceInfo, Devices, Microphone, Speakers,
 pub use crate::input::{InputActivity, InputConfig, InputProcessor};
 pub use crate::mixer::{Mixer, Spatial};
 pub use crate::receive::{JitterConfig, Packet, Pulled, ReceiveStream, StreamStats};
-pub use crate::test_io::{NullSink, Recording, ToneSource, WavSource};
+pub use crate::test_io::{NullSink, Recording, SilenceSource, ToneSource, WavSource};
 
 /// Sample rate used throughout the pipeline.
 pub const SAMPLE_RATE: u32 = 48_000;
@@ -46,6 +46,13 @@ pub trait FrameSource: Send {
     /// Fills `frame` with the next frame if a whole one is available.
     /// Returns `false` without blocking otherwise.
     fn read(&mut self, frame: &mut MonoFrame) -> bool;
+
+    /// Why the source stopped producing frames, once it has failed for good
+    /// (for example, the device was unplugged). The engine reports it and
+    /// reopens the device.
+    fn failure(&self) -> Option<String> {
+        None
+    }
 }
 
 /// Consumes stereo frames: speakers, or a recorder for tests.
@@ -55,6 +62,37 @@ pub trait FrameSink: Send {
     fn wants_frame(&self) -> bool;
 
     fn write(&mut self, frame: &StereoFrame);
+
+    /// Why the sink stopped accepting frames, once it has failed for good.
+    fn failure(&self) -> Option<String> {
+        None
+    }
+}
+
+/// Lets callers choose a source at runtime.
+impl FrameSource for Box<dyn FrameSource> {
+    fn read(&mut self, frame: &mut MonoFrame) -> bool {
+        (**self).read(frame)
+    }
+
+    fn failure(&self) -> Option<String> {
+        (**self).failure()
+    }
+}
+
+/// Lets callers choose a sink at runtime.
+impl FrameSink for Box<dyn FrameSink> {
+    fn wants_frame(&self) -> bool {
+        (**self).wants_frame()
+    }
+
+    fn write(&mut self, frame: &StereoFrame) {
+        (**self).write(frame);
+    }
+
+    fn failure(&self) -> Option<String> {
+        (**self).failure()
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

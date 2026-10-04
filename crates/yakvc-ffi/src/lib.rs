@@ -471,7 +471,6 @@ fn config_error(err: ConfigError) -> FfiError {
 fn start_error(err: StartError) -> FfiError {
     let code = match err {
         StartError::Config(_) => YAKVC_ERR_CONFIG,
-        StartError::Audio(_) => YAKVC_ERR_AUDIO,
         StartError::Key(_) | StartError::Network(_) => YAKVC_ERR_START,
     };
     FfiError::new(code, err.to_string())

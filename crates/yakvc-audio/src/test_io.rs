@@ -156,6 +156,25 @@ impl FrameSource for ToneSource {
     }
 }
 
+/// Silence, paced in real time: a player who never speaks.
+#[derive(Debug, Default)]
+pub struct SilenceSource {
+    clock: Clock,
+}
+
+impl SilenceSource {
+    pub fn new() -> Self {
+        todo!()
+    }
+}
+
+impl FrameSource for SilenceSource {
+    fn read(&mut self, frame: &mut MonoFrame) -> bool {
+        let _ = (frame, &self.clock);
+        todo!()
+    }
+}
+
 /// Accepts frames in real time and records them. Cloning the [`Recording`]
 /// returned by [`NullSink::new`] lets a test inspect output while the engine
 /// owns the sink.
@@ -217,7 +236,9 @@ impl Recording {
         lock(&self.shared).audible_frames
     }
 
-    /// Takes the recorded samples, leaving the recording empty.
+    /// Takes the samples recorded since the last call, leaving the buffer
+    /// empty. [`frames`](Self::frames) and
+    /// [`audible_frames`](Self::audible_frames) keep counting from the start.
     pub fn take(&self) -> Vec<[f32; 2]> {
         std::mem::take(&mut lock(&self.shared).samples)
     }

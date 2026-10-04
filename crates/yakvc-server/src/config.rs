@@ -88,10 +88,11 @@ impl Config {
 impl RelayConfig {
     fn into_options(self) -> Result<RelayOptions, ConfigError> {
         let tls = match (self.cert, self.key, self.domain) {
-            (Some(cert), Some(key), _) => Some(RelayTls::Files {
+            (Some(cert), Some(key), domain) => Some(RelayTls::Files {
                 https_bind: self
                     .https_bind
                     .ok_or_else(|| invalid("relay.cert needs relay.https_bind"))?,
+                domain: domain.ok_or_else(|| invalid("relay.cert needs relay.domain"))?,
                 cert,
                 key,
             }),
@@ -190,16 +191,18 @@ mod tests {
         let plain = relay(base).unwrap().unwrap();
         assert!(plain.tls.is_none());
 
-        let files =
-            format!("{base}https_bind = \"0.0.0.0:443\"\ncert = \"c.pem\"\nkey = \"k.pem\"\n");
+        let files = format!(
+            "{base}https_bind = \"0.0.0.0:443\"\ndomain = \"relay.example.com\"\ncert = \"c.pem\"\nkey = \"k.pem\"\n"
+        );
         assert!(matches!(
             relay(&files).unwrap().unwrap().tls,
-            Some(RelayTls::Files { .. })
+            Some(RelayTls::Files { ref domain, .. }) if domain == "relay.example.com"
         ));
 
         for bad in [
             "cert = \"c.pem\"\nkey = \"k.pem\"\n",
             "https_bind = \"0.0.0.0:443\"\ncert = \"c.pem\"\n",
+            "https_bind = \"0.0.0.0:443\"\ncert = \"c.pem\"\nkey = \"k.pem\"\n",
             "https_bind = \"0.0.0.0:443\"\n",
             "https_bind = \"0.0.0.0:443\"\ndomain = \"x\"\n",
         ] {
