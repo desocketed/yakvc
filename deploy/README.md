@@ -8,6 +8,7 @@ Files here:
 - `yakvc-server-docker.service`: the recommended setup. systemd manages the service and Docker isolates it.
 - `yakvc-server.service`: the static binary as a hardened systemd service, for hosts without Docker.
 - `Dockerfile`: used by `cargo xtask server-image`, which builds the image locally.
+- The repository's `flake.nix` also packages the server (`nix build github:desocketed/yakvc#yakvc-server`) and has a NixOS module; see "On NixOS" below.
 
 ## On Linode, with systemd and Docker
 
@@ -50,6 +51,37 @@ The image is `ghcr.io/desocketed/yakvc-server`, published by the release workflo
 To upgrade, change the image tag in `/etc/systemd/system/yakvc-server.service`, then `sudo systemctl daemon-reload && sudo systemctl restart yakvc-server`.
 
 The container uses the host's network so that the relay and address discovery see players' real addresses, which hole-punching depends on. It runs as root inside the container because Docker only grants added capabilities to root, but with every capability dropped except binding ports 80 and 443, no new privileges and a read-only filesystem. The metrics endpoint listens on 127.0.0.1, so it stays local to the Linode.
+
+## On NixOS
+
+Add the flake as an input and enable the module. It runs the server as a hardened systemd service, like `yakvc-server.service`, and generates the two keys on first start in `/var/lib/yakvc`; back them up.
+
+```nix
+{
+  inputs.yakvc.url = "github:desocketed/yakvc";
+
+  outputs = { nixpkgs, yakvc, ... }: {
+    nixosConfigurations.relay = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        yakvc.nixosModules.default
+        {
+          services.yakvc-server = {
+            enable = true;
+            domain = "relay.example.com";
+            acmeContact = "admin@example.com";
+            openFirewall = true;
+            # Anything else from config.toml, merged over the defaults:
+            # settings.ticket_lifetime_hours = 24;
+          };
+        }
+      ];
+    };
+  };
+}
+```
+
+`journalctl -u yakvc-server` prints the endpoint id, issuer id and relay URL. The repository is private for now, so fetching the flake needs GitHub access (`git+ssh://git@github.com/desocketed/yakvc` works with a deploy key).
 
 ## Without Docker
 
