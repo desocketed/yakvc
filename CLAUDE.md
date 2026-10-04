@@ -11,11 +11,12 @@ Prioritize a simple API and human readability over everything else: few, plain t
 
 ## Commands
 
-Run inside `nix develop` (this machine has no system Rust or Java).
+Run inside `nix develop` (this machine has no system Rust or Java). The container is Debian 13 with root: install any other tool you need with `apt-get`.
 
 - `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo deny check`
 - `cargo xtask header`: regenerate `crates/yakvc-ffi/include/yakvc.h` after any ABI change (CI runs `--check`)
 - `cd mod && ./gradlew build`: builds host natives via `cargo xtask natives` and runs the JUnit FFM test
+- `scripts/ci-local.sh [--fast]`: everything CI runs, locally and in order (about 2 min with the gametest; `--fast` skips the mod). Run it before pushing to `main` rather than waiting on GitHub.
 - `scripts/gametest-headless.sh`: runs the Fabric client gametest (real client, singleplayer world, screenshots in `mod/build/run/clientGameTest/screenshots/`) with no display or GPU, via Xvfb and Mesa lavapipe. Minecraft 26.3 finds no sRGB GLX config on Xvfb and falls back to Vulkan.
 
 ## Git
