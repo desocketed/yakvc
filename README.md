@@ -1,6 +1,9 @@
 # Yak VC
 
-Peer-to-peer proximity voice chat for Minecraft, as a client-only Fabric mod. Works on online-mode servers without any server-side mod. See [docs/DESIGN.md](docs/DESIGN.md).
+Peer-to-peer proximity voice chat for Minecraft, as a client-only Fabric mod. Works on online-mode servers without any server-side mod.
+
+- Players: the [user guide](docs/USER_GUIDE.md) covers installing, keys, settings and privacy.
+- Developers: see [docs/DESIGN.md](docs/DESIGN.md).
 
 ## Development
 

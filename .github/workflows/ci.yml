@@ -123,7 +123,8 @@ jobs:
           path: cli/
 
   mod:
-    needs: natives
+    # The server job's yakvc-server is the gametest's dev rendezvous.
+    needs: [natives, server]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -162,11 +163,18 @@ jobs:
         with:
           name: yakvc-mod
           path: dist/*.jar
+      - uses: actions/download-artifact@v8
+        with:
+          name: server
+          path: server
       # Loom runs client gametests under Xvfb when CI is set. Uses the jar's
       # natives rather than a fresh host build.
       - name: Client gametest
         working-directory: mod
-        run: ./gradlew runClientGameTest -Pyakvc.prebuiltNatives="$GITHUB_WORKSPACE/target/dist/natives"
+        run: |
+          chmod +x "$GITHUB_WORKSPACE/server/yakvc-server-linux-x86_64"
+          ./gradlew runClientGameTest -Pyakvc.prebuiltNatives="$GITHUB_WORKSPACE/target/dist/natives" \
+            -Pyakvc.prebuiltServer="$GITHUB_WORKSPACE/server/yakvc-server-linux-x86_64"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
