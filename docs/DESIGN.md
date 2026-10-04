@@ -345,7 +345,7 @@ The mod is a client-only Fabric mod (`"environment": "client"`) that reads game 
 
 Calls are coarse (about 20 per second), so performance doesn't matter either way. Loading a library and creating downcall handles are restricted methods, so Java 24+ prints JEP 472's warning unless the launcher passes `--enable-native-access=ALL-UNNAMED`. It is only a warning today, but a future JDK will deny it by default, so the README documents the flag.
 
-**Java side (`mod/`, package `dev.yakvc` as a placeholder)**
+**Java side (`mod/`, package `io.github.desocketed.yakvc`, Maven group `io.github.desocketed`)**
 
 Names below use Mojang's official mappings, which Fabric uses from 26.1 on (Minecraft is no longer obfuscated). Fabric API renamed some classes to match, for example `KeyBindingHelper` → `KeyMappingHelper`.
 

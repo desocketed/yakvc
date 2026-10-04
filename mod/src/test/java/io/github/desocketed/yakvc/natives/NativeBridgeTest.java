@@ -1,4 +1,4 @@
-package dev.yakvc.natives;
+package io.github.desocketed.yakvc.natives;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 

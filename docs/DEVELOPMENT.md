@@ -8,12 +8,10 @@ How the implementation is built: milestones from [DESIGN.md](DESIGN.md), worked 
 | --- | --- |
 | M0 Skeleton | Done. Workspace, crate stubs, xtask (`header`, `natives`), CI, plus a minimal Fabric mod that loads `yakvc-ffi` through FFM (verified in `runClient` on 26.3). |
 | Relay feature check (from M2) | Done 2026-10-04. All needed `iroh-relay` 1.3 server features exist; details in DESIGN.md dependency rules. Found and fixed a gap: `relay_only` clients could not reach the rendezvous, so the relay now gives new clients a 30 s grace admission. |
-| Contract pass | Next. Blocked on the open decisions below. |
+| Contract pass | Next. |
 | M1–M3 | Planned as one parallel push (see below). |
 
-**Open decisions** (needed before the contract pass; wire encoding was settled 2026-10-04, see DESIGN.md wire format):
-
-- Java package. `dev.yakvc` is still a placeholder.
+**Decisions settled 2026-10-04:** wire encoding (see DESIGN.md wire format); Java package `io.github.desocketed.yakvc` under the maintainer's domain `desocketed.github.io`.
 
 ## Parallel development with consumer-driven contracts
 

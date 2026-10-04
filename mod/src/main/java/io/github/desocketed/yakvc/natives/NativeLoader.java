@@ -1,4 +1,4 @@
-package dev.yakvc.natives;
+package io.github.desocketed.yakvc.natives;
 
 import java.io.BufferedReader;
 import java.io.IOException;

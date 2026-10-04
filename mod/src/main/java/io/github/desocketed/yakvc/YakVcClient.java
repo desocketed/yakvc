@@ -1,7 +1,7 @@
-package dev.yakvc;
+package io.github.desocketed.yakvc;
 
-import dev.yakvc.natives.NativeBridge;
-import dev.yakvc.natives.NativeLoader;
+import io.github.desocketed.yakvc.natives.NativeBridge;
+import io.github.desocketed.yakvc.natives.NativeLoader;
 import java.lang.foreign.SymbolLookup;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.loader.api.FabricLoader;
