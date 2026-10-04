@@ -11,7 +11,7 @@ Prioritize a simple API and human readability over everything else: few, plain t
 
 ## Commands
 
-Run inside `nix develop` (this machine has no system Rust or Java). The container is Debian 13 with root: install any other tool you need with `apt-get`.
+Run inside `nix develop` (this machine has no system Rust or Java). The container is Debian 13 with root, but only `/nix`, `$HOME/.claude`, `$HOME/.cache/nix` and this repository survive a restart: `apt-get` installs, `~/.config` and the Gradle cache do not. Add tools you need again to `flake.nix`; use `apt-get` only for one-offs.
 
 - `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo deny check`
 - `cargo xtask header`: regenerate `crates/yakvc-ffi/include/yakvc.h` after any ABI change (CI runs `--check`)
@@ -22,8 +22,12 @@ Run inside `nix develop` (this machine has no system Rust or Java). The containe
 
 ## Git
 
-Git has no identity configured here. Commit with `git -c user.name="Ben Whitley" -c user.email="337744892+desocketed@users.noreply.github.com" commit ...`. `docs/DESIGN.html` is the user's own Org export, tracked at their request; don't edit it.
+Git has no identity configured here. Commit as Claude's GitHub account: `git -c user.name="desocketed" -c user.email="337744892+desocketed@users.noreply.github.com" commit ...`. `docs/DESIGN.html` is the maintainer's own Org export, tracked at their request; don't edit it.
 
-The GitHub repo is `github.com/desocketed/yakvc` (private). `.git/config` is read-only here, so there is no `origin` remote: push with `GIT_TERMINAL_PROMPT=0 git -c credential.helper= -c "credential.helper=!$HOME/.config/yakvc-bot/token.sh credential" push https://github.com/desocketed/yakvc.git <branch>` (a GitHub App token; the key never enters the repo).
+The GitHub repo is `github.com/desocketed/yakvc` (private), on the `desocketed` account, which the maintainer created for Claude. `gh` is in the dev shell and is logged in as `desocketed`; its credentials live in `$HOME/.claude/gh` (persistent, outside the repo; never copy them into it), so export `GH_CONFIG_DIR=$HOME/.claude/gh` for every `gh` or `git push`. `.git/config` is read-only, so there is no `origin` remote. Inside `nix develop`, push with:
 
-**Workflow:** Claude manages this repository and may push verified work directly to `main` (never force-push or rewrite pushed history). Open a pull request instead only for changes the maintainer should review first, such as design decisions or risky, hard-to-reverse changes; say what changed, why, how it was verified and what to look at. The maintainer merges those PRs; address review comments with new commits on the branch. If a task needs a GitHub permission the app lacks, ask the maintainer for it instead of working around it.
+```sh
+GH_CONFIG_DIR=$HOME/.claude/gh git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push https://github.com/desocketed/yakvc.git main
+```
+
+**Workflow:** Claude manages this repository and may push verified work directly to `main` (never force-push or rewrite pushed history). Open a pull request instead only for changes the maintainer should review first, such as design decisions or risky, hard-to-reverse changes; say what changed, why, how it was verified and what to look at. The maintainer merges those PRs; address review comments with new commits on the branch.
