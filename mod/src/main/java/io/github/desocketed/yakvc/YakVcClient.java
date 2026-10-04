@@ -11,6 +11,13 @@ import org.slf4j.LoggerFactory;
 public final class YakVcClient implements ClientModInitializer {
 	public static final Logger LOGGER = LoggerFactory.getLogger("yakvc");
 
+	private static volatile boolean engineLoaded;
+
+	/** Whether the native engine loaded and its ABI matched. */
+	public static boolean engineLoaded() {
+		return engineLoaded;
+	}
+
 	@Override
 	public void onInitializeClient() {
 		NativeBridge bridge;
@@ -27,6 +34,7 @@ public final class YakVcClient implements ClientModInitializer {
 			LOGGER.error("Voice disabled: native ABI version {} does not match expected {}", abi, NativeBridge.ABI_VERSION);
 			return;
 		}
+		engineLoaded = true;
 		LOGGER.info("Loaded native engine (ABI version {})", abi);
 	}
 }

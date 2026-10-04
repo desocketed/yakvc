@@ -56,6 +56,16 @@ processResources {
 	}
 }
 
+fabricApi {
+	configureTests {
+		createSourceSet = true
+		modId = "yakvc-gametest"
+		// Client-only mod: no server game tests, so no EULA acceptance is needed.
+		enableGameTests = false
+		enableClientGameTests = true
+	}
+}
+
 loom {
 	runs {
 		configureEach {
