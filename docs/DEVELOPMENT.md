@@ -19,7 +19,7 @@ Open work, exit checks and decisions are tracked as issues under the milestones 
 | M5 | Done 2026-10-04, except the real-account run, which needs the maintainer (see "Manual real-account check (M5)" below). Server takes the `hasJoined` URL from Mojang's discovery document; the mod's `SessionJoiner` answers `JoinRequest` through authlib's `joinServer`, refusing during the game's own login. The login challenge stays the default: choosing profile keys and measuring Mojang's rate limits need real users, so both wait for the beta. |
 | M2 exit | Needs two machines on different home networks: `yakvc call listen` / `call dial`, then block UDP on one side and check the call continues through a self-hosted `yakvc-server` with `relay.open = true` (pass it with `--config`). |
 
-**Decisions settled 2026-10-04:** wire encoding (see DESIGN.md wire format); Java package `io.github.desocketed.yakvc` under the maintainer's domain `desocketed.github.io`; `yakvc-server` is Linux-only for good (the mod still targets every Minecraft Java platform); copyleft dependency licences are allowed, and the client enables iroh's port mapper.
+**Decisions settled 2026-10-04:** wire encoding (see DESIGN.md wire format); Java package `io.github.desocketed.yakvc`, the reverse-domain form of the project's GitHub account `desocketed`; `yakvc-server` is Linux-only for good (the mod still targets every Minecraft Java platform); copyleft dependency licences are allowed, and the client enables iroh's port mapper.
 
 ## Manual real-account check (M5)
 
