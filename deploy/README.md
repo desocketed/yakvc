@@ -5,30 +5,53 @@
 Files here:
 
 - `config.toml`: example production config. Replace `relay.example.com` and the contact address.
-- `compose.yaml`: run the Docker image (`ghcr.io/desocketed/yakvc-server`) with Docker Compose.
-- `yakvc-server.service`: run the static binary as a hardened systemd service instead.
+- `yakvc-server-docker.service`: the recommended setup. systemd manages the service and Docker isolates it.
+- `yakvc-server.service`: the static binary as a hardened systemd service, for hosts without Docker.
 - `Dockerfile`: used by `cargo xtask server-image`, which builds the image locally.
 
-## Before either setup
+## On Linode, with systemd and Docker
 
-- A DNS name for the relay (the `relay.example.com` placeholder) pointing at the server.
-- These ports open in the firewall: TCP 80 and 443 (relay, and Let's Encrypt's certificate check), UDP 7842 (QUIC address discovery) and UDP 7843 (rendezvous).
+The image is `ghcr.io/desocketed/yakvc-server`, published by the release workflow. Until the first release, build it with `cargo xtask server-image` and copy it over with `docker save` and `docker load`.
 
-## With Docker Compose
+1. **Create the Linode.** Debian 13 in a US East region (Newark), starting with the smallest shared plan; resize later from the relay metrics.
+2. **Add a Cloud Firewall** (Linodes → Firewalls) with the default inbound policy set to drop, and these inbound rules:
+   - TCP 22, from your own IP only (SSH)
+   - TCP 80 and 443 (relay, and Let's Encrypt's certificate check)
+   - UDP 7842 (QUIC address discovery) and UDP 7843 (rendezvous)
+3. **Point DNS at it.** An `A` record for the relay hostname to the Linode's IPv4 address; Let's Encrypt needs it before the first start. Leave out `AAAA` for now: the server listens on IPv4 only until #38.
+4. **Install Docker:**
 
-```sh
-mkdir config && cp config.toml config/   # then edit config/config.toml
-# The image runs as uid 65532, which must own the keys it writes and reads.
-sudo chown 65532:65532 config
-docker run --rm -v "$PWD/config:/etc/yakvc" ghcr.io/desocketed/yakvc-server keygen --out endpoint.key
-docker run --rm -v "$PWD/config:/etc/yakvc" ghcr.io/desocketed/yakvc-server keygen --issuer --out issuer.key
-docker compose up -d
-docker compose logs   # prints the endpoint id, issuer id and relay URL
-```
+   ```sh
+   sudo apt update && sudo apt install -y docker.io
+   ```
 
-The metrics endpoint listens on 127.0.0.1 inside the container, so it is not published. To scrape it from the host, set `metrics_bind = "0.0.0.0:9100"` and add `- "127.0.0.1:9100:9100"` to the ports.
+5. **Add the config and keys:**
 
-## With systemd
+   ```sh
+   IMAGE=ghcr.io/desocketed/yakvc-server:0.1.0
+   sudo install -d -m 700 /etc/yakvc
+   sudo install -m 644 config.toml /etc/yakvc/   # then edit the hostname and contact
+   sudo docker run --rm --user 0:0 -v /etc/yakvc:/etc/yakvc $IMAGE keygen --out endpoint.key
+   sudo docker run --rm --user 0:0 -v /etc/yakvc:/etc/yakvc $IMAGE keygen --issuer --out issuer.key
+   sudo chmod 600 /etc/yakvc/*.key
+   ```
+
+6. **Start it:**
+
+   ```sh
+   sudo install -m 644 yakvc-server-docker.service /etc/systemd/system/yakvc-server.service
+   sudo systemctl daemon-reload && sudo systemctl enable --now yakvc-server
+   journalctl -u yakvc-server   # prints the endpoint id, issuer id and relay URL
+   ```
+
+7. **Check it:** `curl -I https://<relay hostname>/` answers over HTTPS once the certificate is issued, and `curl -s 127.0.0.1:9100/metrics` on the Linode shows the metrics.
+8. **Back up `/etc/yakvc/*.key`** somewhere off the server (see below).
+
+To upgrade, change the image tag in `/etc/systemd/system/yakvc-server.service`, then `sudo systemctl daemon-reload && sudo systemctl restart yakvc-server`.
+
+The container uses the host's network so that the relay and address discovery see players' real addresses, which hole-punching depends on. It runs as root inside the container because Docker only grants added capabilities to root, but with every capability dropped except binding ports 80 and 443, no new privileges and a read-only filesystem. The metrics endpoint listens on 127.0.0.1, so it stays local to the Linode.
+
+## Without Docker
 
 Download the static `yakvc-server` binary from the GitHub release, then:
 

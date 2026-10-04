@@ -1,0 +1,32 @@
+# yakvc-server in Docker, managed by systemd: systemd starts, restarts and
+# logs it, and the container isolates it. Put config.toml and the two key
+# files in /etc/yakvc first (see README.md).
+[Unit]
+Description=Yak VC rendezvous server and relay (Docker)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+# Pin a release and change it here to upgrade deliberately.
+Environment=IMAGE=ghcr.io/desocketed/yakvc-server:0.1.0
+ExecStartPre=-/usr/bin/docker rm --force yakvc-server
+ExecStartPre=/usr/bin/docker pull ${IMAGE}
+# Host networking, so the relay and QUIC address discovery see players' real
+# IPv4 and IPv6 addresses, which hole-punching depends on. Docker only gives
+# added capabilities to root, so the server runs as root inside the container
+# with every capability dropped except binding ports 80 and 443, on a
+# read-only filesystem.
+ExecStart=/usr/bin/docker run --rm --name yakvc-server \
+    --network host \
+    --user 0:0 --cap-drop ALL --cap-add NET_BIND_SERVICE \
+    --security-opt no-new-privileges --read-only \
+    --volume /etc/yakvc:/etc/yakvc:ro \
+    --volume yakvc-state:/var/lib/yakvc \
+    ${IMAGE}
+ExecStop=/usr/bin/docker stop --time 10 yakvc-server
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
