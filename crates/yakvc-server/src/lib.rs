@@ -4,9 +4,16 @@
 //! [`Server::builder`] is the whole API; the binary only parses arguments and
 //! loads [`Config`], and `yakvc-testkit` builds servers in-process.
 
+mod auth;
 mod config;
+mod limits;
+mod matcher;
+mod metrics;
 mod mojang;
+mod rdv;
+mod relay;
 mod server;
+mod sessions;
 
 pub use crate::config::{Config, ConfigError};
 pub use crate::mojang::{MojangError, Profile, SessionServer};
