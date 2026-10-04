@@ -351,3 +351,250 @@ fn write_private(path: &Path, contents: &[u8]) -> io::Result<()> {
     }
     options.open(path)?.write_all(contents)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Instant;
+
+    use yakvc_audio::{NullSink, Recording, ToneSource};
+
+    use super::*;
+    use crate::net::test_util::{eventually, uuid};
+    use crate::world::{Pose, Vec3};
+
+    fn data_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("yakvc-client-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    #[test]
+    fn start_needs_a_data_dir() {
+        let result = Engine::builder(Config::default()).start();
+        assert!(matches!(result, Err(StartError::Key(_))));
+    }
+
+    #[test]
+    fn client_key_is_created_once_and_private() {
+        let dir = data_dir("key");
+        let first = load_or_create_key(&dir).unwrap();
+        let second = load_or_create_key(&dir).unwrap();
+        assert_eq!(first.public(), second.public());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(dir.join(KEY_FILE))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+    }
+
+    /// Called from inside a Tokio runtime, like the CLI and testkit do.
+    #[tokio::test]
+    async fn engine_starts_and_shuts_down_inside_an_async_caller() {
+        let (engine, mut events) = Engine::builder(Config::default())
+            .data_dir(data_dir("start"))
+            .start()
+            .unwrap();
+        assert_eq!(
+            events.next().await,
+            Some(Event::Rendezvous(RendezvousState::Disconnected))
+        );
+        engine.set_identity(uuid(1), "alice");
+        engine.set_tab_list([uuid(2)]);
+        engine.set_world(World::default());
+        engine.set_game_volume(0.5);
+        assert!(engine.peers().is_empty());
+
+        let started = Instant::now();
+        drop(engine);
+        assert!(started.elapsed() < Duration::from_secs(1));
+        // Every event sender went with the engine. (Without the audio crate
+        // implemented, the audio thread reports errors first.)
+        while events.next().await.is_some() {}
+    }
+
+    struct Player {
+        engine: Engine,
+        events: Events,
+        recording: Recording,
+    }
+
+    /// An engine in direct-call mode with a test tone as its microphone and
+    /// a recorder as its speakers.
+    fn player(n: u8, name: &str) -> Player {
+        let (sink, recording) = NullSink::new();
+        let builder = Engine::builder(Config::default())
+            .data_dir(data_dir(name))
+            .audio_source(ToneSource::new(220.0 * f32::from(n)))
+            .audio_sink(sink);
+        start_player(builder, n, name, recording)
+    }
+
+    fn start_player(builder: EngineBuilder, n: u8, name: &str, recording: Recording) -> Player {
+        let (engine, events) = builder.start().unwrap();
+        engine.enable_direct_calls(uuid(n), name);
+        Player {
+            engine,
+            events,
+            recording,
+        }
+    }
+
+    impl Player {
+        async fn wait_for_peer(&mut self, uuid: Uuid, state: PeerState) {
+            let wait = async {
+                while let Some(event) = self.events.next().await {
+                    if event == (Event::Peer { uuid, state }) {
+                        return;
+                    }
+                }
+            };
+            tokio::time::timeout(Duration::from_secs(10), wait)
+                .await
+                .expect("peer never reached the state");
+        }
+
+        fn talk(&self, talking: bool) {
+            self.engine.set_input(Input {
+                push_to_talk: talking,
+                ..Input::default()
+            });
+        }
+
+        /// Places this player at `me` on the x axis, seeing player `other`
+        /// at `them`.
+        fn stand(&self, me: f64, other: u8, them: f64) {
+            self.engine.set_world(World {
+                listener: Pose {
+                    pos: Vec3::new(me, 64.0, 0.0),
+                    ..Pose::default()
+                },
+                players: vec![(uuid(other), Vec3::new(them, 64.0, 0.0))],
+            });
+        }
+
+        async fn hears(&self) {
+            let start = self.recording.audible_frames();
+            eventually("audio to be heard", || {
+                self.recording.audible_frames() > start + 10
+            })
+            .await;
+        }
+
+        /// Nothing audible once the jitter buffer has drained.
+        async fn stays_silent(&self) {
+            tokio::time::sleep(Duration::from_millis(400)).await;
+            let before = self.recording.audible_frames();
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            assert_eq!(self.recording.audible_frames(), before);
+        }
+
+        fn frames_received(&self) -> u64 {
+            let peers = self.engine.peers();
+            peers[0].stream.as_ref().map_or(0, |stats| stats.received)
+        }
+    }
+
+    async fn call(alice: &mut Player, bob: &mut Player) {
+        bob.engine.call(alice.engine.net.loopback_addr());
+        alice.wait_for_peer(uuid(2), PeerState::Direct).await;
+        bob.wait_for_peer(uuid(1), PeerState::Direct).await;
+    }
+
+    #[tokio::test]
+    #[ignore = "needs yakvc-shared and yakvc-audio (round 1)"]
+    async fn direct_call_carries_audio_while_push_to_talk_is_held() {
+        let mut alice = player(1, "call-alice");
+        let mut bob = player(2, "call-bob");
+        call(&mut alice, &mut bob).await;
+
+        alice.talk(true);
+        bob.hears().await;
+        alice.talk(false);
+        bob.stays_silent().await;
+
+        bob.talk(true);
+        alice.hears().await;
+    }
+
+    #[tokio::test]
+    #[ignore = "needs yakvc-shared and yakvc-audio (round 1)"]
+    async fn range_deafen_and_spectator_rules_apply_end_to_end() {
+        let mut alice = player(1, "rules-alice");
+        let mut bob = player(2, "rules-bob");
+        // Direct-call trust, but positions from the world as in the game.
+        alice.engine.voice.set_direct(false);
+        bob.engine.voice.set_direct(false);
+        call(&mut alice, &mut bob).await;
+
+        alice.stand(0.0, 2, 10.0);
+        bob.stand(10.0, 1, 0.0);
+        alice.talk(true);
+        bob.hears().await;
+
+        // Out of range: neither sends nor plays.
+        alice.stand(0.0, 2, 100.0);
+        bob.stand(100.0, 1, 0.0);
+        bob.stays_silent().await;
+
+        // Back in range, but Bob deafens: he plays nothing, and tells Alice
+        // to stop sending.
+        alice.stand(0.0, 2, 10.0);
+        bob.stand(10.0, 1, 0.0);
+        bob.hears().await;
+        bob.engine.set_input(Input {
+            deafened: true,
+            ..Input::default()
+        });
+        bob.stays_silent().await;
+        let before = bob.frames_received();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(bob.frames_received() <= before + 2, "alice kept sending");
+
+        // A spectator sends nothing.
+        bob.engine.set_input(Input::default());
+        bob.hears().await;
+        alice.engine.set_input(Input {
+            push_to_talk: true,
+            spectator: true,
+            ..Input::default()
+        });
+        bob.stays_silent().await;
+    }
+
+    #[cfg(feature = "sim")]
+    #[tokio::test]
+    #[ignore = "needs yakvc-shared and yakvc-audio (round 1)"]
+    async fn impaired_link_is_concealed_within_jitter_bounds() {
+        use crate::sim::{Impairment, Loss};
+
+        let (sink, recording) = NullSink::new();
+        let builder = Engine::builder(Config::default())
+            .data_dir(data_dir("sim-bob"))
+            .audio_source(ToneSource::new(440.0))
+            .audio_sink(sink)
+            .impairment(Impairment {
+                loss: Loss::Bursty {
+                    rate: 0.05,
+                    mean_burst: 2.0,
+                },
+                jitter: Duration::from_millis(30),
+                seed: 1,
+                ..Impairment::default()
+            });
+        let mut bob = start_player(builder, 2, "sim-bob", recording);
+        let mut alice = player(1, "sim-alice");
+        call(&mut alice, &mut bob).await;
+
+        alice.talk(true);
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        let stats = bob.engine.peers()[0].stream.clone().unwrap();
+        assert!(stats.received > 200, "{stats:?}");
+        assert!(stats.concealed + stats.fec_recovered > 0, "{stats:?}");
+        let bounds = Duration::from_millis(20)..=Duration::from_millis(200);
+        assert!(bounds.contains(&stats.playout_delay), "{stats:?}");
+    }
+}
