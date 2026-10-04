@@ -14,6 +14,8 @@ mod rdv;
 mod relay;
 mod server;
 mod sessions;
+#[cfg(test)]
+mod tests;
 
 pub use crate::config::{Config, ConfigError};
 pub use crate::mojang::{MojangError, Profile, SessionServer};

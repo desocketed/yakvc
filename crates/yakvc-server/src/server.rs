@@ -19,13 +19,16 @@ use crate::sessions::Sessions;
 /// How often rate limiters forget idle keys.
 const PRUNE_INTERVAL: Duration = Duration::from_secs(60);
 
+/// How long `spawn` waits for the rendezvous endpoint to connect to its relay.
+const RELAY_ONLINE_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// A running rendezvous (and relay, if enabled).
 #[derive(Debug)]
 pub struct Server {
     endpoint: Endpoint,
     issuer_id: IssuerId,
     shared: Arc<Shared>,
-    relay: Option<iroh_relay::server::Server>,
+    pub(crate) relay: Option<iroh_relay::server::Server>,
     relay_url: Option<RelayUrl>,
     /// The accept loop and housekeeping; dropping the set stops them.
     tasks: JoinSet<()>,
@@ -240,6 +243,13 @@ impl ServerBuilder {
         }
 
         let endpoint = bind_endpoint(self.endpoint_key, self.bind, relay_url.clone()).await?;
+        if relay_url.is_some() {
+            // Until the endpoint is on its relay, a relay_only client's first
+            // attempt stalls and can outlast its grace admission. Waiting is
+            // only an optimisation, so give up after a while (an ACME
+            // certificate, for example, can take longer).
+            let _ = tokio::time::timeout(RELAY_ONLINE_TIMEOUT, endpoint.online()).await;
+        }
 
         let mojang = if self.insecure_dev_auth {
             None
