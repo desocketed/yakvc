@@ -1,11 +1,15 @@
 name: CI
 
+# Changes that only touch documentation don't run CI. GitHub doesn't apply
+# path filters to tags, so a release tag always runs.
 on:
   push:
     branches: [main]
     # A version tag (v<workspace version>) also publishes the release.
     tags: ["v*"]
+    paths-ignore: &docs ["**.md", "docs/**", "LICENSE-*"]
   pull_request:
+    paths-ignore: *docs
   workflow_dispatch:
 
 permissions:
