@@ -261,8 +261,7 @@ mod tests {
             .collect()
     }
 
-    /// Notices as `(to, Some(peer available) | None for gone)` with the
-    /// peer's EndpointId, sorted for comparison.
+    /// Notices as `(to, "available" | "gone", peer)`, sorted for comparison.
     fn summary(notices: &[Notice]) -> Vec<(EndpointId, &'static str, EndpointId)> {
         let mut out: Vec<_> = notices
             .iter()
