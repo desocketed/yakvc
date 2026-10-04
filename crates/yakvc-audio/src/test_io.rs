@@ -164,14 +164,18 @@ pub struct SilenceSource {
 
 impl SilenceSource {
     pub fn new() -> Self {
-        todo!()
+        SilenceSource::default()
     }
 }
 
 impl FrameSource for SilenceSource {
     fn read(&mut self, frame: &mut MonoFrame) -> bool {
-        let _ = (frame, &self.clock);
-        todo!()
+        if !self.clock.due() {
+            return false;
+        }
+        self.clock.tick();
+        frame.fill(0.0);
+        true
     }
 }
 
@@ -305,6 +309,32 @@ mod tests {
         let step = TAU * 1000.0 / SAMPLE_RATE as f32;
         let jump = (b[0] - a[FRAME_SAMPLES - 1]).abs();
         assert!(jump <= TONE_AMPLITUDE * step * 1.01, "{jump}");
+    }
+
+    #[test]
+    fn silence_is_paced_in_real_time() {
+        let mut silence = SilenceSource::new();
+        let mut frame = [1.0; FRAME_SAMPLES];
+        assert!(silence.read(&mut frame));
+        assert!(frame.iter().all(|&s| s == 0.0));
+        assert!(!silence.read(&mut frame), "second frame is not due yet");
+        std::thread::sleep(FRAME_DURATION + Duration::from_millis(5));
+        assert!(silence.read(&mut frame));
+    }
+
+    #[test]
+    fn boxed_source_and_sink_forward_calls() {
+        let mut source: Box<dyn FrameSource> = Box::new(SilenceSource::new());
+        let mut frame = [1.0; FRAME_SAMPLES];
+        assert!(FrameSource::read(&mut source, &mut frame));
+        assert!(FrameSource::failure(&source).is_none());
+
+        let (sink, recording) = NullSink::new();
+        let mut sink: Box<dyn FrameSink> = Box::new(sink);
+        assert!(FrameSink::wants_frame(&sink));
+        FrameSink::write(&mut sink, &[[0.5; 2]; FRAME_SAMPLES]);
+        assert_eq!(recording.frames(), 1);
+        assert!(FrameSink::failure(&sink).is_none());
     }
 
     #[test]
