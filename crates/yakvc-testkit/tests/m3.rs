@@ -57,6 +57,7 @@ async fn connect(a: &mut TestClient, b: &mut TestClient, state: PeerState) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs round 2 yakvc-client and yakvc-audio"]
 async fn only_mutual_tab_list_matches_connect() {
     let net = TestNet::start().await;
     let mut alice = net.client().name("alice").start().await;
@@ -106,6 +107,7 @@ async fn only_mutual_tab_list_matches_connect() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs round 2 yakvc-client and yakvc-audio"]
 async fn gain_and_pan_follow_moves() {
     let net = TestNet::start().await;
     let mut alice = net.client().name("alice").tone(440.0).start().await;
@@ -153,6 +155,7 @@ async fn gain_and_pan_follow_moves() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs round 2 yakvc-client and yakvc-audio"]
 async fn audio_stays_continuous_under_bursty_loss_and_jitter() {
     let net = TestNet::start().await;
     let mut alice = net.client().name("alice").tone(440.0).start().await;
@@ -210,6 +213,7 @@ async fn audio_stays_continuous_under_bursty_loss_and_jitter() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs round 2 yakvc-client and yakvc-audio"]
 async fn spectators_neither_send_nor_hear() {
     let net = TestNet::start().await;
     let mut alice = net.client().name("alice").tone(440.0).start().await;
@@ -218,23 +222,15 @@ async fn spectators_neither_send_nor_hear() {
     bob.move_to(at(2.0, 0.0));
     connect(&mut alice, &mut bob, PeerState::Direct).await;
 
-    // `talk` would clear the spectator flag, so set input directly.
-    let spectating = Input {
-        push_to_talk: true,
-        spectator: true,
-        ..Input::default()
-    };
-    alice.engine().set_input(spectating);
+    alice.set_spectator(true);
+    alice.talk(true);
     sleep(SETTLE).await;
     assert!(
         is_silent(&listen(&bob, Duration::from_secs(1)).await),
         "a spectator's voice was played"
     );
 
-    alice.engine().set_input(Input {
-        spectator: true,
-        ..Input::default()
-    });
+    alice.talk(false);
     bob.talk(true);
     sleep(SETTLE).await;
     assert!(
@@ -243,12 +239,84 @@ async fn spectators_neither_send_nor_hear() {
     );
 
     // Control: once alice stops spectating she hears bob.
-    alice.engine().set_input(Input::default());
+    alice.set_spectator(false);
     sleep(SETTLE).await;
     assert!(!is_silent(&listen(&alice, Duration::from_secs(1)).await));
 }
 
+/// The receiver half of the spectator rule: a spectator has no entity in
+/// anyone else's world, so even a client that ignores the rule and sends
+/// anyway is not played.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs round 2 yakvc-client and yakvc-audio"]
+async fn a_spectator_is_left_out_of_others_worlds() {
+    let net = TestNet::start().await;
+    let mut alice = net.client().name("alice").tone(440.0).start().await;
+    let mut bob = net.client().name("bob").start().await;
+    alice.move_to(at(0.0, 0.0));
+    bob.move_to(at(2.0, 0.0));
+    connect(&mut alice, &mut bob, PeerState::Direct).await;
+
+    alice.set_spectator(true);
+    // A modified client: it talks while its engine is not told it spectates.
+    alice.set_input(Input {
+        push_to_talk: true,
+        ..Input::default()
+    });
+    sleep(SETTLE).await;
+    assert!(
+        is_silent(&listen(&bob, Duration::from_secs(1)).await),
+        "a spectator without an entity was played"
+    );
+
+    // Control: back in bob's world, alice is heard.
+    alice.set_spectator(false);
+    sleep(SETTLE).await;
+    assert!(!is_silent(&listen(&bob, Duration::from_secs(1)).await));
+}
+
+/// Each side filters by its own range, so between two players the shorter
+/// range applies, whoever is talking.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs round 2 yakvc-client and yakvc-audio (exact send range)"]
+async fn the_shorter_voice_range_wins() {
+    let net = TestNet::start().await;
+    let mut alice = net
+        .client()
+        .name("alice")
+        .tone(440.0)
+        .config(|c| c.voice_range = 20.0)
+        .start()
+        .await;
+    // bob keeps the default 48-block range.
+    let mut bob = net.client().name("bob").tone(660.0).start().await;
+    alice.move_to(at(0.0, 0.0));
+    bob.move_to(at(18.0, 0.0));
+    connect(&mut alice, &mut bob, PeerState::Direct).await;
+    alice.talk(true);
+    bob.talk(true);
+
+    // Inside both ranges: each hears the other.
+    sleep(SETTLE).await;
+    assert!(!is_silent(&listen(&bob, Duration::from_secs(1)).await));
+    assert!(!is_silent(&listen(&alice, Duration::from_secs(1)).await));
+
+    // Just outside alice's range but well inside bob's: alice sends nothing
+    // to bob, and plays nothing from him.
+    bob.move_to(at(22.0, 0.0));
+    sleep(SETTLE).await;
+    assert!(
+        is_silent(&listen(&bob, Duration::from_secs(1)).await),
+        "bob heard alice beyond her range"
+    );
+    assert!(
+        is_silent(&listen(&alice, Duration::from_secs(1)).await),
+        "alice heard bob beyond her range"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs round 2 yakvc-client and yakvc-audio"]
 async fn deafened_listener_hears_nothing_and_speaker_stops_sending() {
     let net = TestNet::start().await;
     let mut alice = net.client().name("alice").tone(440.0).start().await;
@@ -281,6 +349,7 @@ async fn deafened_listener_hears_nothing_and_speaker_stops_sending() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs round 2 yakvc-client and yakvc-audio"]
 async fn relay_only_client_talks_through_the_relay() {
     let net = TestNet::start().await;
     let mut alice = net.client().name("alice").tone(440.0).start().await;
@@ -303,6 +372,7 @@ async fn relay_only_client_talks_through_the_relay() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs round 2 yakvc-client and yakvc-audio"]
 async fn voice_stops_at_range_and_without_a_tracked_entity() {
     let net = TestNet::start().await;
     let mut alice = net.client().name("alice").tone(440.0).start().await;
