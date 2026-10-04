@@ -1,5 +1,6 @@
 //! Client for Mojang's session server (`hasJoined`).
 
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use reqwest::{StatusCode, Url};
@@ -8,11 +9,28 @@ use yakvc_shared::Uuid;
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 
-/// A Mojang session server. [`SessionServer::default`] is Mojang's; tests
-/// point it at a fake.
+/// Mojang's services discovery document. authlib 10 takes its `hasJoined`
+/// URL from here too, so we follow the game if Mojang ever moves it.
+const DISCOVERY_URL: &str = "https://discovery.minecraftservices.com/minecraft/client";
+
+/// Where the document keeps the `hasJoined` URL.
+const VERIFY_POINTER: &str = "/discovery/session/endpoints/verify/uri";
+
+/// Used until discovery succeeds. The document named this URL on 2026-10-04.
+const FALLBACK_VERIFY_URL: &str = "https://sessionserver.mojang.com/session/minecraft/hasJoined";
+
+const DISCOVERY_INTERVAL: Duration = Duration::from_secs(24 * 3600);
+
+/// A Mojang session server. [`SessionServer::default`] is Mojang's, found
+/// through the discovery document; tests point [`SessionServer::new`] at a
+/// fake.
 #[derive(Debug, Clone)]
 pub struct SessionServer {
-    base_url: String,
+    /// The full `hasJoined` URL. Clones share it, so a refresh by the
+    /// discovery loop reaches the copy auth uses.
+    verify_url: Arc<Mutex<String>>,
+    /// Where to refresh `verify_url` from; `None` keeps it fixed.
+    discovery_url: Option<String>,
     http: reqwest::Client,
 }
 
@@ -39,7 +57,14 @@ struct HasJoinedResponse {
 }
 
 impl SessionServer {
+    /// A session server that verifies at
+    /// `{base_url}/session/minecraft/hasJoined`, with no discovery.
     pub fn new(base_url: impl Into<String>) -> Self {
+        let verify_url = format!("{}/session/minecraft/hasJoined", base_url.into());
+        SessionServer::build(verify_url, None)
+    }
+
+    fn build(verify_url: String, discovery_url: Option<String>) -> Self {
         // reqwest is built without its own crypto provider because iroh
         // already brings ring; make ring the process default. This fails
         // harmlessly if something installed a default first.
@@ -49,23 +74,59 @@ impl SessionServer {
             .build()
             .expect("an HTTP client with default settings always builds");
         SessionServer {
-            base_url: base_url.into(),
+            verify_url: Arc::new(Mutex::new(verify_url)),
+            discovery_url,
             http,
         }
     }
 
-    /// `GET {base}/session/minecraft/hasJoined`. `Ok(None)` when Mojang does
-    /// not confirm the join. 5 s timeout, one retry.
+    /// Refreshes the `hasJoined` URL from the discovery document now and
+    /// every 24 h. Returns at once if the URL is fixed.
+    pub(crate) async fn discovery_loop(self) {
+        if self.discovery_url.is_none() {
+            return;
+        }
+        let mut interval = tokio::time::interval(DISCOVERY_INTERVAL);
+        loop {
+            interval.tick().await;
+            self.discover().await;
+        }
+    }
+
+    /// Takes the `hasJoined` URL from the discovery document. If that fails
+    /// the URL stays as it was: the fallback, or the last one discovered.
+    async fn discover(&self) {
+        let Some(discovery_url) = &self.discovery_url else {
+            return;
+        };
+        if let Some(url) = self.fetch_verify_url(discovery_url).await {
+            *self.verify_url.lock().unwrap() = url;
+        }
+    }
+
+    async fn fetch_verify_url(&self, discovery_url: &str) -> Option<String> {
+        let response = self.http.get(discovery_url).send().await.ok()?;
+        if response.status() != StatusCode::OK {
+            return None;
+        }
+        let body = response.bytes().await.ok()?;
+        let document: serde_json::Value = serde_json::from_slice(&body).ok()?;
+        let url = document.pointer(VERIFY_POINTER)?.as_str()?;
+        Url::parse(url).ok()?;
+        Some(url.to_owned())
+    }
+
+    /// `GET <verify URL>?username=..&serverId=..`. `Ok(None)` when Mojang
+    /// does not confirm the join. 5 s timeout, one retry.
     pub async fn has_joined(
         &self,
         name: &str,
         server_id: &str,
     ) -> Result<Option<Profile>, MojangError> {
-        let url = Url::parse_with_params(
-            &format!("{}/session/minecraft/hasJoined", self.base_url),
-            [("username", name), ("serverId", server_id)],
-        )
-        .map_err(|e| MojangError::Unavailable(format!("bad session server URL: {e}")))?;
+        let verify_url = self.verify_url.lock().unwrap().clone();
+        let url =
+            Url::parse_with_params(&verify_url, [("username", name), ("serverId", server_id)])
+                .map_err(|e| MojangError::Unavailable(format!("bad session server URL: {e}")))?;
 
         match self.request(url.clone()).await {
             Err(MojangError::Unavailable(_)) => self.request(url).await,
@@ -104,7 +165,7 @@ impl SessionServer {
 
 impl Default for SessionServer {
     fn default() -> Self {
-        SessionServer::new("https://sessionserver.mojang.com")
+        SessionServer::build(FALLBACK_VERIFY_URL.into(), Some(DISCOVERY_URL.into()))
     }
 }
 
@@ -258,6 +319,89 @@ mod tests {
         let err = server.has_joined("alice", "1").await.unwrap_err();
         assert!(matches!(err, MojangError::Unavailable(_)));
         assert_eq!(mojang.requests().len(), 4);
+    }
+
+    /// A session server that discovers its verify URL from `fake`.
+    fn discovering(fake: &FakeMojang) -> SessionServer {
+        let discovery_url = format!("{}/minecraft/client", fake.url);
+        SessionServer::build(FALLBACK_VERIFY_URL.into(), Some(discovery_url))
+    }
+
+    fn verify_url(server: &SessionServer) -> String {
+        server.verify_url.lock().unwrap().clone()
+    }
+
+    #[tokio::test]
+    async fn discovery_sets_the_verify_url() {
+        let fake = FakeMojang::start().await;
+        // The shape of the real document, cut down.
+        let document = format!(
+            r#"{{"environment":"prod","discovery":{{"session":{{"endpoints":{{
+                "join":{{"uri":"https://sessionserver.mojang.com/session/minecraft/join"}},
+                "verify":{{"uri":"{}/v2/hasJoined"}}}}}}}}}}"#,
+            fake.url
+        );
+        fake.script([response("200 OK", "", &document)]);
+        let server = discovering(&fake);
+        server.discover().await;
+        assert_eq!(verify_url(&server), format!("{}/v2/hasJoined", fake.url));
+
+        assert!(server.has_joined("alice", "1").await.unwrap().is_some());
+        assert_eq!(
+            fake.requests(),
+            [
+                "/minecraft/client",
+                "/v2/hasJoined?username=alice&serverId=1"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_discovery_keeps_the_previous_url() {
+        let fake = FakeMojang::start().await;
+        let server = discovering(&fake);
+        for body in [
+            "not json",
+            r#"{"discovery":{"session":{}}}"#,
+            r#"{"discovery":{"session":{"endpoints":{"verify":{"uri":"not a url"}}}}}"#,
+        ] {
+            fake.script([response("200 OK", "", body)]);
+            server.discover().await;
+            assert_eq!(verify_url(&server), FALLBACK_VERIFY_URL, "{body}");
+        }
+        fake.script([response("503 Service Unavailable", "", "")]);
+        server.discover().await;
+        assert_eq!(verify_url(&server), FALLBACK_VERIFY_URL);
+    }
+
+    #[tokio::test]
+    async fn unreachable_discovery_keeps_the_fallback() {
+        let server = SessionServer::build(
+            FALLBACK_VERIFY_URL.into(),
+            Some("http://127.0.0.1:0/minecraft/client".into()),
+        );
+        server.discover().await;
+        assert_eq!(verify_url(&server), FALLBACK_VERIFY_URL);
+    }
+
+    #[tokio::test]
+    async fn an_explicit_url_is_never_rediscovered() {
+        let fake = FakeMojang::start().await;
+        let server = SessionServer::new(&fake.url);
+        // Returns at once rather than looping.
+        server.clone().discovery_loop().await;
+        assert!(fake.requests().is_empty());
+        assert_eq!(
+            verify_url(&server),
+            format!("{}/session/minecraft/hasJoined", fake.url)
+        );
+    }
+
+    #[test]
+    fn default_starts_from_the_fallback() {
+        let server = SessionServer::default();
+        assert_eq!(verify_url(&server), FALLBACK_VERIFY_URL);
+        assert_eq!(server.discovery_url.as_deref(), Some(DISCOVERY_URL));
     }
 
     #[tokio::test]
