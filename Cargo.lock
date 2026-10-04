@@ -1278,6 +1278,7 @@ name = "yakvc-testkit"
 version = "0.1.0"
 dependencies = [
  "thiserror",
+ "tokio",
  "yakvc-audio",
  "yakvc-client",
  "yakvc-server",
