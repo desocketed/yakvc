@@ -1,0 +1,13 @@
+Third-party software in this build of Yak VC, and the licences it is used under.
+{{#each licenses}}
+
+================================================================================
+{{{name}}}
+
+Used by:
+{{#each used_by}}
+- {{crate.name}} {{crate.version}}
+{{/each}}
+
+{{{text}}}
+{{/each}}

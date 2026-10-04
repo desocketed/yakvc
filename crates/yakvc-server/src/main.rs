@@ -67,6 +67,7 @@ async fn run(config: &Path) -> anyhow::Result<()> {
     if let Some(url) = server.relay_url() {
         println!("relay:       {url}");
     }
+    notify_systemd_ready();
     // systemd stops services with SIGTERM; Ctrl-C sends SIGINT.
     let mut sigterm = signal(SignalKind::terminate())?;
     tokio::select! {
@@ -75,6 +76,20 @@ async fn run(config: &Path) -> anyhow::Result<()> {
     }
     server.shutdown().await;
     Ok(())
+}
+
+/// Tells systemd that the server is up, for a `Type=notify` unit
+/// (deploy/yakvc-server.service). Does nothing outside systemd, where
+/// NOTIFY_SOCKET is unset.
+fn notify_systemd_ready() {
+    let Some(path) = std::env::var_os("NOTIFY_SOCKET").map(PathBuf::from) else {
+        return;
+    };
+    let sent = std::os::unix::net::UnixDatagram::unbound()
+        .and_then(|socket| socket.send_to(b"READY=1", &path));
+    if let Err(e) = sent {
+        eprintln!("could not notify systemd at {}: {e}", path.display());
+    }
 }
 
 /// Writes a new key file readable only by its owner. Never overwrites, so a
