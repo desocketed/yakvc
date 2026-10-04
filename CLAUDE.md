@@ -5,6 +5,10 @@ Client-only Fabric mod for peer-to-peer proximity voice chat. Rust engine (Iroh,
 - `docs/DESIGN.md`: the design and source of truth. Keep it current when the implementation deviates.
 - `docs/DEVELOPMENT.md`: how the work is organized (parallel agents, consumer-driven API contracts), current status and open decisions. Read it before starting milestone work, and update its status table when a step finishes.
 
+## Code style
+
+Prioritize a simple API and human readability over everything else: few, plain types and functions; obvious control flow; no speculative generality or clever abstractions. Comments explain why, not what.
+
 ## Commands
 
 Run inside `nix develop` (this machine has no system Rust or Java).
