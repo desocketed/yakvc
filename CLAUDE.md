@@ -35,7 +35,7 @@ Prioritize a simple API and human readability over everything else: few, plain t
   ```
 
 - **Milestone work** runs as agents in their own git worktrees (see `docs/DEVELOPMENT.md`). The coordinating session merges each branch, runs `scripts/ci-local.sh`, records deviations in `docs/DESIGN.md`, updates the status table, pushes, and then removes the worktree and its branch.
-- **Decisions belong to the maintainer** when they are design tradeoffs, cost money or are legal. Accepting the Minecraft EULA is one: run `scripts/two-clients.sh --accept-eula` only with their consent.
+- **Decisions belong to the maintainer** when they are design tradeoffs, cost money or are legal. The Minecraft EULA was settled in #5 (confirmed by the maintainer in chat, 2026-10-04): Claude may accept it in its own automated runs (`scripts/two-clients.sh --accept-eula`), but nothing committed accepts it by default, so anyone running the scripts themselves decides for themselves.
 
 ## Commands
 
@@ -44,4 +44,4 @@ Prioritize a simple API and human readability over everything else: few, plain t
 - `cd mod && ./gradlew build`: builds host natives via `cargo xtask natives` and runs the JUnit tests
 - `scripts/ci-local.sh [--fast]`: everything CI runs, locally and in order (`--fast` skips the mod build and gametest)
 - `scripts/gametest-headless.sh`: the Fabric client gametest (real client, singleplayer world, screenshots in `mod/build/run/clientGameTest/screenshots/`). Minecraft 26.3 finds no sRGB GLX config on Xvfb and falls back to Vulkan.
-- `scripts/two-clients.sh --accept-eula`: end-to-end check with a dev `yakvc-server`, a local Minecraft server and two headless clients, about 1 minute (EULA consent required, see above)
+- `scripts/two-clients.sh --accept-eula`: end-to-end check with a dev `yakvc-server`, a local Minecraft server and two headless clients, about 1 minute (see the EULA note above)
