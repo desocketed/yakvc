@@ -15,7 +15,7 @@ Yak VC is a client-only Fabric mod that gives players on any online-mode vanilla
 | Bridge | Java's FFM API over a C ABI; no JNI |
 | License | `MIT OR Apache-2.0` for the mod, crates and server (see licensing) |
 | Distribution | Mod jar on Modrinth (slugs `yakvc` and `yak-vc` were free on 2026-10-03) and CurseForge; server image on GHCR; nothing on crates.io |
-| Hosting | One maintainer-run VPS in US East for the default rendezvous and relay |
+| Hosting | One maintainer-run VPS in US East for the default rendezvous and relay: a Linode, with systemd managing the server's Docker container (`deploy/README.md`) |
 | Platforms | Mod: every platform Minecraft Java runs on (Windows, macOS, Linux). `yakvc-server`: Linux only, permanently, so it may rely on Linux-specific features (see deployment) |
 
 **Goals**
