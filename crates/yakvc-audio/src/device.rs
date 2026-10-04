@@ -1,7 +1,9 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{FromSample, I24, Sample, SampleFormat, SizedSample, StreamConfig};
+use cpal::{ErrorKind, FromSample, I24, Sample, SampleFormat, SizedSample, StreamConfig};
 use rtrb::{Consumer, Producer, RingBuffer};
 use serde::Serialize;
 
@@ -162,13 +164,15 @@ pub struct Microphone {
     captured: Vec<f32>,
     /// Resampled samples not yet handed out as a frame.
     pending: Vec<f32>,
+    /// Counts overruns.
+    health: Arc<Health>,
 }
 
 impl Microphone {
     /// Times captured audio was dropped because nobody read it in time,
     /// since opening.
     pub fn overruns(&self) -> u64 {
-        todo!()
+        self.health.glitches()
     }
 
     pub fn open(device: &DeviceChoice) -> Result<Self, AudioError> {
@@ -177,14 +181,16 @@ impl Microphone {
         let config = supported.config();
         let rate = config.sample_rate;
         let (producer, ring) = RingBuffer::new(ring_len(rate));
+        let health = Arc::new(Health::default());
 
+        let h = health.clone();
         let stream = match supported.sample_format() {
-            SampleFormat::F32 => capture::<f32>(&device, config, producer),
-            SampleFormat::I16 => capture::<i16>(&device, config, producer),
-            SampleFormat::I24 => capture::<I24>(&device, config, producer),
-            SampleFormat::I32 => capture::<i32>(&device, config, producer),
-            SampleFormat::U8 => capture::<u8>(&device, config, producer),
-            SampleFormat::U16 => capture::<u16>(&device, config, producer),
+            SampleFormat::F32 => capture::<f32>(&device, config, producer, h),
+            SampleFormat::I16 => capture::<i16>(&device, config, producer, h),
+            SampleFormat::I24 => capture::<I24>(&device, config, producer, h),
+            SampleFormat::I32 => capture::<i32>(&device, config, producer, h),
+            SampleFormat::U8 => capture::<u8>(&device, config, producer, h),
+            SampleFormat::U16 => capture::<u16>(&device, config, producer, h),
             other => return Err(unsupported_format(other)),
         }
         .map_err(device_error)?;
@@ -196,33 +202,39 @@ impl Microphone {
             resampler: Resampler::new(rate, SAMPLE_RATE, 1)?,
             captured: Vec::new(),
             pending: Vec::new(),
+            health,
         })
     }
 }
 
 /// Opens a capture stream whose callback downmixes to mono and pushes into
 /// `ring`. The callback never blocks or allocates; if the ring is full, the
-/// newest samples are dropped.
+/// newest samples are dropped and counted as one overrun.
 fn capture<T>(
     device: &cpal::Device,
     config: StreamConfig,
     mut ring: Producer<f32>,
+    health: Arc<Health>,
 ) -> Result<cpal::Stream, cpal::Error>
 where
     T: SizedSample,
     f32: FromSample<T>,
 {
     let channels = usize::from(config.channels);
+    let errors = health.clone();
     device.build_input_stream(
         config,
         move |data: &[T], _: &cpal::InputCallbackInfo| {
+            let mut dropped = false;
             for frame in data.chunks_exact(channels) {
                 let sum: f32 = frame.iter().map(|&s| f32::from_sample(s)).sum();
-                let _ = ring.push(sum / channels as f32);
+                dropped |= ring.push(sum / channels as f32).is_err();
+            }
+            if dropped {
+                health.glitch();
             }
         },
-        // A failed device shows up as `read` returning no more frames.
-        |_| {},
+        move |err| errors.stream_error(&err),
         None,
     )
 }
@@ -237,6 +249,7 @@ impl FrameSource for Microphone {
         if self.pending.len() > MAX_CAPTURE_BACKLOG {
             let excess = self.pending.len() - MAX_CAPTURE_BACKLOG;
             self.pending.drain(..excess);
+            self.health.glitch();
         }
         if self.pending.len() < FRAME_SAMPLES {
             return false;
@@ -244,6 +257,10 @@ impl FrameSource for Microphone {
         frame.copy_from_slice(&self.pending[..FRAME_SAMPLES]);
         self.pending.drain(..FRAME_SAMPLES);
         true
+    }
+
+    fn failure(&self) -> Option<String> {
+        self.health.failure()
     }
 }
 
@@ -258,13 +275,15 @@ pub struct Speakers {
     lead_samples: usize,
     /// Resampled, interleaved samples on their way into the ring.
     resampled: Vec<f32>,
+    /// Counts underruns.
+    health: Arc<Health>,
 }
 
 impl Speakers {
     /// Times the device asked for audio and the queue was empty, since
     /// opening. Each is an audible glitch.
     pub fn underruns(&self) -> u64 {
-        todo!()
+        self.health.glitches()
     }
 
     pub fn open(device: &DeviceChoice) -> Result<Self, AudioError> {
@@ -273,14 +292,16 @@ impl Speakers {
         let config = supported.config();
         let rate = config.sample_rate;
         let (ring, consumer) = RingBuffer::new(ring_len(rate));
+        let health = Arc::new(Health::default());
 
+        let h = health.clone();
         let stream = match supported.sample_format() {
-            SampleFormat::F32 => playback::<f32>(&device, config, consumer),
-            SampleFormat::I16 => playback::<i16>(&device, config, consumer),
-            SampleFormat::I24 => playback::<I24>(&device, config, consumer),
-            SampleFormat::I32 => playback::<i32>(&device, config, consumer),
-            SampleFormat::U8 => playback::<u8>(&device, config, consumer),
-            SampleFormat::U16 => playback::<u16>(&device, config, consumer),
+            SampleFormat::F32 => playback::<f32>(&device, config, consumer, h),
+            SampleFormat::I16 => playback::<i16>(&device, config, consumer, h),
+            SampleFormat::I24 => playback::<I24>(&device, config, consumer, h),
+            SampleFormat::I32 => playback::<i32>(&device, config, consumer, h),
+            SampleFormat::U8 => playback::<u8>(&device, config, consumer, h),
+            SampleFormat::U16 => playback::<u16>(&device, config, consumer, h),
             other => return Err(unsupported_format(other)),
         }
         .map_err(device_error)?;
@@ -292,6 +313,7 @@ impl Speakers {
             resampler: Resampler::new(SAMPLE_RATE, rate, 2)?,
             lead_samples: (rate as f32 * PLAYBACK_LEAD.as_secs_f32()) as usize,
             resampled: Vec::new(),
+            health,
         })
     }
 }
@@ -303,16 +325,30 @@ fn playback<T>(
     device: &cpal::Device,
     config: StreamConfig,
     mut ring: Consumer<[f32; 2]>,
+    health: Arc<Health>,
 ) -> Result<cpal::Stream, cpal::Error>
 where
     T: SizedSample + FromSample<f32>,
 {
     let channels = usize::from(config.channels);
+    let errors = health.clone();
+    // The ring is empty until the first write, which is not a glitch.
+    let mut started = false;
     device.build_output_stream(
         config,
         move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
+            let mut ran_dry = false;
             for frame in data.chunks_exact_mut(channels) {
-                let [left, right] = ring.pop().unwrap_or([0.0; 2]);
+                let [left, right] = match ring.pop() {
+                    Ok(pair) => {
+                        started = true;
+                        pair
+                    }
+                    Err(_) => {
+                        ran_dry |= started;
+                        [0.0; 2]
+                    }
+                };
                 if let [only] = frame {
                     *only = T::from_sample((left + right) / 2.0);
                     continue;
@@ -326,10 +362,11 @@ where
                     *sample = T::from_sample(value);
                 }
             }
+            if ran_dry {
+                health.glitch();
+            }
         },
-        // A failed device shows up as the ring filling and `wants_frame`
-        // staying false.
-        |_| {},
+        move |err| errors.stream_error(&err),
         None,
     )
 }
@@ -349,6 +386,10 @@ impl FrameSink for Speakers {
             let _ = self.ring.push(pair);
         }
     }
+
+    fn failure(&self) -> Option<String> {
+        self.health.failure()
+    }
 }
 
 impl std::fmt::Debug for Microphone {
@@ -360,6 +401,48 @@ impl std::fmt::Debug for Microphone {
 impl std::fmt::Debug for Speakers {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Speakers").finish_non_exhaustive()
+    }
+}
+
+/// What a device's callbacks report to its owner.
+#[derive(Debug, Default)]
+struct Health {
+    /// Overruns for a microphone, underruns for speakers.
+    glitches: AtomicU64,
+    /// Why the stream stopped for good. The first fatal error wins.
+    failure: OnceLock<String>,
+}
+
+impl Health {
+    /// Counts one glitch. Lock-free, for the device callback.
+    fn glitch(&self) {
+        self.glitches.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn glitches(&self) -> u64 {
+        self.glitches.load(Ordering::Relaxed)
+    }
+
+    /// Handles an error from the stream's error callback. Errors are rare,
+    /// so allocating the message here does not hurt the audio thread.
+    fn stream_error(&self, err: &cpal::Error) {
+        match err.kind() {
+            // The device dropped audio that our rings never saw.
+            ErrorKind::Xrun => self.glitch(),
+            // The stream will never deliver audio again; only reopening the
+            // device helps.
+            ErrorKind::DeviceNotAvailable
+            | ErrorKind::HostUnavailable
+            | ErrorKind::StreamInvalidated => {
+                let _ = self.failure.set(err.to_string());
+            }
+            // Backends report everything else and keep the stream running.
+            _ => {}
+        }
+    }
+
+    fn failure(&self) -> Option<String> {
+        self.failure.get().cloned()
     }
 }
 
@@ -413,6 +496,35 @@ mod tests {
     fn closest_name_prefers_fewer_extra_words() {
         let names = ["Speakers Digital Output", "Speakers"];
         assert_eq!(closest("Speakers", &names), Some(1));
+    }
+
+    #[test]
+    fn health_counts_xruns_as_glitches() {
+        let health = Health::default();
+        health.glitch();
+        health.stream_error(&ErrorKind::Xrun.into());
+        assert_eq!(health.glitches(), 2);
+        assert_eq!(health.failure(), None);
+    }
+
+    #[test]
+    fn health_keeps_the_first_fatal_error() {
+        let health = Health::default();
+        let unplugged = cpal::Error::with_message(ErrorKind::DeviceNotAvailable, "unplugged");
+        health.stream_error(&unplugged);
+        health.stream_error(&ErrorKind::StreamInvalidated.into());
+        assert_eq!(health.failure().as_deref(), Some("unplugged"));
+        assert_eq!(health.glitches(), 0);
+    }
+
+    #[test]
+    fn health_ignores_transient_errors() {
+        let health = Health::default();
+        health.stream_error(&ErrorKind::DeviceBusy.into());
+        health.stream_error(&ErrorKind::DeviceChanged.into());
+        health.stream_error(&ErrorKind::RealtimeDenied.into());
+        assert_eq!(health.failure(), None);
+        assert_eq!(health.glitches(), 0);
     }
 
     #[test]
