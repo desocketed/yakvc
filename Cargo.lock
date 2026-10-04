@@ -1243,7 +1243,10 @@ dependencies = [
 name = "yakvc-ffi"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
+ "toml 1.1.6+spec-1.1.0",
  "yakvc-client",
+ "yakvc-shared",
 ]
 
 [[package]]

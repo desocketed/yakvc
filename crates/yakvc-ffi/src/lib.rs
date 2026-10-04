@@ -23,6 +23,21 @@
 
 #![allow(unsafe_code)]
 
+mod events;
+mod guard;
+
+use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
+
+use yakvc_client::{
+    Config, ConfigError, Engine, Input, JoinId, PeerAudio, Pose, StartError, Vec3, World,
+};
+
+use crate::events::EventQueue;
+use crate::guard::{
+    FfiError, buf_arg, guard, guard_poisonable, out_arg, slice_arg, str_arg, uuids_arg,
+};
+
 /// Version of this C ABI. Java refuses to use a library whose version differs
 /// from the one it was built against. Bump on any incompatible change.
 pub const YAKVC_ABI_VERSION: u32 = 1;
@@ -72,7 +87,26 @@ pub const YAKVC_PEER_GONE: u8 = 5;
 /// Opaque engine handle.
 #[derive(Debug)]
 pub struct YakVcEngine {
-    _p: (),
+    engine: Engine,
+    events: Mutex<EventQueue>,
+    /// Set when a call panics; every later call except `yakvc_destroy` fails.
+    poisoned: AtomicBool,
+}
+
+/// Runs `f` on a live engine behind the panic barrier.
+///
+/// # Safety
+/// `engine` must be null or live.
+unsafe fn with_engine(
+    engine: *mut YakVcEngine,
+    f: impl FnOnce(&YakVcEngine) -> Result<(), FfiError>,
+) -> i32 {
+    // SAFETY: the caller guarantees `engine` is null or live, and live
+    // engines are only freed by `yakvc_destroy`, which must be the last call.
+    let Some(engine) = (unsafe { engine.as_ref() }) else {
+        return guard(|| Err(FfiError::invalid("engine is null")));
+    };
+    guard_poisonable(&engine.poisoned, || f(engine))
 }
 
 /// Returns [`YAKVC_ABI_VERSION`]. Safe to call before anything else.
@@ -95,8 +129,33 @@ pub unsafe extern "C" fn yakvc_create(
     abi_version: u32,
     out: *mut *mut YakVcEngine,
 ) -> i32 {
-    let _ = (config_dir, dir_len, config_toml, toml_len, abi_version, out);
-    YAKVC_ERR_UNIMPLEMENTED
+    guard(|| {
+        // SAFETY: the caller guarantees `out` is writable.
+        let out = unsafe { out_arg(out, "out") }?;
+        *out = std::ptr::null_mut();
+        if abi_version != YAKVC_ABI_VERSION {
+            return Err(FfiError::new(
+                YAKVC_ERR_ABI_MISMATCH,
+                format!("native ABI is {YAKVC_ABI_VERSION}, Java expects {abi_version}"),
+            ));
+        }
+        // SAFETY: the caller guarantees both pairs are readable.
+        let dir = unsafe { str_arg(config_dir, dir_len, "config_dir") }?;
+        // SAFETY: as above.
+        let toml = unsafe { str_arg(config_toml, toml_len, "config_toml") }?;
+
+        let config = Config::from_toml(toml).map_err(config_error)?;
+        let (engine, events) = Engine::builder(config)
+            .data_dir(dir)
+            .start()
+            .map_err(start_error)?;
+        *out = Box::into_raw(Box::new(YakVcEngine {
+            engine,
+            events: Mutex::new(EventQueue::new(events)),
+            poisoned: AtomicBool::new(false),
+        }));
+        Ok(())
+    })
 }
 
 /// Shuts down gracefully (at most 500 ms) and frees the handle. Must be the
@@ -106,7 +165,18 @@ pub unsafe extern "C" fn yakvc_create(
 /// `engine` must come from `yakvc_create` and not be used afterwards.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn yakvc_destroy(engine: *mut YakVcEngine) {
-    let _ = engine;
+    if engine.is_null() {
+        return;
+    }
+    // SAFETY: `engine` came from `Box::into_raw` in `yakvc_create`, and the
+    // caller never uses it again.
+    let engine = unsafe { Box::from_raw(engine) };
+    // Dropping shuts the engine down, which must not unwind into Java either,
+    // even on a poisoned engine.
+    guard(|| {
+        drop(engine);
+        Ok(())
+    });
 }
 
 /// # Safety
@@ -118,8 +188,17 @@ pub unsafe extern "C" fn yakvc_set_identity(
     name: *const u8,
     name_len: usize,
 ) -> i32 {
-    let _ = (engine, uuid, name, name_len);
-    YAKVC_ERR_UNIMPLEMENTED
+    // SAFETY: the caller guarantees `engine` is live.
+    unsafe {
+        with_engine(engine, |e| {
+            // SAFETY: the caller guarantees `uuid` points to 16 bytes.
+            let uuid = uuids_arg(uuid, 1, "uuid")?[0];
+            // SAFETY: the caller guarantees `name` is readable.
+            let name = str_arg(name, name_len, "name")?;
+            e.engine.set_identity(uuid, name);
+            Ok(())
+        })
+    }
 }
 
 /// Replaces the tab list with `count` UUIDs. Call only when it changes.
@@ -132,8 +211,15 @@ pub unsafe extern "C" fn yakvc_set_tab_list(
     uuids: *const u8,
     count: usize,
 ) -> i32 {
-    let _ = (engine, uuids, count);
-    YAKVC_ERR_UNIMPLEMENTED
+    // SAFETY: the caller guarantees `engine` is live.
+    unsafe {
+        with_engine(engine, |e| {
+            // SAFETY: the caller guarantees `uuids` points to `16 * count` bytes.
+            let uuids = uuids_arg(uuids, count, "uuids")?;
+            e.engine.set_tab_list(uuids);
+            Ok(())
+        })
+    }
 }
 
 /// Pushes one tick's world: `listener` is `x, y, z, yaw, pitch`; then `count`
@@ -150,8 +236,36 @@ pub unsafe extern "C" fn yakvc_push_world(
     xyz: *const f64,
     count: usize,
 ) -> i32 {
-    let _ = (engine, listener, uuids, xyz, count);
-    YAKVC_ERR_UNIMPLEMENTED
+    // SAFETY: the caller guarantees `engine` is live.
+    unsafe {
+        with_engine(engine, |e| {
+            // SAFETY: the caller guarantees `listener` points to 5 doubles.
+            let listener = slice_arg(listener, 5, "listener")?;
+            // SAFETY: the caller guarantees `uuids` points to `16 * count` bytes.
+            let uuids = uuids_arg(uuids, count, "uuids")?;
+            let xyz_len = count
+                .checked_mul(3)
+                .ok_or_else(|| FfiError::invalid("count is too large"))?;
+            // SAFETY: the caller guarantees `xyz` points to `3 * count` doubles.
+            let xyz = slice_arg(xyz, xyz_len, "xyz")?;
+            if !listener.iter().chain(xyz).all(|v| v.is_finite()) {
+                return Err(FfiError::invalid("world contains NaN or infinity"));
+            }
+
+            let players = uuids
+                .into_iter()
+                .zip(xyz.as_chunks::<3>().0)
+                .map(|(uuid, &[x, y, z])| (uuid, Vec3::new(x, y, z)))
+                .collect();
+            let listener = Pose {
+                pos: Vec3::new(listener[0], listener[1], listener[2]),
+                yaw: listener[3] as f32,
+                pitch: listener[4] as f32,
+            };
+            e.engine.set_world(World { listener, players });
+            Ok(())
+        })
+    }
 }
 
 /// `flags` is a combination of `YAKVC_INPUT_*`.
@@ -160,8 +274,23 @@ pub unsafe extern "C" fn yakvc_push_world(
 /// `engine` must be live.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn yakvc_set_input(engine: *mut YakVcEngine, flags: u32) -> i32 {
-    let _ = (engine, flags);
-    YAKVC_ERR_UNIMPLEMENTED
+    const KNOWN: u32 =
+        YAKVC_INPUT_PUSH_TO_TALK | YAKVC_INPUT_MUTED | YAKVC_INPUT_DEAFENED | YAKVC_INPUT_SPECTATOR;
+    // SAFETY: the caller guarantees `engine` is live.
+    unsafe {
+        with_engine(engine, |e| {
+            if flags & !KNOWN != 0 {
+                return Err(FfiError::invalid(format!("unknown input flags {flags:#x}")));
+            }
+            e.engine.set_input(Input {
+                push_to_talk: flags & YAKVC_INPUT_PUSH_TO_TALK != 0,
+                muted: flags & YAKVC_INPUT_MUTED != 0,
+                deafened: flags & YAKVC_INPUT_DEAFENED != 0,
+                spectator: flags & YAKVC_INPUT_SPECTATOR != 0,
+            });
+            Ok(())
+        })
+    }
 }
 
 /// The game's Voice/Speech slider, `0..1`.
@@ -170,8 +299,18 @@ pub unsafe extern "C" fn yakvc_set_input(engine: *mut YakVcEngine, flags: u32) -
 /// `engine` must be live.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn yakvc_set_game_volume(engine: *mut YakVcEngine, volume: f32) -> i32 {
-    let _ = (engine, volume);
-    YAKVC_ERR_UNIMPLEMENTED
+    // SAFETY: the caller guarantees `engine` is live.
+    unsafe {
+        with_engine(engine, |e| {
+            if !(0.0..=1.0).contains(&volume) {
+                return Err(FfiError::invalid(format!(
+                    "game volume {volume} is outside 0..1"
+                )));
+            }
+            e.engine.set_game_volume(volume);
+            Ok(())
+        })
+    }
 }
 
 /// # Safety
@@ -183,8 +322,20 @@ pub unsafe extern "C" fn yakvc_set_peer_volume(
     volume: f32,
     muted: bool,
 ) -> i32 {
-    let _ = (engine, uuid, volume, muted);
-    YAKVC_ERR_UNIMPLEMENTED
+    // SAFETY: the caller guarantees `engine` is live.
+    unsafe {
+        with_engine(engine, |e| {
+            // SAFETY: the caller guarantees `uuid` points to 16 bytes.
+            let uuid = uuids_arg(uuid, 1, "uuid")?[0];
+            if !(volume.is_finite() && volume >= 0.0) {
+                return Err(FfiError::invalid(format!(
+                    "peer volume {volume} is not a finite, non-negative number"
+                )));
+            }
+            e.engine.set_peer_audio(uuid, PeerAudio { volume, muted });
+            Ok(())
+        })
+    }
 }
 
 /// Reports the result of `joinServer` for a `YAKVC_EVENT_JOIN_REQUEST`.
@@ -197,8 +348,13 @@ pub unsafe extern "C" fn yakvc_complete_join(
     request_id: u32,
     ok: bool,
 ) -> i32 {
-    let _ = (engine, request_id, ok);
-    YAKVC_ERR_UNIMPLEMENTED
+    // SAFETY: the caller guarantees `engine` is live.
+    unsafe {
+        with_engine(engine, |e| {
+            e.engine.complete_join(JoinId(request_id), ok);
+            Ok(())
+        })
+    }
 }
 
 /// Writes whole queued event records into `buf`; `*written` is the bytes
@@ -214,8 +370,19 @@ pub unsafe extern "C" fn yakvc_poll_events(
     cap: usize,
     written: *mut usize,
 ) -> i32 {
-    let _ = (engine, buf, cap, written);
-    YAKVC_ERR_UNIMPLEMENTED
+    // SAFETY: the caller guarantees `engine` is live.
+    unsafe {
+        with_engine(engine, |e| {
+            // SAFETY: the caller guarantees `written` is writable.
+            let written = out_arg(written, "written")?;
+            *written = 0;
+            // SAFETY: the caller guarantees `buf` is writable for `cap` bytes.
+            let buf = buf_arg(buf, cap, "buf")?;
+            let mut events = e.events.lock().expect("event queue lock");
+            *written = events.drain_into(buf)?;
+            Ok(())
+        })
+    }
 }
 
 /// Applies a new `client.toml`.
@@ -228,8 +395,16 @@ pub unsafe extern "C" fn yakvc_update_config(
     toml: *const u8,
     len: usize,
 ) -> i32 {
-    let _ = (engine, toml, len);
-    YAKVC_ERR_UNIMPLEMENTED
+    // SAFETY: the caller guarantees `engine` is live.
+    unsafe {
+        with_engine(engine, |e| {
+            // SAFETY: the caller guarantees `toml` is readable.
+            let toml = str_arg(toml, len, "toml")?;
+            let config = Config::from_toml(toml).map_err(config_error)?;
+            e.engine.update_config(config);
+            Ok(())
+        })
+    }
 }
 
 /// Writes the audio device list as JSON. `*needed` is the full length; if it
@@ -246,8 +421,22 @@ pub unsafe extern "C" fn yakvc_list_devices(
     cap: usize,
     needed: *mut usize,
 ) -> i32 {
-    let _ = (engine, buf, cap, needed);
-    YAKVC_ERR_UNIMPLEMENTED
+    // SAFETY: the caller guarantees `engine` is live.
+    unsafe {
+        with_engine(engine, |e| {
+            // SAFETY: the caller guarantees `needed` is writable.
+            let needed = out_arg(needed, "needed")?;
+            // SAFETY: the caller guarantees `buf` is writable for `cap` bytes.
+            let buf = buf_arg(buf, cap, "buf")?;
+            let devices = e
+                .engine
+                .devices()
+                .map_err(|err| FfiError::new(YAKVC_ERR_AUDIO, err.to_string()))?;
+            let json = serde_json::to_vec(&devices).expect("device list serializes");
+            *needed = write_if_fits(&json, buf);
+            Ok(())
+        })
+    }
 }
 
 /// Copies this thread's last error message into `buf` (truncated to `cap`)
@@ -257,6 +446,55 @@ pub unsafe extern "C" fn yakvc_list_devices(
 /// `buf` must be writable for `cap` bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn yakvc_last_error(buf: *mut u8, cap: usize) -> usize {
-    let _ = (buf, cap);
-    0
+    let message = guard::last_error();
+    // SAFETY: the caller guarantees `buf` is writable for `cap` bytes.
+    if let Ok(buf) = unsafe { buf_arg(buf, cap, "buf") } {
+        let n = message.len().min(buf.len());
+        buf[..n].copy_from_slice(&message.as_bytes()[..n]);
+    }
+    message.len()
+}
+
+/// Copies all of `bytes` into `buf` if they fit, else nothing. Returns the
+/// length needed either way.
+fn write_if_fits(bytes: &[u8], buf: &mut [u8]) -> usize {
+    if let Some(dest) = buf.get_mut(..bytes.len()) {
+        dest.copy_from_slice(bytes);
+    }
+    bytes.len()
+}
+
+fn config_error(err: ConfigError) -> FfiError {
+    FfiError::new(YAKVC_ERR_CONFIG, err.to_string())
+}
+
+fn start_error(err: StartError) -> FfiError {
+    let code = match err {
+        StartError::Config(_) => YAKVC_ERR_CONFIG,
+        StartError::Audio(_) => YAKVC_ERR_AUDIO,
+        StartError::Key(_) | StartError::Network(_) => YAKVC_ERR_START,
+    };
+    FfiError::new(code, err.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn write_if_fits_is_all_or_nothing() {
+        let mut small = [0u8; 3];
+        assert_eq!(write_if_fits(b"abcd", &mut small), 4);
+        assert_eq!(small, [0, 0, 0]);
+
+        let mut big = [0u8; 6];
+        assert_eq!(write_if_fits(b"abcd", &mut big), 4);
+        assert_eq!(&big[..4], b"abcd");
+    }
+
+    #[test]
+    fn engine_handle_is_shareable_across_threads() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<YakVcEngine>();
+    }
 }
