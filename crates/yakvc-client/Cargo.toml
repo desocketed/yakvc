@@ -13,11 +13,18 @@ sim = []
 
 [dependencies]
 bytes.workspace = true
+iroh.workspace = true
+rand.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time", "macros"] }
 toml.workspace = true
+tracing.workspace = true
 yakvc-audio.workspace = true
 yakvc-shared.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time", "macros"] }
 
 [lints]
 workspace = true
