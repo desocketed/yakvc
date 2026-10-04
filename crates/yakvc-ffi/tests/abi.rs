@@ -165,7 +165,6 @@ fn temp_dir(name: &str) -> std::path::PathBuf {
 }
 
 #[test]
-#[ignore = "needs yakvc-client (round 1)"]
 fn create_rejects_bad_toml() {
     let dir = temp_dir("bad-toml");
     let (code, engine) = create(dir.to_str().unwrap().as_bytes(), b"[[[", YAKVC_ABI_VERSION);
@@ -174,7 +173,6 @@ fn create_rejects_bad_toml() {
 }
 
 #[test]
-#[ignore = "needs yakvc-client (round 1)"]
 fn engine_lifecycle_through_the_c_abi() {
     let dir = temp_dir("lifecycle");
     let toml = offline_config();
@@ -262,7 +260,6 @@ fn engine_lifecycle_through_the_c_abi() {
 }
 
 #[test]
-#[ignore = "needs yakvc-client (round 1)"]
 fn engine_calls_reject_invalid_values() {
     let dir = temp_dir("invalid");
     let toml = offline_config();

@@ -505,7 +505,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "needs yakvc-shared and yakvc-audio (round 1)"]
     async fn direct_call_carries_audio_while_push_to_talk_is_held() {
         let mut alice = player(1, "call-alice");
         let mut bob = player(2, "call-bob");
@@ -521,7 +520,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "needs yakvc-shared and yakvc-audio (round 1)"]
     async fn range_deafen_and_spectator_rules_apply_end_to_end() {
         let mut alice = player(1, "rules-alice");
         let mut bob = player(2, "rules-bob");
@@ -567,7 +565,6 @@ mod tests {
 
     #[cfg(feature = "sim")]
     #[tokio::test]
-    #[ignore = "needs yakvc-shared and yakvc-audio (round 1)"]
     async fn impaired_link_is_concealed_within_jitter_bounds() {
         use crate::sim::{Impairment, Loss};
 
