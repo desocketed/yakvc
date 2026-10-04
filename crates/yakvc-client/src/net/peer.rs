@@ -70,7 +70,7 @@ pub(super) async fn accept_loop(inner: Arc<Inner>) {
             // the worst one is then evicted). Refusing others also stops a
             // peer we evicted from coming straight back.
             if connected_count(&inner) >= MAX_PEERS && !inner.wants(remote) {
-                close(&conn, CloseCode::Normal);
+                close(&conn, CloseCode::TooManyPeers);
                 return;
             }
             match setup(&inner, &conn, false).await {

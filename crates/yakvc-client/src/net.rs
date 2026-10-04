@@ -592,7 +592,7 @@ async fn evict_over_cap(inner: Arc<Inner>) {
         for id in evictions(&ranked, &open, MAX_PEERS) {
             if let Some(conn) = peers.get(&id).and_then(PeerEntry::open_conn) {
                 tracing::debug!(remote = %id.fmt_short(), "too many peers, evicting");
-                close(conn, CloseCode::Normal);
+                close(conn, CloseCode::TooManyPeers);
             }
         }
     }

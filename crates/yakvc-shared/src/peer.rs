@@ -41,4 +41,7 @@ pub enum CloseCode {
     /// Exceeded datagram rate or size limits.
     Flooding = 5,
     ShuttingDown = 6,
+    /// The peer is at its connection cap and we rank too low to displace
+    /// anyone, or we were evicted for a better-ranked peer.
+    TooManyPeers = 7,
 }

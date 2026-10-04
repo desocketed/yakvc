@@ -39,6 +39,7 @@ fn relay_options() -> RelayOptions {
         http_bind: "127.0.0.1:0".parse().unwrap(),
         tls: None,
         quic_bind: None,
+        open: false,
     }
 }
 
@@ -514,6 +515,31 @@ async fn relay_drops_clients_that_never_register() {
         relay_disconnects(&server) >= 1
     })
     .await;
+}
+
+#[tokio::test]
+async fn open_relay_keeps_clients_without_a_session() {
+    let limits = Limits {
+        relay_grace: Duration::from_millis(300),
+        ..Limits::default()
+    };
+    let server = builder()
+        .insecure_dev_auth()
+        .relay(RelayOptions {
+            open: true,
+            ..relay_options()
+        })
+        .limits(limits)
+        .spawn()
+        .await
+        .unwrap();
+    let caller = relay_only_endpoint(server.relay_url().unwrap()).await;
+    tokio::time::timeout(TIMEOUT, caller.online())
+        .await
+        .unwrap();
+
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(relay_disconnects(&server), 0);
 }
 
 #[tokio::test]

@@ -4,6 +4,7 @@
 //! a `relay_only` client can only reach the rendezvous through the relay, so
 //! an EndpointId without a session is admitted for a grace period. If it has
 //! not registered by then, or when its session ends, it is disconnected.
+//! `RelayOptions::open` turns all of this off for self-hosted test relays.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::num::NonZeroU32;
@@ -123,7 +124,9 @@ pub(crate) async fn spawn(
         None => None,
     };
     relay.limits.client_rx = NonZeroU32::new(client_bytes_per_sec).map(ClientRateLimit::new);
-    relay.access = Arc::new(GateAccess(Arc::clone(&gate)));
+    if !options.open {
+        relay.access = Arc::new(GateAccess(Arc::clone(&gate)));
+    }
 
     let mut config = ServerConfig::default();
     config.relay = Some(relay);

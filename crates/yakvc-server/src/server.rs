@@ -55,6 +55,10 @@ pub struct RelayOptions {
     pub tls: Option<RelayTls>,
     /// QUIC address discovery.
     pub quic_bind: Option<SocketAddr>,
+    /// Serve every client, not only those with a rendezvous session. For a
+    /// self-hosted relay used for direct calls (`yakvc call`), which have no
+    /// session; never for a public server.
+    pub open: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -241,7 +245,8 @@ impl ServerBuilder {
             .await?;
             relay = Some(server);
             relay_url = Some(url);
-            relay_gate = Some(gate);
+            // An open relay never disconnects anyone, so there is no gate to tell.
+            relay_gate = (!options.open).then_some(gate);
         }
 
         let endpoint = bind_endpoint(self.endpoint_key, self.bind, relay_url.clone()).await?;
