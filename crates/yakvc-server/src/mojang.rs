@@ -262,13 +262,9 @@ mod tests {
 
     #[tokio::test]
     async fn unreachable_server_is_unavailable() {
-        // Bind and drop to get a port nothing listens on.
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
-        let server = SessionServer::new(format!("http://127.0.0.1:{port}"));
+        // Nothing can listen on port 0, so the connection is always refused.
+        // (Binding a free port and dropping it races with other tests.)
+        let server = SessionServer::new("http://127.0.0.1:0".to_owned());
         let err = server.has_joined("alice", "1").await.unwrap_err();
         assert!(matches!(err, MojangError::Unavailable(_)));
     }
