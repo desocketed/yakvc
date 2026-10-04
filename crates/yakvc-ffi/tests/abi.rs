@@ -307,7 +307,6 @@ fn engine_calls_reject_invalid_values() {
 }
 
 #[test]
-#[ignore = "needs round 2 yakvc-client"]
 fn game_device_takes_a_name_or_the_default() {
     let dir = temp_dir("game-device");
     let toml = offline_config();

@@ -57,7 +57,6 @@ async fn connect(a: &mut TestClient, b: &mut TestClient, state: PeerState) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "needs round 2 yakvc-client and yakvc-audio"]
 async fn only_mutual_tab_list_matches_connect() {
     let net = TestNet::start().await;
     let mut alice = net.client().name("alice").start().await;
@@ -107,7 +106,6 @@ async fn only_mutual_tab_list_matches_connect() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "needs round 2 yakvc-client and yakvc-audio"]
 async fn gain_and_pan_follow_moves() {
     let net = TestNet::start().await;
     let mut alice = net.client().name("alice").tone(440.0).start().await;
@@ -155,7 +153,6 @@ async fn gain_and_pan_follow_moves() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "needs round 2 yakvc-client and yakvc-audio"]
 async fn audio_stays_continuous_under_bursty_loss_and_jitter() {
     let net = TestNet::start().await;
     let mut alice = net.client().name("alice").tone(440.0).start().await;
@@ -213,7 +210,6 @@ async fn audio_stays_continuous_under_bursty_loss_and_jitter() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "needs round 2 yakvc-client and yakvc-audio"]
 async fn spectators_neither_send_nor_hear() {
     let net = TestNet::start().await;
     let mut alice = net.client().name("alice").tone(440.0).start().await;
@@ -248,7 +244,6 @@ async fn spectators_neither_send_nor_hear() {
 /// anyone else's world, so even a client that ignores the rule and sends
 /// anyway is not played.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "needs round 2 yakvc-client and yakvc-audio"]
 async fn a_spectator_is_left_out_of_others_worlds() {
     let net = TestNet::start().await;
     let mut alice = net.client().name("alice").tone(440.0).start().await;
@@ -278,7 +273,6 @@ async fn a_spectator_is_left_out_of_others_worlds() {
 /// Each side filters by its own range, so between two players the shorter
 /// range applies, whoever is talking.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "needs round 2 yakvc-client and yakvc-audio (exact send range)"]
 async fn the_shorter_voice_range_wins() {
     let net = TestNet::start().await;
     let mut alice = net
@@ -316,7 +310,6 @@ async fn the_shorter_voice_range_wins() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "needs round 2 yakvc-client and yakvc-audio"]
 async fn deafened_listener_hears_nothing_and_speaker_stops_sending() {
     let net = TestNet::start().await;
     let mut alice = net.client().name("alice").tone(440.0).start().await;
@@ -349,7 +342,6 @@ async fn deafened_listener_hears_nothing_and_speaker_stops_sending() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "needs round 2 yakvc-client and yakvc-audio"]
 async fn relay_only_client_talks_through_the_relay() {
     let net = TestNet::start().await;
     let mut alice = net.client().name("alice").tone(440.0).start().await;
@@ -372,7 +364,6 @@ async fn relay_only_client_talks_through_the_relay() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "needs round 2 yakvc-client and yakvc-audio"]
 async fn voice_stops_at_range_and_without_a_tracked_entity() {
     let net = TestNet::start().await;
     let mut alice = net.client().name("alice").tone(440.0).start().await;
