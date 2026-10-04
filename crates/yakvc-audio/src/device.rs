@@ -1,6 +1,26 @@
+use std::time::Duration;
+
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::{FromSample, I24, Sample, SampleFormat, SizedSample, StreamConfig};
+use rtrb::{Consumer, Producer, RingBuffer};
 use serde::Serialize;
 
-use crate::{AudioError, FrameSink, FrameSource, MonoFrame, StereoFrame};
+use crate::resample::Resampler;
+use crate::{
+    AudioError, FRAME_SAMPLES, FrameSink, FrameSource, MonoFrame, SAMPLE_RATE, StereoFrame,
+};
+
+/// How much audio each ring between a device callback and the audio thread
+/// can hold.
+const RING_DURATION: Duration = Duration::from_millis(500);
+
+/// Captured audio the audio thread may fall behind by before the oldest is
+/// dropped, so a stall does not turn into lasting latency.
+const MAX_CAPTURE_BACKLOG: usize = 5 * FRAME_SAMPLES;
+
+/// Audio queued for the output device while it still asks for more. Enough
+/// to ride out a late audio thread, little enough to keep latency down.
+const PLAYBACK_LEAD: Duration = Duration::from_millis(40);
 
 /// Audio devices on this machine. Serializes to the JSON returned by
 /// `yakvc_list_devices`.
@@ -29,48 +49,293 @@ pub enum DeviceChoice {
 }
 
 pub fn devices() -> Result<Devices, AudioError> {
-    todo!()
+    let host = cpal::default_host();
+    Ok(Devices {
+        inputs: list(
+            Direction::Input.devices(&host)?,
+            Direction::Input.default(&host),
+        ),
+        outputs: list(
+            Direction::Output.devices(&host)?,
+            Direction::Output.default(&host),
+        ),
+    })
+}
+
+fn list(devices: Vec<(String, cpal::Device)>, default: Option<cpal::Device>) -> Vec<DeviceInfo> {
+    devices
+        .into_iter()
+        .map(|(name, device)| DeviceInfo {
+            name,
+            is_default: Some(&device) == default.as_ref(),
+        })
+        .collect()
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Direction {
+    Input,
+    Output,
+}
+
+impl Direction {
+    /// Named devices; ones that fail to report a name are left out.
+    fn devices(self, host: &cpal::Host) -> Result<Vec<(String, cpal::Device)>, AudioError> {
+        let devices: Vec<cpal::Device> = match self {
+            Direction::Input => host.input_devices().map_err(device_error)?.collect(),
+            Direction::Output => host.output_devices().map_err(device_error)?.collect(),
+        };
+        Ok(devices
+            .into_iter()
+            .filter_map(|device| Some((device.description().ok()?.name().to_owned(), device)))
+            .collect())
+    }
+
+    fn default(self, host: &cpal::Host) -> Option<cpal::Device> {
+        match self {
+            Direction::Input => host.default_input_device(),
+            Direction::Output => host.default_output_device(),
+        }
+    }
+
+    fn find(self, choice: &DeviceChoice) -> Result<cpal::Device, AudioError> {
+        let host = cpal::default_host();
+        let no_device = |name: &str| AudioError::NoDevice(name.to_owned());
+        match choice {
+            DeviceChoice::Default => self.default(&host).ok_or_else(|| no_device("default")),
+            DeviceChoice::Named(wanted) => self
+                .devices(&host)?
+                .into_iter()
+                .find(|(name, _)| name == wanted)
+                .map(|(_, device)| device)
+                .ok_or_else(|| no_device(wanted)),
+            DeviceChoice::ClosestTo(wanted) => {
+                let mut devices = self.devices(&host)?;
+                match closest_name(wanted, devices.iter().map(|(name, _)| name.as_str())) {
+                    Some(index) => Ok(devices.swap_remove(index).1),
+                    None => self.default(&host).ok_or_else(|| no_device(wanted)),
+                }
+            }
+        }
+    }
+}
+
+/// Index of the name sharing the most words with `wanted`, counting only
+/// names that share more than half of their words. Minecraft reports OpenAL
+/// names such as "OpenAL Soft on Speakers (Realtek(R) Audio)" where cpal says
+/// "Speakers (Realtek(R) Audio)", so exact matching would rarely work.
+fn closest_name<'a>(wanted: &str, names: impl Iterator<Item = &'a str>) -> Option<usize> {
+    let wanted = words(wanted);
+    let mut best: Option<(usize, usize, usize)> = None; // (index, shared, total)
+    for (index, name) in names.enumerate() {
+        let words = words(name);
+        let shared = words.iter().filter(|w| wanted.contains(w)).count();
+        if shared * 2 <= words.len() {
+            continue;
+        }
+        // More shared words wins; on a tie, the name with fewer extra words.
+        let better = best.is_none_or(|(_, best_shared, best_total)| {
+            shared > best_shared || (shared == best_shared && words.len() < best_total)
+        });
+        if better {
+            best = Some((index, shared, words.len()));
+        }
+    }
+    best.map(|(index, _, _)| index)
+}
+
+fn words(name: &str) -> Vec<String> {
+    name.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_lowercase)
+        .collect()
 }
 
 /// Captures from an input device, resampled to mono 48 kHz.
 pub struct Microphone {
-    _p: (),
+    /// Keeps the device running; dropping it stops capture.
+    _stream: cpal::Stream,
+    /// Mono samples at the device rate, from the device callback.
+    ring: Consumer<f32>,
+    resampler: Resampler,
+    /// Samples read from the ring, before resampling.
+    captured: Vec<f32>,
+    /// Resampled samples not yet handed out as a frame.
+    pending: Vec<f32>,
 }
 
 impl Microphone {
     pub fn open(device: &DeviceChoice) -> Result<Self, AudioError> {
-        let _ = device;
-        todo!()
+        let device = Direction::Input.find(device)?;
+        let supported = device.default_input_config().map_err(device_error)?;
+        let config = supported.config();
+        let rate = config.sample_rate;
+        let (producer, ring) = RingBuffer::new(ring_len(rate));
+
+        let stream = match supported.sample_format() {
+            SampleFormat::F32 => capture::<f32>(&device, config, producer),
+            SampleFormat::I16 => capture::<i16>(&device, config, producer),
+            SampleFormat::I24 => capture::<I24>(&device, config, producer),
+            SampleFormat::I32 => capture::<i32>(&device, config, producer),
+            SampleFormat::U8 => capture::<u8>(&device, config, producer),
+            SampleFormat::U16 => capture::<u16>(&device, config, producer),
+            other => return Err(unsupported_format(other)),
+        }
+        .map_err(device_error)?;
+        stream.play().map_err(device_error)?;
+
+        Ok(Microphone {
+            _stream: stream,
+            ring,
+            resampler: Resampler::new(rate, SAMPLE_RATE, 1)?,
+            captured: Vec::new(),
+            pending: Vec::new(),
+        })
     }
+}
+
+/// Opens a capture stream whose callback downmixes to mono and pushes into
+/// `ring`. The callback never blocks or allocates; if the ring is full, the
+/// newest samples are dropped.
+fn capture<T>(
+    device: &cpal::Device,
+    config: StreamConfig,
+    mut ring: Producer<f32>,
+) -> Result<cpal::Stream, cpal::Error>
+where
+    T: SizedSample,
+    f32: FromSample<T>,
+{
+    let channels = usize::from(config.channels);
+    device.build_input_stream(
+        config,
+        move |data: &[T], _: &cpal::InputCallbackInfo| {
+            for frame in data.chunks_exact(channels) {
+                let sum: f32 = frame.iter().map(|&s| f32::from_sample(s)).sum();
+                let _ = ring.push(sum / channels as f32);
+            }
+        },
+        // A failed device shows up as `read` returning no more frames.
+        |_| {},
+        None,
+    )
 }
 
 impl FrameSource for Microphone {
     fn read(&mut self, frame: &mut MonoFrame) -> bool {
-        let _ = frame;
-        todo!()
+        self.captured.clear();
+        while let Ok(sample) = self.ring.pop() {
+            self.captured.push(sample);
+        }
+        self.resampler.process(&self.captured, &mut self.pending);
+        if self.pending.len() > MAX_CAPTURE_BACKLOG {
+            let excess = self.pending.len() - MAX_CAPTURE_BACKLOG;
+            self.pending.drain(..excess);
+        }
+        if self.pending.len() < FRAME_SAMPLES {
+            return false;
+        }
+        frame.copy_from_slice(&self.pending[..FRAME_SAMPLES]);
+        self.pending.drain(..FRAME_SAMPLES);
+        true
     }
 }
 
 /// Plays to an output device, resampled from stereo 48 kHz.
 pub struct Speakers {
-    _p: (),
+    /// Keeps the device running; dropping it stops playback.
+    _stream: cpal::Stream,
+    /// Stereo samples at the device rate, for the device callback.
+    ring: Producer<[f32; 2]>,
+    resampler: Resampler,
+    /// Device-rate samples queued once the ring holds this many.
+    lead_samples: usize,
+    /// Resampled, interleaved samples on their way into the ring.
+    resampled: Vec<f32>,
 }
 
 impl Speakers {
     pub fn open(device: &DeviceChoice) -> Result<Self, AudioError> {
-        let _ = device;
-        todo!()
+        let device = Direction::Output.find(device)?;
+        let supported = device.default_output_config().map_err(device_error)?;
+        let config = supported.config();
+        let rate = config.sample_rate;
+        let (ring, consumer) = RingBuffer::new(ring_len(rate));
+
+        let stream = match supported.sample_format() {
+            SampleFormat::F32 => playback::<f32>(&device, config, consumer),
+            SampleFormat::I16 => playback::<i16>(&device, config, consumer),
+            SampleFormat::I24 => playback::<I24>(&device, config, consumer),
+            SampleFormat::I32 => playback::<i32>(&device, config, consumer),
+            SampleFormat::U8 => playback::<u8>(&device, config, consumer),
+            SampleFormat::U16 => playback::<u16>(&device, config, consumer),
+            other => return Err(unsupported_format(other)),
+        }
+        .map_err(device_error)?;
+        stream.play().map_err(device_error)?;
+
+        Ok(Speakers {
+            _stream: stream,
+            ring,
+            resampler: Resampler::new(SAMPLE_RATE, rate, 2)?,
+            lead_samples: (rate as f32 * PLAYBACK_LEAD.as_secs_f32()) as usize,
+            resampled: Vec::new(),
+        })
     }
+}
+
+/// Opens a playback stream whose callback pops from `ring`, playing silence
+/// when it runs dry. Left and right go to the first two channels; a mono
+/// device gets their average.
+fn playback<T>(
+    device: &cpal::Device,
+    config: StreamConfig,
+    mut ring: Consumer<[f32; 2]>,
+) -> Result<cpal::Stream, cpal::Error>
+where
+    T: SizedSample + FromSample<f32>,
+{
+    let channels = usize::from(config.channels);
+    device.build_output_stream(
+        config,
+        move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
+            for frame in data.chunks_exact_mut(channels) {
+                let [left, right] = ring.pop().unwrap_or([0.0; 2]);
+                if let [only] = frame {
+                    *only = T::from_sample((left + right) / 2.0);
+                    continue;
+                }
+                for (channel, sample) in frame.iter_mut().enumerate() {
+                    let value = match channel {
+                        0 => left,
+                        1 => right,
+                        _ => 0.0,
+                    };
+                    *sample = T::from_sample(value);
+                }
+            }
+        },
+        // A failed device shows up as the ring filling and `wants_frame`
+        // staying false.
+        |_| {},
+        None,
+    )
 }
 
 impl FrameSink for Speakers {
     fn wants_frame(&self) -> bool {
-        todo!()
+        let queued = self.ring.buffer().capacity() - self.ring.slots();
+        queued < self.lead_samples
     }
 
     fn write(&mut self, frame: &StereoFrame) {
-        let _ = frame;
-        todo!()
+        self.resampled.clear();
+        self.resampler
+            .process(frame.as_flattened(), &mut self.resampled);
+        for &pair in self.resampled.as_chunks::<2>().0 {
+            // When full, the device has stalled; dropping is all we can do.
+            let _ = self.ring.push(pair);
+        }
     }
 }
 
@@ -83,5 +348,98 @@ impl std::fmt::Debug for Microphone {
 impl std::fmt::Debug for Speakers {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Speakers").finish_non_exhaustive()
+    }
+}
+
+fn ring_len(rate: u32) -> usize {
+    (rate as f32 * RING_DURATION.as_secs_f32()) as usize
+}
+
+fn device_error(err: cpal::Error) -> AudioError {
+    AudioError::Device(err.to_string())
+}
+
+fn unsupported_format(format: SampleFormat) -> AudioError {
+    AudioError::Device(format!("unsupported sample format {format}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn closest(wanted: &str, names: &[&str]) -> Option<usize> {
+        closest_name(wanted, names.iter().copied())
+    }
+
+    #[test]
+    fn closest_name_follows_openal_names() {
+        let names = [
+            "HDMI Audio",
+            "Speakers (Realtek(R) Audio)",
+            "Headphones (USB Audio)",
+        ];
+        assert_eq!(
+            closest("OpenAL Soft on Speakers (Realtek(R) Audio)", &names),
+            Some(1)
+        );
+        assert_eq!(
+            closest("OpenAL Soft on Headphones (USB Audio)", &names),
+            Some(2)
+        );
+        assert_eq!(closest("speakers (realtek(r) audio)", &names), Some(1));
+    }
+
+    #[test]
+    fn closest_name_rejects_weak_matches() {
+        let names = ["HDMI Audio", "default"];
+        assert_eq!(closest("OpenAL Soft on Speakers (USB Audio)", &names), None);
+        assert_eq!(closest("", &names), None);
+        assert_eq!(closest("Speakers", &[]), None);
+    }
+
+    #[test]
+    fn closest_name_prefers_fewer_extra_words() {
+        let names = ["Speakers Digital Output", "Speakers"];
+        assert_eq!(closest("Speakers", &names), Some(1));
+    }
+
+    #[test]
+    #[ignore = "needs audio hardware"]
+    fn lists_devices() {
+        let devices = devices().unwrap();
+        assert!(!devices.inputs.is_empty() || !devices.outputs.is_empty());
+    }
+
+    #[test]
+    #[ignore = "needs audio hardware"]
+    fn microphone_delivers_frames() {
+        let mut mic = Microphone::open(&DeviceChoice::Default).unwrap();
+        let mut frame = [0.0; FRAME_SAMPLES];
+        let start = std::time::Instant::now();
+        let mut frames = 0;
+        while start.elapsed() < Duration::from_secs(1) {
+            if mic.read(&mut frame) {
+                frames += 1;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!((40..=60).contains(&frames), "{frames} frames in 1 s");
+    }
+
+    #[test]
+    #[ignore = "needs audio hardware"]
+    fn speakers_take_frames_in_real_time() {
+        let mut speakers = Speakers::open(&DeviceChoice::Default).unwrap();
+        let frame = [[0.0; 2]; FRAME_SAMPLES];
+        let start = std::time::Instant::now();
+        let mut frames = 0;
+        while start.elapsed() < Duration::from_secs(1) {
+            if speakers.wants_frame() {
+                speakers.write(&frame);
+                frames += 1;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!((40..=60).contains(&frames), "{frames} frames in 1 s");
     }
 }

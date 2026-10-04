@@ -14,6 +14,7 @@ mod device;
 mod input;
 mod mixer;
 mod receive;
+mod resample;
 mod test_io;
 
 use std::time::Duration;
