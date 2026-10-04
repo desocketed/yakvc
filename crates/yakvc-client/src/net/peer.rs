@@ -773,7 +773,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "needs yakvc-shared tickets and framing (round 1)"]
     async fn peers_with_trusted_tickets_connect() {
         let issuer = IssuerKey::generate();
         let mut alice = side(1, &issuer, &issuer).await;
@@ -792,7 +791,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "needs yakvc-shared tickets and framing (round 1)"]
     async fn untrusted_issuer_is_rejected() {
         let issuer = IssuerKey::generate();
         let rogue = IssuerKey::generate();
@@ -810,7 +808,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "needs yakvc-shared tickets and framing (round 1)"]
     async fn ticket_for_another_endpoint_is_rejected() {
         let issuer = IssuerKey::generate();
         let alice = side(1, &issuer, &issuer).await;
@@ -829,7 +826,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "needs yakvc-shared tickets and framing (round 1)"]
     async fn peer_outside_the_tab_list_is_rejected() {
         let issuer = IssuerKey::generate();
         let alice = side(1, &issuer, &issuer).await;
@@ -845,7 +841,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "needs yakvc-shared tickets and framing (round 1)"]
     async fn the_accepting_side_checks_too() {
         let issuer = IssuerKey::generate();
         let alice = side(1, &issuer, &issuer).await;
