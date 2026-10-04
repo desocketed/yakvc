@@ -1,16 +1,23 @@
 package io.github.desocketed.yakvc;
 
+import com.google.gson.JsonElement;
+import com.google.gson.JsonParser;
 import io.github.desocketed.yakvc.config.ClientConfig;
+import io.github.desocketed.yakvc.config.PlayerVolumes;
 import io.github.desocketed.yakvc.input.VoiceKeys;
 import io.github.desocketed.yakvc.natives.EngineEvent;
 import io.github.desocketed.yakvc.natives.NativeBridge;
 import io.github.desocketed.yakvc.natives.YakVcException;
+import io.github.desocketed.yakvc.ui.VoiceMenuScreen;
+import io.github.desocketed.yakvc.ui.VoiceToasts;
 import java.lang.foreign.MemorySegment;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -20,6 +27,7 @@ import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.client.multiplayer.PlayerInfo;
 import net.minecraft.client.player.AbstractClientPlayer;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.network.chat.Component;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.phys.Vec3;
@@ -32,13 +40,16 @@ import org.jspecify.annotations.Nullable;
 public final class GameStateFeeder {
 	/** Fits the largest record: an error message of 65,535 bytes plus its header. */
 	private static final int EVENT_BUFFER_BYTES = 65_540;
+	/** How often the Social Interactions block list is checked again. */
+	private static final int BLOCKED_REFRESH_TICKS = 20;
 
 	private final NativeBridge bridge;
 	private final MemorySegment engine;
-	private final ClientConfig config;
 	private final VoiceKeys keys;
 	private final SessionJoiner joiner;
+	private final PlayerVolumes volumes;
 	private final byte[] eventBuffer = new byte[EVENT_BUFFER_BYTES];
+	private ClientConfig config;
 
 	/** Volatile because Fabric may fire DISCONNECT off the client thread. */
 	private volatile @Nullable VoiceSession session;
@@ -60,19 +71,26 @@ public final class GameStateFeeder {
 	private int inputFlags = 0;
 	private float gameVolume = -1;
 	private @Nullable String gameDevice;
+	private final Map<UUID, PlayerVolumes.Setting> peerAudio = new HashMap<>();
 
-	// Shown by the HUD.
+	/** Players in the tab list that are blocked in Social Interactions, when {@code mute_blocked_players} is on. */
+	private Set<UUID> blocked = Set.of();
+	private int ticksUntilBlockedRefresh;
+
+	// Shown by the HUD and the voice menu.
 	private EngineEvent.@Nullable RendezvousState rendezvous;
+	private final Map<UUID, EngineEvent.PeerState> peers = new HashMap<>();
 	private final Set<UUID> talking = new LinkedHashSet<>();
 	private int errorEvents;
 
 	public GameStateFeeder(NativeBridge bridge, MemorySegment engine, ClientConfig config, VoiceKeys keys,
-			SessionJoiner joiner) {
+			SessionJoiner joiner, PlayerVolumes volumes) {
 		this.bridge = bridge;
 		this.engine = engine;
 		this.config = config;
 		this.keys = keys;
 		this.joiner = joiner;
+		this.volumes = volumes;
 	}
 
 	/** The local Minecraft identity. Starts rendezvous authentication. */
@@ -99,13 +117,18 @@ public final class GameStateFeeder {
 		if (closed) return;
 		try {
 			keys.tick();
+			if (keys.menuPressed() && minecraft.gui.screen() == null) {
+				minecraft.gui.setScreen(new VoiceMenuScreen(null, this));
+			}
 			VoiceSession session = this.session;
 			if (session != null) session.tick();
 			else talking.clear();
 			LocalPlayer player = minecraft.player;
 			boolean active = session != null && session.active() && player != null && minecraft.level != null;
 
-			feedTabList(active ? new HashSet<>(session.connection.getOnlinePlayerIds()) : Set.of());
+			Set<UUID> players = active ? new HashSet<>(session.connection.getOnlinePlayerIds()) : Set.of();
+			refreshBlocked(minecraft, players);
+			feedTabList(players);
 			if (active) {
 				feedWorld(minecraft, player, session.connection);
 			} else if (!worldEmpty) {
@@ -113,6 +136,7 @@ public final class GameStateFeeder {
 				tracked = List.of();
 				worldEmpty = true;
 			}
+			feedPeerAudio(players);
 			feedInput(active ? inputFlags(player) : 0);
 			feedVolume(minecraft.options.getFinalSoundSourceVolume(SoundSource.VOICE));
 			feedDevice(minecraft.options.soundDevice().get());
@@ -130,6 +154,52 @@ public final class GameStateFeeder {
 		bridge.destroy(engine);
 	}
 
+	/**
+	 * Applies a changed config to the running engine, which checks it. Returns the engine's complaint, or null if it
+	 * took the config; only then may it be saved.
+	 */
+	public @Nullable String applyConfig(ClientConfig newConfig) {
+		if (closed) return "the voice engine is stopped";
+		try {
+			bridge.updateConfig(engine, newConfig.toml());
+		} catch (YakVcException e) {
+			fail(e);
+			return e.getMessage();
+		}
+		config = newConfig;
+		ticksUntilBlockedRefresh = 0;
+		return null;
+	}
+
+	/** The audio devices' names, inputs or outputs. Empty if the system can't list them. */
+	public List<String> deviceNames(boolean inputs) {
+		if (closed) return List.of();
+		List<String> names = new ArrayList<>();
+		try {
+			JsonElement devices = JsonParser.parseString(bridge.listDevices(engine));
+			for (JsonElement device : devices.getAsJsonObject().getAsJsonArray(inputs ? "inputs" : "outputs")) {
+				names.add(device.getAsJsonObject().get("name").getAsString());
+			}
+		} catch (YakVcException e) {
+			if (e.poisoned()) fail(e);
+			else YakVcClient.LOGGER.warn("Could not list audio devices: {}", e.getMessage());
+		}
+		return names;
+	}
+
+	private void refreshBlocked(Minecraft minecraft, Set<UUID> players) {
+		if (--ticksUntilBlockedRefresh > 0) return;
+		ticksUntilBlockedRefresh = BLOCKED_REFRESH_TICKS;
+		Set<UUID> now = new HashSet<>();
+		if (config.muteBlockedPlayers()) {
+			for (UUID uuid : players) {
+				if (minecraft.getPlayerSocialManager().isBlocked(uuid)) now.add(uuid);
+			}
+		}
+		if (!now.equals(blocked)) YakVcClient.LOGGER.info("Blocked players muted: {}", now.size());
+		blocked = now;
+	}
+
 	private void feedTabList(Set<UUID> players) {
 		if (players.equals(tabList)) return;
 		bridge.setTabList(engine, players);
@@ -137,8 +207,10 @@ public final class GameStateFeeder {
 	}
 
 	/**
-	 * Pushes the listener's pose and every tracked player except spectators. Vanilla sends spectator players to other
-	 * clients and only hides them client-side, so the tab-list game mode is what keeps spectators out, both ways.
+	 * Pushes the listener's pose and every tracked player except spectators and blocked players. Vanilla sends
+	 * spectator players to other clients and only hides them client-side, so the tab-list game mode is what keeps
+	 * spectators out, both ways. Leaving blocked players out is what stops us sending to them; their mute stops them
+	 * sending to us.
 	 */
 	private void feedWorld(Minecraft minecraft, LocalPlayer player, ClientPacketListener connection) {
 		Camera camera = minecraft.gameRenderer.mainCamera();
@@ -152,6 +224,7 @@ public final class GameStateFeeder {
 		for (AbstractClientPlayer other : minecraft.level.players()) {
 			PlayerInfo info = connection.getPlayerInfo(other.getUUID());
 			if (other == player || info != null && info.getGameMode() == GameType.SPECTATOR) continue;
+			if (blocked.contains(other.getUUID())) continue;
 			uuids.add(other.getUUID());
 			positions.add(other.getEyePosition());
 		}
@@ -164,6 +237,17 @@ public final class GameStateFeeder {
 		bridge.pushWorld(engine, listener, NativeBridge.uuidBytes(uuids), xyz);
 		tracked = uuids;
 		worldEmpty = false;
+	}
+
+	/** Each player's saved volume and mute, with blocked players muted. */
+	private void feedPeerAudio(Set<UUID> players) {
+		for (UUID uuid : players) {
+			PlayerVolumes.Setting saved = volumes.get(uuid);
+			PlayerVolumes.Setting wanted = new PlayerVolumes.Setting(saved.volume(), saved.muted() || blocked(uuid));
+			if (wanted.equals(peerAudio.getOrDefault(uuid, PlayerVolumes.DEFAULT))) continue;
+			bridge.setPeerVolume(engine, uuid, wanted.volume(), wanted.muted());
+			peerAudio.put(uuid, wanted);
+		}
 	}
 
 	private int inputFlags(LocalPlayer player) {
@@ -212,7 +296,12 @@ public final class GameStateFeeder {
 				YakVcClient.LOGGER.info("Rendezvous {} ({})", state, value);
 			}
 			case EngineEvent.Peer(UUID uuid, EngineEvent.PeerState state) -> {
-				if (state == EngineEvent.PeerState.GONE) talking.remove(uuid);
+				if (state == EngineEvent.PeerState.GONE) {
+					talking.remove(uuid);
+					peers.remove(uuid);
+				} else {
+					peers.put(uuid, state);
+				}
 				YakVcClient.LOGGER.info("Peer {} {} {}", uuid, name(uuid), state);
 			}
 			case EngineEvent.Talking(UUID uuid, boolean isTalking) -> {
@@ -242,6 +331,7 @@ public final class GameStateFeeder {
 		YakVcClient.LOGGER.error("Native call failed", e);
 		if (e.poisoned()) {
 			YakVcClient.LOGGER.error("Voice disabled until restart: the native engine crashed");
+			VoiceToasts.show(Component.translatable("yakvc.toast.crashed"));
 			close();
 		}
 	}
@@ -261,8 +351,31 @@ public final class GameStateFeeder {
 		return closed;
 	}
 
+	public ClientConfig config() {
+		return config;
+	}
+
+	public VoiceKeys keys() {
+		return keys;
+	}
+
+	/** Saved per-player volume and mute. Changes reach the engine on the next tick. */
+	public PlayerVolumes volumes() {
+		return volumes;
+	}
+
+	/** Muted because the player is blocked in Social Interactions. */
+	public boolean blocked(UUID uuid) {
+		return blocked.contains(uuid);
+	}
+
 	public EngineEvent.@Nullable RendezvousState rendezvous() {
 		return rendezvous;
+	}
+
+	/** The connection state of a peer the engine knows, or null. */
+	public EngineEvent.@Nullable PeerState peerState(UUID uuid) {
+		return peers.get(uuid);
 	}
 
 	/** Who is talking right now, the local player included. */

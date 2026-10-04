@@ -4,21 +4,27 @@ import io.github.desocketed.yakvc.GameStateFeeder;
 import io.github.desocketed.yakvc.VoiceSession;
 import io.github.desocketed.yakvc.natives.EngineEvent;
 import io.github.desocketed.yakvc.natives.NativeBridge;
-import java.util.Locale;
 import java.util.UUID;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElement;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.network.chat.Component;
+import org.jspecify.annotations.Nullable;
 
 /**
- * A few lines of text in the top-left corner: voice state, then everyone talking, the local player included. Enough
- * to see that voice works until the real UI arrives (M6).
+ * Top-left corner, while in a world: the own microphone (green while sending, red when muted, grey when voice is off),
+ * a red headphones icon when deafened, and the rendezvous connection as signal bars (green when registered). A short
+ * line of text follows only when something is not working. Below, one line per talking player, for players outside
+ * the view; players in view also get {@link TalkingIndicator} over their heads.
  */
 public final class VoiceHud implements HudElement {
-	private static final int GREY = 0xFFAAAAAA;
+	private static final int WHITE = 0xFFFFFFFF;
+	private static final int GREY = 0xFF888888;
 	private static final int GREEN = 0xFF55FF55;
+	private static final int YELLOW = 0xFFFFFF55;
+	private static final int RED = 0xFFFF5555;
 
 	private final GameStateFeeder feeder;
 
@@ -32,23 +38,48 @@ public final class VoiceHud implements HudElement {
 		VoiceSession session = feeder.session();
 		if (session == null || minecraft.player == null) return;
 		Font font = minecraft.font;
+		int flags = feeder.inputFlags();
+		Component problem = problem(feeder);
+
+		int x = 4;
 		int y = 4;
-		String status = status(session);
-		if ((feeder.inputFlags() & NativeBridge.INPUT_MUTED) != 0) status += ", muted";
-		if ((feeder.inputFlags() & NativeBridge.INPUT_DEAFENED) != 0) status += ", deafened";
-		graphics.text(font, "Yak VC: " + status, 4, y, GREY, true);
+		int micColor;
+		if (problem != null) micColor = GREY;
+		else if ((flags & NativeBridge.INPUT_MUTED) != 0) micColor = RED;
+		else if (feeder.talking().contains(minecraft.player.getUUID())) micColor = GREEN;
+		else micColor = WHITE;
+		x = icon(graphics, font, Icons.MIC, x, y, micColor);
+		if ((flags & NativeBridge.INPUT_DEAFENED) != 0) x = icon(graphics, font, Icons.HEADPHONES, x, y, RED);
+		x = icon(graphics, font, Icons.SIGNAL, x, y, signalColor(feeder.rendezvous()));
+		if (problem != null) graphics.text(font, problem, x, y, GREY, true);
+
 		for (UUID uuid : feeder.talking()) {
+			if (uuid.equals(minecraft.player.getUUID())) continue;
 			y += font.lineHeight + 1;
-			String who = uuid.equals(minecraft.player.getUUID()) ? "You" : feeder.name(uuid);
-			graphics.text(font, "> " + who, 4, y, GREEN, true);
+			int nameX = icon(graphics, font, Icons.SPEAKER, 4, y, WHITE);
+			graphics.text(font, feeder.name(uuid), nameX, y, WHITE, true);
 		}
 	}
 
-	private String status(VoiceSession session) {
-		if (feeder.closed()) return "off (engine stopped)";
-		if (session.offReason() != null) return "off (" + session.offReason() + ")";
-		if (!session.active()) return "waiting for server";
-		EngineEvent.RendezvousState rendezvous = feeder.rendezvous();
-		return rendezvous == null ? "starting" : rendezvous.name().toLowerCase(Locale.ROOT);
+	/** Draws an icon and returns the x after it and a gap. */
+	private static int icon(GuiGraphicsExtractor graphics, Font font, Component icon, int x, int y, int color) {
+		graphics.text(font, icon, x, y, color, true);
+		return x + font.width(icon) + 3;
+	}
+
+	private static int signalColor(EngineEvent.@Nullable RendezvousState state) {
+		if (state == EngineEvent.RendezvousState.REGISTERED) return GREEN;
+		if (state == EngineEvent.RendezvousState.DISCONNECTED) return RED;
+		return YELLOW;
+	}
+
+	/** Why voice isn't working in this world right now, or null if it is (or there is no world). */
+	static @Nullable Component problem(GameStateFeeder feeder) {
+		VoiceSession session = feeder.session();
+		if (feeder.closed()) return Component.translatable("yakvc.hud.stopped");
+		if (session == null) return null;
+		if (session.offReason() != null) return Component.translatable("yakvc.hud.off", session.offReason());
+		if (!session.active()) return Component.translatable("yakvc.hud.waiting");
+		return null;
 	}
 }
