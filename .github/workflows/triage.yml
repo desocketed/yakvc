@@ -1,0 +1,30 @@
+name: Triage
+
+# Labels issues and pull requests the maintainer opens, so Claude's periodic
+# check only has to choose the type, area and milestone. Claude marks
+# everything it writes with <!-- claude -->; anything without it is human.
+on:
+  issues:
+    types: [opened]
+  # pull_request_target runs with a write token even for PRs from forks.
+  # That is safe here because nothing from the PR is checked out or run.
+  pull_request_target:
+    types: [opened]
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  label-human:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add the human label
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BODY: ${{ github.event.issue.body || github.event.pull_request.body }}
+          NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+        run: |
+          if [[ "$BODY" != *'<!-- claude -->'* ]]; then
+            gh issue edit "$NUMBER" --repo "$GITHUB_REPOSITORY" --add-label human
+          fi
