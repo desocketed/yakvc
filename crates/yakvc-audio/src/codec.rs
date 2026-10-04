@@ -63,6 +63,63 @@ impl Encoder {
     }
 }
 
-pub(crate) fn codec_error(err: opus::Error) -> AudioError {
+fn codec_error(err: opus::Error) -> AudioError {
     AudioError::Codec(err.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::FRAME_SAMPLES;
+
+    fn tone(start: usize) -> MonoFrame {
+        std::array::from_fn(|i| {
+            let t = (start + i) as f32 / SAMPLE_RATE as f32;
+            0.3 * (std::f32::consts::TAU * 300.0 * t).sin()
+        })
+    }
+
+    /// Average packet size over a second of tone.
+    fn average_packet(encoder: &mut Encoder) -> usize {
+        let total: usize = (0..50)
+            .map(|i| {
+                encoder
+                    .encode(&tone(i * FRAME_SAMPLES))
+                    .unwrap()
+                    .unwrap()
+                    .len()
+            })
+            .sum();
+        total / 50
+    }
+
+    #[test]
+    fn packet_size_follows_bitrate() {
+        let mut encoder = Encoder::new(24_000).unwrap();
+        // 24 kbps is 60 bytes per 20 ms frame.
+        let size = average_packet(&mut encoder);
+        assert!((40..=80).contains(&size), "{size}");
+        encoder.set_bitrate(64_000);
+        // VBR spends less on a pure tone than on speech, but still more.
+        assert!(average_packet(&mut encoder) > size);
+        // Out-of-range bitrates are clamped rather than rejected.
+        encoder.set_bitrate(1_000_000);
+        assert!(average_packet(&mut encoder) <= 200);
+        assert!(Encoder::new(1).is_ok());
+    }
+
+    #[test]
+    fn dtx_skips_silence() {
+        let mut encoder = Encoder::new(24_000).unwrap();
+        for i in 0..10 {
+            assert!(encoder.encode(&tone(i * FRAME_SAMPLES)).unwrap().is_some());
+        }
+        let silent = (0..50)
+            .filter(|_| encoder.encode(&[0.0; FRAME_SAMPLES]).unwrap().is_none())
+            .count();
+        // DTX starts after a short run of silence and then skips most frames.
+        assert!(silent > 30, "{silent}");
+        encoder.reset();
+        assert!(encoder.encode(&tone(0)).unwrap().is_some());
+    }
 }
