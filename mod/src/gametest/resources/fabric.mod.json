@@ -5,6 +5,9 @@
 	"name": "Yak VC game tests",
 	"environment": "client",
 	"entrypoints": {
+		"preLaunch": [
+			"io.github.desocketed.yakvc.gametest.DevRendezvous"
+		],
 		"fabric-client-gametest": [
 			"io.github.desocketed.yakvc.gametest.YakVcClientGameTest"
 		]
