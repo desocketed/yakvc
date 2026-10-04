@@ -1,6 +1,6 @@
 [package]
 name = "yakvc-cli"
-description = "Headless Yak VC client and diagnostics"
+description = "Yak VC audio and network diagnostics"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,8 +11,7 @@ publish.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 yakvc-audio.workspace = true
-yakvc-client = { workspace = true, features = ["sim"] }
-yakvc-shared.workspace = true
+yakvc-client.workspace = true
 
 [lints]
 workspace = true

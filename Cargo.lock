@@ -1225,7 +1225,6 @@ dependencies = [
  "clap",
  "yakvc-audio",
  "yakvc-client",
- "yakvc-shared",
 ]
 
 [[package]]
