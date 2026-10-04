@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, m6-release]
+    branches: [main]
     # A version tag (v<workspace version>) also publishes the release.
     tags: ["v*"]
   pull_request:
