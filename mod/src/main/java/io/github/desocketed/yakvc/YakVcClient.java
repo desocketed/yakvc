@@ -10,9 +10,13 @@ import java.nio.file.Path;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.networking.v1.ClientConfigurationConnectionEvents;
+import net.fabricmc.fabric.api.client.networking.v1.ClientLoginConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.loader.api.FabricLoader;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.User;
 import net.minecraft.resources.Identifier;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
@@ -55,7 +59,17 @@ public final class YakVcClient implements ClientModInitializer {
 		}
 		LOGGER.info("Started native engine (ABI version {})", abi);
 
-		GameStateFeeder feeder = new GameStateFeeder(bridge, engine, config, VoiceKeys.register());
+		SessionJoiner joiner = new SessionJoiner(serverId -> {
+			Minecraft minecraft = Minecraft.getInstance();
+			User user = minecraft.getUser();
+			minecraft.services().sessionService().joinServer(user.getProfileId(), user.getAccessToken(), serverId);
+		});
+		// The game calls joinServer itself during the login phase; the configuration phase comes after it.
+		ClientLoginConnectionEvents.INIT.register((handler, minecraft) -> joiner.loginStarted());
+		ClientLoginConnectionEvents.DISCONNECT.register((handler, minecraft) -> joiner.loginEnded());
+		ClientConfigurationConnectionEvents.INIT.register((handler, minecraft) -> joiner.loginEnded());
+
+		GameStateFeeder feeder = new GameStateFeeder(bridge, engine, config, VoiceKeys.register(), joiner);
 		YakVcClient.feeder = feeder;
 		// Authenticate with the rendezvous at the title screen, before any server is joined.
 		ClientLifecycleEvents.CLIENT_STARTED.register(minecraft ->
