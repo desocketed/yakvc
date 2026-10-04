@@ -1,5 +1,5 @@
 # yakvc-server built with the toolchain pinned in rust-toolchain.toml.
-{ lib, rust-bin, makeRustPlatform }:
+{ lib, rust-bin, makeRustPlatform, cacert }:
 let
   channel = (lib.importTOML ../rust-toolchain.toml).toolchain.channel;
   rust = rust-bin.stable.${channel}.minimal;
@@ -30,6 +30,8 @@ rustPlatform.buildRustPackage {
 
   cargoBuildFlags = [ "--package" "yakvc-server" ];
   cargoTestFlags = [ "--package" "yakvc-server" ];
+  # The HTTP client loads the system's CA certificates, which the build sandbox lacks.
+  nativeCheckInputs = [ cacert ];
 
   meta = {
     description = "Yak VC rendezvous server with embedded relay";
