@@ -2,7 +2,8 @@
 # Runs the same checks as .github/workflows/ci.yml, locally and in order,
 # stopping at the first failure. Use it before pushing to main.
 #
-#   scripts/ci-local.sh            everything, including the Minecraft gametest
+#   scripts/ci-local.sh            everything, including the Minecraft gametest,
+#                                  and refreshes the user guide screenshots in docs/guide/
 #   scripts/ci-local.sh --fast     skip the release builds, mod build and gametest
 #
 # Windows and macOS natives build only on their own CI runners, and the
@@ -50,5 +51,8 @@ step "mod: build (cargo xtask dist, host natives)"
 cargo xtask dist
 step "mod: client gametest"
 scripts/gametest-headless.sh
+# CI commits these on main; here they are left in the working tree to commit or discard.
+step "docs: user guide screenshots"
+java scripts/UpdateGuideScreenshots.java
 
 step "all checks passed"

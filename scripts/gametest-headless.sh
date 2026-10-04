@@ -3,7 +3,8 @@
 # software renderers from nixpkgs (see headless-env.sh).
 #
 # Usage: scripts/gametest-headless.sh   (from the repo root, Nix required)
-# Screenshots land in mod/build/run/clientGameTest/screenshots/.
+# Screenshots land in mod/build/run/clientGameTest/screenshots/; then
+# `java scripts/UpdateGuideScreenshots.java` copies changed ones into docs/guide/.
 set -euo pipefail
 
 if [[ -z "${YAKVC_GAMETEST_INNER:-}" ]]; then

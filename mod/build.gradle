@@ -95,13 +95,25 @@ jar {
 	}
 }
 
-// The gametest client has no sound card. Dev test audio stands in for the devices, so the engine reports no
-// device errors and push-to-talk produces real voice frames.
-def gametestConfig = layout.buildDirectory.file('run/clientGameTest/config/yakvc/client.toml').get().asFile
+// The gametest starts a dev yakvc-server and writes the client config for it (DevRendezvous in the gametest
+// sources). Cargo builds the server, unless `-Pyakvc.prebuiltServer=<binary>` gives one (CI).
+def prebuiltServer = providers.gradleProperty('yakvc.prebuiltServer')
+def cargoServer = tasks.register('cargoServer', Exec) {
+	description = 'Builds yakvc-server for the client gametest.'
+	workingDir = rootDir.parentFile
+	commandLine 'cargo', 'build', '--quiet', '-p', 'yakvc-server'
+	// Cargo does its own up-to-date checking.
+	outputs.upToDateWhen { false }
+}
+// The screenshots are all for the user guide (scripts/UpdateGuideScreenshots.java), so none may be left from an
+// earlier run.
+def screenshotsDir = layout.buildDirectory.dir('run/clientGameTest/screenshots').get().asFile
 tasks.named('runClientGameTest') {
+	if (!prebuiltServer.isPresent()) dependsOn cargoServer
+	def server = prebuiltServer.getOrElse(new File(rootDir.parentFile, 'target/debug/yakvc-server').absolutePath)
+	systemProperty 'yakvc.gametest.server', file(server).absolutePath
 	doFirst {
-		gametestConfig.parentFile.mkdirs()
-		gametestConfig.text = 'dev_mode = true\n[dev]\ntone_hz = 440.0\nnull_output = true\n'
+		screenshotsDir.deleteDir()
 	}
 }
 
