@@ -165,6 +165,12 @@ pub struct Microphone {
 }
 
 impl Microphone {
+    /// Times captured audio was dropped because nobody read it in time,
+    /// since opening.
+    pub fn overruns(&self) -> u64 {
+        todo!()
+    }
+
     pub fn open(device: &DeviceChoice) -> Result<Self, AudioError> {
         let device = Direction::Input.find(device)?;
         let supported = device.default_input_config().map_err(device_error)?;
@@ -255,6 +261,12 @@ pub struct Speakers {
 }
 
 impl Speakers {
+    /// Times the device asked for audio and the queue was empty, since
+    /// opening. Each is an audible glitch.
+    pub fn underruns(&self) -> u64 {
+        todo!()
+    }
+
     pub fn open(device: &DeviceChoice) -> Result<Self, AudioError> {
         let device = Direction::Output.find(device)?;
         let supported = device.default_output_config().map_err(device_error)?;

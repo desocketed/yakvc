@@ -65,8 +65,10 @@ pub enum RelayTls {
         contact: String,
         cache_dir: PathBuf,
     },
+    /// Certificate files for `domain`, which the relay URL uses.
     Files {
         https_bind: SocketAddr,
+        domain: String,
         cert: PathBuf,
         key: PathBuf,
     },

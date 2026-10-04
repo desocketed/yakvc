@@ -45,7 +45,8 @@ pub enum ServerMsg {
     Challenge(Nonce),
     /// Session registered (or ticket renewed).
     Registered(SignedTicket),
-    /// Mojang is rate-limiting the rendezvous; retry the challenge later.
+    /// Mojang is rate-limiting the rendezvous or is unavailable; retry the
+    /// challenge later.
     RetryAfter {
         secs: u32,
     },

@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 
 use serde::{Deserialize, Serialize};
-use yakvc_shared::{EndpointId, IssuerId, RelayUrl, Uuid};
+use yakvc_shared::{EndpointAddr, EndpointId, IssuerId, RelayUrl, Uuid};
 
 /// Engine configuration, parsed from the engine's keys in
 /// `client.toml`. Unknown keys are ignored, because the Java side keeps its
@@ -34,11 +34,22 @@ pub struct RendezvousConfig {
     pub relay: Option<RelayUrl>,
 }
 
+/// Takes the rendezvous's direct addresses and (first) relay URL, for
+/// example from `yakvc_server::Server::endpoint_addr`.
+impl From<EndpointAddr> for RendezvousConfig {
+    fn from(addr: EndpointAddr) -> Self {
+        todo!("{addr:?}")
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AudioConfig {
-    /// `None` follows `game_device`, then the system default.
+    /// `None` uses the system default.
     pub input_device: Option<String>,
+    /// `None` uses the device closest to the game's (see
+    /// [`Engine::set_game_device`](crate::Engine::set_game_device)), then the
+    /// system default.
     pub output_device: Option<String>,
     pub activation: Activation,
     /// Opus bitrate in bits per second.

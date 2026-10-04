@@ -140,13 +140,9 @@ pub(crate) async fn spawn(
             let addr = server.http_addr().expect("relay serves HTTP");
             format!("http://{}", dialable(addr))
         }
-        Some(RelayTls::LetsEncrypt { domain, .. }) => {
+        Some(RelayTls::LetsEncrypt { domain, .. } | RelayTls::Files { domain, .. }) => {
             let port = server.https_addr().expect("relay serves HTTPS").port();
             format!("https://{domain}:{port}")
-        }
-        Some(RelayTls::Files { .. }) => {
-            let addr = server.https_addr().expect("relay serves HTTPS");
-            format!("https://{}", dialable(addr))
         }
     };
     let url = url
@@ -185,6 +181,7 @@ fn tls_config(tls: &RelayTls) -> Result<TlsConfig, SpawnError> {
         }
         RelayTls::Files {
             https_bind,
+            domain: _,
             cert,
             key,
         } => {
