@@ -394,8 +394,11 @@ mod tests {
     /// Called from inside a Tokio runtime, like the CLI and testkit do.
     #[tokio::test]
     async fn engine_starts_and_shuts_down_inside_an_async_caller() {
+        let (sink, _recording) = NullSink::new();
         let (engine, mut events) = Engine::builder(Config::default())
             .data_dir(data_dir("start"))
+            .audio_source(ToneSource::new(440.0))
+            .audio_sink(sink)
             .start()
             .unwrap();
         assert_eq!(
