@@ -1,0 +1,37 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "xtask"]
+default-members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[workspace.dependencies]
+# Internal crates
+yakvc-shared = { path = "crates/yakvc-shared" }
+yakvc-audio = { path = "crates/yakvc-audio" }
+yakvc-client = { path = "crates/yakvc-client" }
+yakvc-server = { path = "crates/yakvc-server" }
+yakvc-testkit = { path = "crates/yakvc-testkit" }
+
+# Third party
+anyhow = "1.0.104"
+cbindgen = { version = "0.29.4", default-features = false }
+clap = { version = "4.6.7", features = ["derive"] }
+iroh-base = { version = "1.3.0", default-features = false, features = ["key"] }
+sha2 = "0.11.0"
+thiserror = "2.0.21"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "warn"
+
+[profile.release]
+lto = "thin"

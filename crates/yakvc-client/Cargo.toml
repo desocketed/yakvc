@@ -1,0 +1,19 @@
+[package]
+name = "yakvc-client"
+description = "Yak VC voice engine used by the Fabric mod and the CLI"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# Fake game inputs, WAV source, null sink and network impairment.
+sim = []
+
+[dependencies]
+yakvc-audio.workspace = true
+yakvc-shared.workspace = true
+
+[lints]
+workspace = true

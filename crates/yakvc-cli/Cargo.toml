@@ -1,0 +1,17 @@
+[package]
+name = "yakvc-cli"
+description = "Headless Yak VC client and diagnostics"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+yakvc-client.workspace = true
+yakvc-shared.workspace = true
+
+[lints]
+workspace = true

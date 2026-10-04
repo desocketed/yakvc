@@ -1,0 +1,17 @@
+[package]
+name = "yakvc-ffi"
+description = "C ABI bridge to the Yak VC engine, called by the Fabric mod through FFM"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+yakvc-client.workspace = true
+
+[lints]
+workspace = true

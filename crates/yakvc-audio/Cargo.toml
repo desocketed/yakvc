@@ -1,0 +1,13 @@
+[package]
+name = "yakvc-audio"
+description = "Yak VC audio: capture, playback, Opus, jitter buffer and spatial mixer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

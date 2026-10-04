@@ -1,0 +1,18 @@
+[package]
+name = "yakvc-shared"
+description = "Yak VC wire protocol, tickets, pair tokens and Mojang client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# Mojang session-server client (`hasJoined`), used by the rendezvous.
+mojang = []
+
+[dependencies]
+iroh-base.workspace = true
+
+[lints]
+workspace = true
