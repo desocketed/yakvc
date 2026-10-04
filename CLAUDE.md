@@ -55,5 +55,5 @@ Prioritize a simple API and human readability over everything else: few, plain t
 - `cargo xtask header`: regenerate `crates/yakvc-ffi/include/yakvc.h` after any ABI change (CI runs `--check`)
 - `cd mod && ./gradlew build`: builds host natives via `cargo xtask natives` and runs the JUnit tests
 - `scripts/ci-local.sh [--fast]`: everything CI runs, locally and in order (`--fast` skips the mod build and gametest)
-- `scripts/gametest-headless.sh`: the Fabric client gametest (real client, singleplayer world, screenshots in `mod/build/run/clientGameTest/screenshots/`). Minecraft 26.3 finds no sRGB GLX config on Xvfb and falls back to Vulkan.
+- `scripts/gametest-headless.sh`: the Fabric client gametest (real client, singleplayer world, a dev `yakvc-server`). Its screenshots are the user guide's (`docs/USER_GUIDE.md`): changed ones are copied into `docs/guide/`, so commit them with the UI change that caused them. Minecraft 26.3 finds no sRGB GLX config on Xvfb and falls back to Vulkan.
 - `scripts/two-clients.sh --accept-eula`: end-to-end check with a dev `yakvc-server`, a local Minecraft server and two headless clients, about 1 minute (see the EULA note above)
