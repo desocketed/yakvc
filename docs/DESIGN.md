@@ -1,6 +1,6 @@
 # Yak VC — Design
 
-As of 2026-10-03. This file is the source of truth; the earlier hosted copy (https://claude.ai/code/artifact/3cb80f7d-8b37-49e3-a651-cee86022d28b) predates both design reviews and is out of date. Checks that can only be done later are listed as tasks under the milestone that needs them.
+As of 2026-10-04 (facts checked against the sources at the end). This file is the source of truth; the earlier hosted copy (https://claude.ai/code/artifact/3cb80f7d-8b37-49e3-a651-cee86022d28b) predates both design reviews and is out of date. Checks that can only be done later are listed as tasks under the milestone that needs them.
 
 ## Overview
 
@@ -172,14 +172,23 @@ A client proves its UUID to the rendezvous once with a Mojang session challenge 
 2. Client sends `Hello { proto, mod_version, uuid, name, endpoint_addr, cached_ticket: Option<Ticket> }`.
 3. If `cached_ticket` was signed by the issuer key this server holds, names this EndpointId and UUID, and has more than 2 h left, the server registers the session and skips to step 8, returning the same ticket. Otherwise it continues with step 4.
 4. Server sends `Challenge { nonce: [u8; 32] }`.
-5. Client derives `server_id = mc_hex_digest(SHA-1("yakvc-auth-v1" ‖ nonce ‖ client_endpoint_id ‖ rendezvous_endpoint_id))` and asks Java to call `MinecraftSessionService.joinServer(uuid, token, server_id)`.
+5. Client derives `server_id = mc_hex_digest(SHA-1("yakvc-auth-v1" ‖ nonce ‖ client_endpoint_id ‖ rendezvous_endpoint_id))` and asks Java to call authlib's `SessionService.joinServer(profileId, accessToken, server_id)` (authlib 10, reached through `Minecraft.services().sessionService()`, with `getUser().getProfileId()` and `getUser().getAccessToken()`).
 6. Client sends `Joined`.
-7. Server calls `GET https://sessionserver.mojang.com/session/minecraft/hasJoined?username=<name>&serverId=<server_id>` and requires the returned UUID to equal the claimed one.
+7. Server calls `GET <verify>?username=<name>&serverId=<server_id>` and requires the returned UUID to equal the claimed one. `<verify>` is `session.endpoints.verify` from Mojang's services discovery document (`https://discovery.minecraftservices.com/minecraft/client`), which authlib 10 uses for the same lookup. On 2026-10-04 it was `https://sessionserver.mojang.com/session/minecraft/hasJoined`. The server fetches the document at startup and every 24 h, and falls back to that URL if the fetch fails.
 8. Server replies `Ticket { uuid, name, endpoint_id, issued_at, expires_at, issuer, dev, sig }` (ed25519 by the issuer key, 24 h lifetime). Client caches it on disk and renews it once less than 2 h remains, at a random point in that window so renewals don't bunch up.
 
 The `joinServer` call must never happen while the game is logging in to a server: it would replace the game's own pending session join and break the login. The client authenticates at title screen / after login completes, and the cached ticket makes this rare.
 
 The challenge digest cannot be confused with a game login, in either direction. A game server's login hash covers a shared secret the client picks at random, so a malicious game server cannot steer a player's `joinServer` into a valid rendezvous proof. The rendezvous digest covers both EndpointIds and a domain tag, so it is useless as a game login.
+
+**Alternative to the challenge: Mojang profile keys (decided at M5)**
+
+Every signed-in client already holds a Mojang-issued profile key pair, the one used for secure chat (`Minecraft.getProfileKeyPairManager()`, fetched from `getCertificates` in the discovery document). Mojang's signature over the public key covers the player's UUID and the key's expiry (`ProfilePublicKey.Data.signedPayload(UUID)` in 26.3). Anyone can check that signature offline against Mojang's published keys (`getPublicKeys`). The client could therefore prove its UUID by signing `"yakvc-auth-v1" ‖ nonce ‖ client_endpoint_id ‖ rendezvous_endpoint_id` with the profile private key and sending the signature with its public key data.
+
+- **Gains:** no `joinServer` call, so no risk of colliding with a game login. The rendezvous makes no Mojang calls per auth, only a periodic fetch of Mojang's public keys, so Mojang rate limits stop mattering. The same proof could authenticate peers directly in serverless mode.
+- **Costs:** keys are missing when the profile-key fetch failed or a mod strips them (for example chat-reporting blockers), so the challenge would have to stay as a fallback anyway. Keys rotate about every 48 h, which matters only if peers verify keys directly, as in serverless mode. The client must sign with the profile private key in Java, which is plumbing similar to `SessionJoiner`.
+
+Tickets stay the same either way: only how the rendezvous decides to issue one changes. v1 starts with the challenge because it works for every account. M5 measures how often profile keys are missing before choosing.
 
 **Discovery: mutual tab-list matching**
 
@@ -203,7 +212,7 @@ One connection per peer, multiplexed by protocol ID, means one handshake and one
 
 **Serverless discovery (post-v1)**
 
-The same pair tokens can work as `iroh-gossip` topics bootstrapped from the BitTorrent Mainline DHT. Peers would then authenticate each other with a direct Mojang challenge (A sends a nonce, B calls `joinServer`, A calls `hasJoined`). This removes the rendezvous but costs one Mojang round trip per new peer and is harder to debug, so it stays a fallback behind a config flag.
+The same pair tokens can work as `iroh-gossip` topics bootstrapped from the BitTorrent Mainline DHT. Peers would then authenticate each other directly, either with profile keys (offline, no Mojang call; see the alternative above) or, for accounts without keys, with a Mojang challenge (A sends a nonce, B calls `joinServer`, A calls `hasJoined`), which costs one Mojang round trip per new peer. This removes the rendezvous but is harder to debug, so it stays a fallback behind a config flag.
 
 ## Voice transport and audio pipeline
 
@@ -231,7 +240,7 @@ Voice is 48 kHz mono Opus in 20 ms frames, sent as unreliable QUIC datagrams on 
 
 1. Datagrams from unverified connections are dropped. Verified ones go into a per-peer jitter buffer ordered by `seq`.
 2. A mixer thread pulls one frame per peer every 20 ms: decode, use Opus FEC if the next packet is present, else PLC, and reset the stream after `end_of_talk`.
-3. **Spatialization:** Java pushes the listener pose (position, yaw, pitch) and positions of tracked players by UUID every tick (20 Hz), and the mixer interpolates between snapshots. Players whose tab-list game mode is spectator are left out of this set. Entity tracking alone can't be used for this, because vanilla does send spectator player entities to other clients and only hides them client-side (unless the spectator is viewing through another entity). Filtering by game mode means the "no tracked entity" rule below covers them in both directions. While the local player is a spectator, the engine neither sends nor plays audio. Gain = 1 within 4 blocks, linear to 0 at the voice range. Equal-power stereo pan from azimuth relative to listener yaw, with mild attenuation for sources behind the listener.
+3. **Spatialization:** Java pushes the listener pose (position, yaw, pitch) and positions of tracked players by UUID every tick (20 Hz), and the mixer interpolates between snapshots. Players whose tab-list game mode is spectator are left out of this set. Vanilla already does most of this: the server never sends a spectator's player entity to non-spectators (`ServerPlayer.broadcastToPlayer`, checked in the 26.3 jar). It does send other players to a spectator (unless the spectator is viewing through another entity), and plugins can change what is tracked, so entity tracking alone isn't enough. Filtering by game mode means the "no tracked entity" rule below covers spectators in both directions. While the local player is a spectator, the engine neither sends nor plays audio. Gain = 1 within 4 blocks, linear to 0 at the voice range. Equal-power stereo pan from azimuth relative to listener yaw, with mild attenuation for sources behind the listener.
 4. **Range is enforced by the receiver:** if the speaker has no tracked entity (out of tracking range, other backend, vanished) or is beyond range, the frame is discarded. The sender-side filter only saves bandwidth. Range is a per-player setting, and the sender filters by its own range while the receiver filters by its own, so between two players the shorter range applies. A listener can never hear further than the speaker allows. The settings screen says so next to the range slider.
 5. Per-peer volume and mute, master volume, the game's Voice/Speech slider and a soft limiter are applied, then the result is written to the `cpal` output ring. Output stays on `cpal` with our own panning in v1; routing PCM into Minecraft's OpenAL (for HRTF) would mean a 50 Hz per-peer stream across FFI and is post-v1. The default output device is the one whose name best matches Minecraft's selected sound device, falling back to the system default.
 
@@ -331,7 +340,7 @@ The mod is a client-only Fabric mod (`"environment": "client"`) that reads game 
 - Java arrays can be passed to native code without copying.
 - The Java side has no `native` methods.
 
-Calls are coarse (about 20 per second), so performance doesn't matter either way. Loading a library and creating downcall handles are restricted methods, so Java 24+ prints JEP 472's warning unless the launcher passes `--enable-native-access=ALL-UNNAMED`. It is only a warning today, but a future JDK will deny it by default, so the README documents the flag.
+Calls are coarse (about 20 per second), so performance doesn't matter either way. Loading a library and creating downcall handles are restricted methods, so Java prints a native-access warning unless the launcher passes `--enable-native-access=ALL-UNNAMED`. FFM has warned since Java 22, and JEP 472 (Java 24) gave JNI the same warning, so choosing JNI would not avoid it. It is only a warning today, but a future JDK will deny it by default, so the README documents the flag.
 
 **Java side (`mod/`, package `dev.yakvc` as a placeholder)**
 
@@ -342,9 +351,9 @@ Names below use Mojang's official mappings, which Fabric uses from 26.1 on (Mine
 | `YakVcClient` | `ClientModInitializer`: load natives, create engine, register events and keybinds |
 | `natives.NativeLoader` | Map `os.name`/`os.arch` to `natives/<os>-<arch>/`, extract the library to `config/yakvc/natives/<sha256>/`, open it with `SymbolLookup.libraryLookup(path, Arena.global())`. The library is never unloaded, because it owns live Tokio and audio threads. Unsupported platform: disable the mod and show a toast. |
 | `NativeBridge` | One `static final MethodHandle` per C function (below), built with `Linker.nativeLinker().downcallHandle`, plus thin typed wrappers that turn error codes into `YakVcException`. Nothing else. |
-| `VoiceSession` | Per-connection lifecycle on `ClientPlayConnectionEvents` JOIN/DISCONNECT; tracks whether a login is in progress. Voice stays off until the server-data packet arrives (5 s timeout), so the MOTD opt-out is checked first. It also stays off while `getChatStatus()` is `DISABLED_BY_PROFILE` or `DISABLED_BY_LAUNCHER` (`respect_chat_restrictions`) |
-| `GameStateFeeder` | On `END_CLIENT_TICK`: listener pose from the camera; tracked players from `level.players()`, minus spectators; tab-list diff from `getOnlinePlayers()`; local spectator state as an input flag; players blocked in Social Interactions as mutes (`mute_blocked_players`); the Voice/Speech slider; push to native; then drain events |
-| `SessionJoiner` | Handles `JoinRequest` events on a worker thread via authlib `MinecraftSessionService.joinServer`, refuses while logging in, replies with `completeJoin` |
+| `VoiceSession` | Per-connection lifecycle on `ClientPlayConnectionEvents` JOIN/DISCONNECT; tracks whether a login is in progress. Voice stays off until the server-data packet arrives (5 s timeout), so the MOTD opt-out is checked first. It also stays off while `Minecraft.computeChatAbilities().restrictions()` contains `ChatRestriction.DISABLED_BY_PROFILE` or `DISABLED_BY_LAUNCHER` (`respect_chat_restrictions`). These replaced the older `getChatStatus()` API. |
+| `GameStateFeeder` | On `END_CLIENT_TICK`: listener pose from the camera; tracked players from `level.players()`, minus spectators; tab-list diff from `getOnlinePlayers()`; local spectator state as an input flag; players blocked in Social Interactions (`PlayerSocialManager.isBlocked(UUID)`) as mutes (`mute_blocked_players`); the Voice/Speech slider; push to native; then drain events |
+| `SessionJoiner` | Handles `JoinRequest` events on a worker thread via authlib's `SessionService.joinServer` (see authentication step 5), refuses while logging in, replies with `completeJoin` |
 | `input` | Keybinds via `KeyMappingHelper`: push-to-talk (default `V`, unused by vanilla); mute, deafen and open voice menu are unbound by default to avoid clashing with minimap and utility mods |
 | `ui` | Talking indicator over heads, own mic/connection HUD icon, peer list with volume/mute, settings (devices, PTT/VAD, range, bitrate, relay-only) |
 | `config` | TOML in `config/yakvc/client.toml`, passed to native as a string. Includes `respect_chat_restrictions` and `mute_blocked_players`, both default `true` and both can be turned off |
@@ -468,7 +477,7 @@ v1 uses only the MOTD marker. A denylist on the rendezvous would require clients
 
 **Dependencies on Mojang**
 
-- Auth relies on the public `sessionserver` `hasJoined` endpoint and authlib's `joinServer`, the same mechanism third-party Minecraft login services use. If Mojang changes or rate-limits it, cached tickets keep existing users working for up to 24 h while a fix ships.
+- Auth relies on the public `sessionserver` `hasJoined` endpoint and authlib's `joinServer`, the same mechanism third-party Minecraft login services and mods such as TrueUUID use. The rendezvous finds the `hasJoined` URL through Mojang's services discovery document, as authlib does, so a move to a new host doesn't need a release. If Mojang changes or rate-limits it, cached tickets keep existing users working for up to 24 h while a fix ships.
 - Mojang does not document `sessionserver` limits; third-party reports put them at about 400 requests per 10 s per source IP, with HTTP 429 above that. With 24 h tickets renewed at a random point in their last 2 h, even 100k active users average about 1–1.5 auths/s from the rendezvous. Bursts (mass expiry, a client bug) are handled by the 429 policy under server limits. Real limits are measured at M5.
 - Mojang access tokens never cross into Rust or leave the machine except to Mojang through authlib.
 
@@ -486,10 +495,20 @@ Build order runs Rust-first: every networking and audio milestone is provable wi
    - Exit: three CLI clients with overlapping fake tab lists connect only to mutual matches, and gain/pan follow `pos` commands. A testkit test with 5% bursty loss and 30 ms of jitter plays continuous audio: every lost frame is covered by FEC or PLC, and playout delay stays within the jitter-buffer bounds.
 5. **M4 Mod integration.** Fabric project, `NativeLoader`, `yakvc-ffi` + `NativeBridge` (FFM), `GameStateFeeder`, push-to-talk, dev mode.
    - Exit: two dev clients on a local vanilla server hear each other spatially. A gametest confirms spectators are excluded in both directions.
-6. **M5 Real auth.** Mojang challenge on server and client, `SessionJoiner`, ticket cache, Mojang 429 handling. Measure the real `sessionserver` rate limits.
+6. **M5 Real auth.** Mojang challenge on server and client, `SessionJoiner`, ticket cache, Mojang 429 handling, `hasJoined` URL from the discovery document. Measure the real `sessionserver` rate limits. Measure how many clients lack a profile key and decide whether profile-key auth replaces the challenge as the default.
    - Exit: two real accounts on a public online-mode server, no dev flags.
 7. **M6 Beta.** All-platform natives, settings and peer UI, talking indicators, relay-only mode, MOTD opt-out, production server deployed. Check the CurseForge project name is free, and check the default keybinds against popular modpacks. During the beta, resize the VPS from relayed-share and monthly-transfer metrics.
    - Exit: the same jar works on Windows, macOS and Linux; public beta on Modrinth.
 8. **Post-v1.** Serverless discovery, OpenAL/HRTF output, groups, NeoForge port.
    - **Read-only Java API for other mods:** talking and peer-state events, plus per-player mute and volume, so HUD and social mods can integrate without data channels.
    - **Generic P2P channels for other mods**, only if mod authors ask for it. This would extract `net` into a separate library mod that other mods register protocols with. It must first solve: per-protocol consent (a mod can't send to peers that haven't installed it), relay quotas per protocol, the fact that every peer learns your IP, a server opt-out covering all protocols, and a stable Java API. Generic position-sharing channels make PvP radar cheats easy, so server-owner opt-out matters more here than for voice.
+
+## Sources
+
+Checked on 2026-10-04.
+
+- Iroh: [1.0 announcement](https://www.iroh.computer/blog/v1) (June 15, 2026; wire compatibility across 1.x), [`iroh` 1.3.0 docs](https://docs.rs/iroh/latest/iroh/) (`EndpointId`, `EndpointAddr`, `address_lookup`), [`Connection`](https://docs.rs/iroh/latest/iroh/endpoint/struct.Connection.html) (datagrams, `remote_id`, `paths`), [`Builder`](https://docs.rs/iroh/latest/iroh/endpoint/struct.Builder.html) (`empty`, `clear_ip_transports`, `clear_address_lookup`, `relay_mode`), [`iroh-relay` 1.3.0](https://docs.rs/iroh-relay/latest/iroh_relay/) (`server` feature, QAD, ACME).
+- Minecraft: [26.1 requires Java 25](https://minecraft.wiki/w/Java_Edition_26.1-snapshot-1); 26.3 released 2026-09-15. Fabric [mappings migration](https://docs.fabricmc.net/develop/porting/mappings/) (Mojang names from 26.1, Yarn discontinued) and [Fabric API 26.1 porting](https://docs.fabricmc.net/26.1.2/develop/porting/fabric-api) (`KeyMappingHelper`, `LevelRenderEvents`).
+- Read directly from the 26.3 jar and authlib 10.0.77 in the local Loom cache: `ServerPlayer.broadcastToPlayer` (spectators not sent to non-spectators), `ChunkMap$TrackedEntity` uses it, `ClientPacketListener.getOnlinePlayers()` / `getListedOnlinePlayers()`, `ClientLevel.players()`, `PlayerInfo.getGameMode()`, `PlayerSocialManager.isBlocked(UUID)`, `Minecraft.computeChatAbilities()` + `ChatRestriction`, `Minecraft.services().sessionService()`, `SessionService.joinServer(UUID, String, String)`, `ProfilePublicKey.Data.signedPayload(UUID)`.
+- Mojang: [services discovery document](https://discovery.minecraftservices.com/minecraft/client) (`session.endpoints.verify` = `sessionserver.mojang.com/session/minecraft/hasJoined`); third-party rate-limit reports ([apis.io](https://apis.io/rate-limits/mojang/mojang-rate-limits/)); profile key format ([authlib-injector discussion](https://github.com/yushijinhun/authlib-injector/discussions/158)).
+- Java: [JEP 472](https://openjdk.org/jeps/472) (JNI native-access warnings).
