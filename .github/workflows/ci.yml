@@ -95,7 +95,10 @@ jobs:
           mkdir cli
           case "$RUNNER_OS" in
             Linux)
-              cargo zigbuild --release -p yakvc-cli --target x86_64-unknown-linux-gnu.2.17
+              # The runner's libasound.so needs a newer glibc than 2.17. Skip
+              # checking it: at run time the user's libasound matches their glibc.
+              RUSTFLAGS="-C link-arg=-Wl,--allow-shlib-undefined" \
+                cargo zigbuild --release -p yakvc-cli --target x86_64-unknown-linux-gnu.2.17
               cp target/x86_64-unknown-linux-gnu/release/yakvc-cli cli/yakvc-cli-linux-x86_64
               ;;
             macOS)
