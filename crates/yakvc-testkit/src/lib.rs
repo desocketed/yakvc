@@ -116,6 +116,7 @@ impl TestNet {
                 http_bind: localhost,
                 tls: None,
                 quic_bind: None,
+                open: false,
             })
             .insecure_dev_auth()
             .spawn()

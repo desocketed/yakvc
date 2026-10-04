@@ -28,6 +28,9 @@ pub struct Config {
 #[serde(deny_unknown_fields)]
 pub struct RelayConfig {
     pub http_bind: SocketAddr,
+    /// Serve clients without a rendezvous session too (see `RelayOptions::open`).
+    #[serde(default)]
+    pub open: bool,
     pub https_bind: Option<SocketAddr>,
     pub quic_bind: Option<SocketAddr>,
     /// ACME via Let's Encrypt for this domain, or `cert` + `key` files.
@@ -118,6 +121,7 @@ impl RelayConfig {
             http_bind: self.http_bind,
             tls,
             quic_bind: self.quic_bind,
+            open: self.open,
         })
     }
 }
@@ -190,6 +194,9 @@ mod tests {
         let base = "endpoint_key = \"a\"\nissuer_key = \"b\"\nbind = \"0.0.0.0:1\"\n[relay]\nhttp_bind = \"0.0.0.0:80\"\n";
         let plain = relay(base).unwrap().unwrap();
         assert!(plain.tls.is_none());
+        assert!(!plain.open);
+        let open = relay(&format!("{base}open = true\n")).unwrap().unwrap();
+        assert!(open.open);
 
         let files = format!(
             "{base}https_bind = \"0.0.0.0:443\"\ndomain = \"relay.example.com\"\ncert = \"c.pem\"\nkey = \"k.pem\"\n"
