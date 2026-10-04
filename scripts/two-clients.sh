@@ -1,0 +1,176 @@
+#!/usr/bin/env bash
+# The M4 exit check without sound hardware or a display: two dev clients on a
+# local server hear each other, and a spectator neither hears nor is heard.
+#
+# It starts a dev-mode yakvc-server (insecure_dev_auth), a local Fabric
+# dedicated server with online-mode=false (the mod is client-only, so the
+# server is vanilla apart from the loader), and two headless clients, Alice
+# and Bob. The clients use dev test audio (a 440 Hz tone for the microphone,
+# no speakers) and hold push-to-talk. A client logs `Talking <uuid> <name>
+# true` only once it is actually playing that player's voice. The script
+# checks that:
+#   1. each client hears the other;
+#   2. after `/gamemode spectator Bob`, each stops hearing the other;
+#   3. after `/gamemode survival Bob`, each hears the other again.
+#
+# Usage: scripts/two-clients.sh --accept-eula
+#   (or YAKVC_ACCEPT_MINECRAFT_EULA=1). Running the Minecraft server means
+#   accepting the Minecraft EULA (https://aka.ms/MinecraftEULA); the script
+#   writes eula=true into its throwaway server directory only when told to.
+# Logs and game directories are in mod/build/two-clients/.
+set -euo pipefail
+
+if [[ "${1:-}" == --accept-eula ]]; then
+	export YAKVC_ACCEPT_MINECRAFT_EULA=1
+fi
+if [[ "${YAKVC_ACCEPT_MINECRAFT_EULA:-}" != 1 ]]; then
+	echo "This runs a Minecraft server, which needs the Minecraft EULA accepted (https://aka.ms/MinecraftEULA)." >&2
+	echo "Pass --accept-eula or set YAKVC_ACCEPT_MINECRAFT_EULA=1 to accept it." >&2
+	exit 2
+fi
+
+if [[ -z "${YAKVC_TWO_CLIENTS_INNER:-}" ]]; then
+	export YAKVC_TWO_CLIENTS_INNER=1
+	exec nix shell nixpkgs#xorg-server --command nix develop --command "$0" "$@"
+fi
+
+cd "$(dirname "$0")/.."
+root=$PWD
+work=$root/mod/build/two-clients
+rdv_port=$((20000 + RANDOM % 10000))
+mc_port=$((30000 + RANDOM % 10000))
+step() { printf '\n==> %s\n' "$*"; }
+
+step "build yakvc-server and the mod's launch arguments"
+cargo build --quiet -p yakvc-server
+server_bin=$root/target/debug/yakvc-server
+(cd mod && ./gradlew writeDevLaunchArgs --console=plain --quiet)
+mapfile -t server_args < mod/build/devlaunch/server.args
+mapfile -t client_args < mod/build/devlaunch/client.args
+
+source scripts/headless-env.sh
+pids=()
+cleanup() {
+	kill "${pids[@]}" "$xvfb" 2>/dev/null || true
+	wait "${pids[@]}" 2>/dev/null || true
+}
+trap cleanup EXIT
+
+rm -rf "$work"
+mkdir -p "$work/rdv" "$work/server"
+
+step "start the dev rendezvous on 127.0.0.1:$rdv_port"
+"$server_bin" keygen --out "$work/rdv/endpoint.key"
+"$server_bin" keygen --issuer --out "$work/rdv/issuer.key"
+endpoint_id=$("$server_bin" endpoint-id "$work/rdv/endpoint.key")
+issuer_id=$("$server_bin" issuer-id "$work/rdv/issuer.key")
+cat >"$work/rdv/config.toml" <<EOF
+endpoint_key = "$work/rdv/endpoint.key"
+issuer_key = "$work/rdv/issuer.key"
+bind = "127.0.0.1:$rdv_port"
+insecure_dev_auth = true
+EOF
+"$server_bin" run --config "$work/rdv/config.toml" >"$work/rdv.log" 2>&1 &
+pids+=($!)
+
+step "start the Minecraft server on 127.0.0.1:$mc_port"
+echo "eula=true" >"$work/server/eula.txt"
+cat >"$work/server/server.properties" <<EOF
+online-mode=false
+enforce-secure-profile=false
+white-list=false
+enforce-whitelist=false
+server-ip=127.0.0.1
+server-port=$mc_port
+level-type=minecraft\:flat
+difficulty=peaceful
+spawn-protection=0
+view-distance=4
+simulation-distance=4
+motd=Yak VC two-client check
+EOF
+mkfifo "$work/server.in"
+exec 3<>"$work/server.in"
+(cd "$work/server" && exec java "${server_args[@]}" nogui <"$work/server.in" >"$work/server.log" 2>&1) &
+pids+=($!)
+console() { echo "$*" >&3; }
+
+# wait_for SECONDS WHAT COMMAND...: runs COMMAND every second until it succeeds.
+wait_for() {
+	local deadline=$((SECONDS + $1)) what=$2
+	shift 2
+	until "$@"; do
+		if ((SECONDS > deadline)); then
+			echo "FAILED: timed out waiting for $what (logs in $work)" >&2
+			exit 1
+		fi
+		sleep 1
+	done
+}
+# logged FILE SINCE PATTERN: FILE has a line matching PATTERN after line SINCE.
+logged() { tail -n +$(($2 + 1)) "$1" | grep -qE "$3"; }
+lines() { wc -l <"$1"; }
+
+wait_for 180 "the Minecraft server" logged "$work/server.log" 0 'Done \('
+
+for name in Alice Bob; do
+	dir=$work/$name
+	mkdir -p "$dir/config/yakvc"
+	cat >"$dir/config/yakvc/client.toml" <<EOF
+dev_mode = true
+trusted_issuers = ["$issuer_id"]
+
+[rendezvous]
+endpoint_id = "$endpoint_id"
+addrs = ["127.0.0.1:$rdv_port"]
+
+[dev]
+tone_hz = 440.0
+null_output = true
+EOF
+	printf 'onboardAccessibility:false\nskipMultiplayerWarning:true\njoinedFirstServer:true\nrenderDistance:2\nmaxFps:30\n' \
+		>"$dir/options.txt"
+	step "start $name"
+	(cd "$dir" && exec java -Dyakvc.dev.holdPushToTalk=true "${client_args[@]}" \
+		--gameDir . --username "$name" --quickPlayMultiplayer "127.0.0.1:$mc_port" >"$work/$name.log" 2>&1) &
+	pids+=($!)
+done
+
+alice=$work/Alice.log
+bob=$work/Bob.log
+hears() { logged "$1" "$2" "\(yakvc\) Talking [^ ]+ $3 true"; }
+stops_hearing() { logged "$1" "$2" "\(yakvc\) Talking [^ ]+ $3 false"; }
+
+step "1. each client hears the other"
+wait_for 300 "Alice to hear Bob" hears "$alice" 0 Bob
+wait_for 60 "Bob to hear Alice" hears "$bob" 0 Alice
+echo "ok"
+
+step "2. Bob becomes a spectator: neither hears the other"
+alice_mark=$(lines "$alice")
+bob_mark=$(lines "$bob")
+console "gamemode spectator Bob"
+wait_for 30 "Alice to stop hearing Bob" stops_hearing "$alice" "$alice_mark" Bob
+wait_for 30 "Bob to stop hearing Alice" stops_hearing "$bob" "$bob_mark" Alice
+alice_mark=$(lines "$alice")
+bob_mark=$(lines "$bob")
+sleep 10
+if hears "$alice" "$alice_mark" Bob || hears "$bob" "$bob_mark" Alice; then
+	echo "FAILED: a spectator was heard, or heard someone (logs in $work)" >&2
+	exit 1
+fi
+echo "ok: nothing heard in 10 s"
+
+step "3. Bob leaves spectator mode: both hear each other again"
+alice_mark=$(lines "$alice")
+bob_mark=$(lines "$bob")
+console "gamemode survival Bob"
+wait_for 30 "Alice to hear Bob again" hears "$alice" "$alice_mark" Bob
+wait_for 30 "Bob to hear Alice again" hears "$bob" "$bob_mark" Alice
+echo "ok"
+
+step "voice events"
+grep -hE '\(yakvc\) (Rendezvous|Peer|Talking)' "$alice" | sed 's/^/Alice: /'
+grep -hE '\(yakvc\) (Rendezvous|Peer|Talking)' "$bob" | sed 's/^/Bob:   /'
+console stop
+step "passed"

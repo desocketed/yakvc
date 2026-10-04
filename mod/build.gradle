@@ -102,7 +102,9 @@ tasks.register('writeDevLaunchArgs') {
 	def outDir = layout.buildDirectory.dir('devlaunch')
 	doLast {
 		[client: tasks.runClient, server: tasks.runServer].each { name, run ->
-			def args = run.allJvmArgs + ['-cp', run.classpath.asPath, run.mainClass.get()] + run.args
+			// Loom passes the classpath in an @file it writes when the run starts, so pass it directly instead.
+			def jvmArgs = run.allJvmArgs.findAll { !it.startsWith('@') }
+			def args = jvmArgs + ['-cp', run.classpath.asPath, run.mainClass.get()] + run.args
 			def file = outDir.get().file("${name}.args").asFile
 			file.parentFile.mkdirs()
 			file.text = args.join('\n') + '\n'
