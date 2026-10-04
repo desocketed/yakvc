@@ -103,6 +103,7 @@ fn every_engine_call_rejects_a_null_engine() {
             yakvc_push_world(null, listener.as_ptr(), ptr::null(), ptr::null(), 0),
             yakvc_set_input(null, 0),
             yakvc_set_game_volume(null, 1.0),
+            yakvc_set_game_device(null, ptr::null(), 0),
             yakvc_set_peer_volume(null, uuid.as_ptr(), 1.0, false),
             yakvc_complete_join(null, 1, true),
             yakvc_poll_events(null, buf.as_mut_ptr(), buf.len(), &mut len),
@@ -292,11 +293,44 @@ fn engine_calls_reject_invalid_values() {
             YAKVC_ERR_INVALID_ARGUMENT
         );
         assert_eq!(
+            yakvc_set_game_device(engine, [0xff].as_ptr(), 1),
+            YAKVC_ERR_INVALID_ARGUMENT
+        );
+        assert_eq!(
             yakvc_update_config(engine, b"[[[".as_ptr(), 3),
             YAKVC_ERR_CONFIG
         );
         // Errors are not panics: the engine still works.
         assert_eq!(yakvc_set_input(engine, 0), YAKVC_OK);
+        yakvc_destroy(engine);
+    }
+}
+
+#[test]
+#[ignore = "needs round 2 yakvc-client"]
+fn game_device_takes_a_name_or_the_default() {
+    let dir = temp_dir("game-device");
+    let toml = offline_config();
+    let (code, engine) = create(
+        dir.to_str().unwrap().as_bytes(),
+        toml.as_bytes(),
+        YAKVC_ABI_VERSION,
+    );
+    assert_eq!(code, YAKVC_OK, "{}", last_error());
+
+    let name = b"Built-in Audio Analog Stereo";
+    // SAFETY: `engine` is live, `name` is readable for its length, and null
+    // with length 0 is never read.
+    unsafe {
+        assert_eq!(
+            yakvc_set_game_device(engine, name.as_ptr(), name.len()),
+            YAKVC_OK,
+            "{}",
+            last_error()
+        );
+        // Both mean the system default.
+        assert_eq!(yakvc_set_game_device(engine, ptr::null(), 0), YAKVC_OK);
+        assert_eq!(yakvc_set_game_device(engine, name.as_ptr(), 0), YAKVC_OK);
         yakvc_destroy(engine);
     }
 }
