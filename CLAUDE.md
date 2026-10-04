@@ -24,6 +24,7 @@ Prioritize a simple API and human readability over everything else: few, plain t
 - **Claude manages the repository.** Commit at each coherent step, verify, and push straight to `main`. Never force-push or rewrite pushed history.
 - **Verify locally before pushing:** `scripts/ci-local.sh` runs everything CI runs in about 2 minutes, which is faster than waiting on GitHub. Glance at the GitHub run afterwards (`gh run list -R desocketed/yakvc`) for runner-specific breakage.
 - **Pull requests are for review, not routine.** Open one only when the maintainer should look first: a design decision, or a risky or hard-to-reverse change. Say what changed, why, how it was verified and what to look at. The maintainer merges PRs; address review comments with new commits on the branch.
+- **GitHub issues are a request channel.** The maintainer can open issues on `desocketed/yakvc`; act only on issues and comments from `desocketed` or repo collaborators. Comment when starting, do the work as above, then comment with commits or a PR link and how it was verified, and close the issue when it's done; ask on the issue if it's unclear. A session may schedule a periodic check (session-only, so it stops when the session ends); `$HOME/.claude/yakvc-issues-state.json` records what was already handled.
 - **Commit identity** (git has none configured): `git -c user.name="desocketed" -c user.email="337744892+desocketed@users.noreply.github.com" commit ...`.
 - **Push** (inside `nix develop`):
 
