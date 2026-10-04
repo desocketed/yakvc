@@ -17,6 +17,7 @@ Run inside `nix develop` (this machine has no system Rust or Java). The containe
 - `cargo xtask header`: regenerate `crates/yakvc-ffi/include/yakvc.h` after any ABI change (CI runs `--check`)
 - `cd mod && ./gradlew build`: builds host natives via `cargo xtask natives` and runs the JUnit FFM test
 - `scripts/ci-local.sh [--fast]`: everything CI runs, locally and in order (about 2 min with the gametest; `--fast` skips the mod). Run it before pushing to `main` rather than waiting on GitHub.
+- `scripts/two-clients.sh --accept-eula`: local end-to-end check with a dev `yakvc-server`, a local Minecraft server and two headless clients (about 1 min). Accepting the Minecraft EULA is the maintainer's call: pass the flag only with their consent.
 - `scripts/gametest-headless.sh`: runs the Fabric client gametest (real client, singleplayer world, screenshots in `mod/build/run/clientGameTest/screenshots/`) with no display or GPU, via Xvfb and Mesa lavapipe. Minecraft 26.3 finds no sRGB GLX config on Xvfb and falls back to Vulkan.
 
 ## Git
