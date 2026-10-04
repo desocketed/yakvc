@@ -1,0 +1,1395 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<!-- 2026-10-03 Sat 20:02 -->
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>&lrm;</title>
+<meta name="generator" content="Org Mode" />
+<style type="text/css">
+  #content { max-width: 60em; margin: auto; }
+  .title  { text-align: center;
+             margin-bottom: .2em; }
+  .subtitle { text-align: center;
+              font-size: medium;
+              font-weight: bold;
+              margin-top:0; }
+  .todo   { font-family: monospace; color: red; }
+  .done   { font-family: monospace; color: green; }
+  .priority { font-family: monospace; color: orange; }
+  .tag    { background-color: #eee; font-family: monospace;
+            padding: 2px; font-size: 80%; font-weight: normal; }
+  .timestamp { color: #bebebe; }
+  .timestamp-kwd { color: #5f9ea0; }
+  .org-right  { margin-left: auto; margin-right: 0px;  text-align: right; }
+  .org-left   { margin-left: 0px;  margin-right: auto; text-align: left; }
+  .org-center { margin-left: auto; margin-right: auto; text-align: center; }
+  .underline { text-decoration: underline; }
+  #postamble p, #preamble p { font-size: 90%; margin: .2em; }
+  p.verse { margin-left: 3%; }
+  pre {
+    border: 1px solid #e6e6e6;
+    border-radius: 3px;
+    background-color: #f2f2f2;
+    padding: 8pt;
+    font-family: monospace;
+    overflow: auto;
+    margin: 1.2em;
+  }
+  pre.src {
+    position: relative;
+    overflow: auto;
+  }
+  pre.src:before {
+    display: none;
+    position: absolute;
+    top: -8px;
+    right: 12px;
+    padding: 3px;
+    color: #555;
+    background-color: #f2f2f299;
+  }
+  pre.src:hover:before { display: inline; margin-top: 14px;}
+  /* Languages per Org manual */
+  pre.src-asymptote:before { content: 'Asymptote'; }
+  pre.src-awk:before { content: 'Awk'; }
+  pre.src-authinfo::before { content: 'Authinfo'; }
+  pre.src-c:before { content: 'C'; }
+  pre.src-C:before { content: 'C'; }
+  /* pre.src-C++ doesn't work in CSS */
+  pre.src-clojure:before { content: 'Clojure'; }
+  pre.src-css:before { content: 'CSS'; }
+  pre.src-D:before { content: 'D'; }
+  pre.src-ditaa:before { content: 'ditaa'; }
+  pre.src-dot:before { content: 'Graphviz'; }
+  pre.src-calc:before { content: 'Emacs Calc'; }
+  pre.src-emacs-lisp:before { content: 'Emacs Lisp'; }
+  pre.src-fortran:before { content: 'Fortran'; }
+  pre.src-gnuplot:before { content: 'gnuplot'; }
+  pre.src-haskell:before { content: 'Haskell'; }
+  pre.src-hledger:before { content: 'hledger'; }
+  pre.src-java:before { content: 'Java'; }
+  pre.src-js:before { content: 'JavaScript'; }
+  pre.src-latex:before { content: 'LaTeX'; }
+  pre.src-ledger:before { content: 'Ledger'; }
+  pre.src-lisp:before { content: 'Lisp'; }
+  pre.src-lilypond:before { content: 'Lilypond'; }
+  pre.src-lua:before { content: 'Lua'; }
+  pre.src-matlab:before { content: 'MATLAB'; }
+  pre.src-mscgen:before { content: 'Mscgen'; }
+  pre.src-ocaml:before { content: 'Objective Caml'; }
+  pre.src-octave:before { content: 'Octave'; }
+  pre.src-org:before { content: 'Org mode'; }
+  pre.src-oz:before { content: 'OZ'; }
+  pre.src-plantuml:before { content: 'Plantuml'; }
+  pre.src-processing:before { content: 'Processing.js'; }
+  pre.src-python:before { content: 'Python'; }
+  pre.src-R:before { content: 'R'; }
+  pre.src-ruby:before { content: 'Ruby'; }
+  pre.src-sass:before { content: 'Sass'; }
+  pre.src-scheme:before { content: 'Scheme'; }
+  pre.src-screen:before { content: 'Gnu Screen'; }
+  pre.src-sed:before { content: 'Sed'; }
+  pre.src-sh:before { content: 'shell'; }
+  pre.src-sql:before { content: 'SQL'; }
+  pre.src-sqlite:before { content: 'SQLite'; }
+  /* additional languages in org.el's org-babel-load-languages alist */
+  pre.src-forth:before { content: 'Forth'; }
+  pre.src-io:before { content: 'IO'; }
+  pre.src-J:before { content: 'J'; }
+  pre.src-makefile:before { content: 'Makefile'; }
+  pre.src-maxima:before { content: 'Maxima'; }
+  pre.src-perl:before { content: 'Perl'; }
+  pre.src-picolisp:before { content: 'Pico Lisp'; }
+  pre.src-scala:before { content: 'Scala'; }
+  pre.src-shell:before { content: 'Shell Script'; }
+  pre.src-ebnf2ps:before { content: 'ebfn2ps'; }
+  /* additional language identifiers per "defun org-babel-execute"
+       in ob-*.el */
+  pre.src-cpp:before  { content: 'C++'; }
+  pre.src-abc:before  { content: 'ABC'; }
+  pre.src-coq:before  { content: 'Coq'; }
+  pre.src-groovy:before  { content: 'Groovy'; }
+  /* additional language identifiers from org-babel-shell-names in
+     ob-shell.el: ob-shell is the only babel language using a lambda to put
+     the execution function name together. */
+  pre.src-bash:before  { content: 'bash'; }
+  pre.src-csh:before  { content: 'csh'; }
+  pre.src-ash:before  { content: 'ash'; }
+  pre.src-dash:before  { content: 'dash'; }
+  pre.src-ksh:before  { content: 'ksh'; }
+  pre.src-mksh:before  { content: 'mksh'; }
+  pre.src-posh:before  { content: 'posh'; }
+  /* Additional Emacs modes also supported by the LaTeX listings package */
+  pre.src-ada:before { content: 'Ada'; }
+  pre.src-asm:before { content: 'Assembler'; }
+  pre.src-caml:before { content: 'Caml'; }
+  pre.src-delphi:before { content: 'Delphi'; }
+  pre.src-html:before { content: 'HTML'; }
+  pre.src-idl:before { content: 'IDL'; }
+  pre.src-mercury:before { content: 'Mercury'; }
+  pre.src-metapost:before { content: 'MetaPost'; }
+  pre.src-modula-2:before { content: 'Modula-2'; }
+  pre.src-pascal:before { content: 'Pascal'; }
+  pre.src-ps:before { content: 'PostScript'; }
+  pre.src-prolog:before { content: 'Prolog'; }
+  pre.src-simula:before { content: 'Simula'; }
+  pre.src-tcl:before { content: 'tcl'; }
+  pre.src-tex:before { content: 'TeX'; }
+  pre.src-plain-tex:before { content: 'Plain TeX'; }
+  pre.src-verilog:before { content: 'Verilog'; }
+  pre.src-vhdl:before { content: 'VHDL'; }
+  pre.src-xml:before { content: 'XML'; }
+  pre.src-nxml:before { content: 'XML'; }
+  /* add a generic configuration mode; LaTeX export needs an additional
+     (add-to-list 'org-latex-listings-langs '(conf " ")) in .emacs */
+  pre.src-conf:before { content: 'Configuration File'; }
+
+  table { border-collapse:collapse; }
+  caption.t-above { caption-side: top; }
+  caption.t-bottom { caption-side: bottom; }
+  td, th { vertical-align:top;  }
+  th.org-right  { text-align: center;  }
+  th.org-left   { text-align: center;   }
+  th.org-center { text-align: center; }
+  td.org-right  { text-align: right;  }
+  td.org-left   { text-align: left;   }
+  td.org-center { text-align: center; }
+  dt { font-weight: bold; }
+  .footpara { display: inline; }
+  .footdef  { margin-bottom: 1em; }
+  .figure { padding: 1em; }
+  .figure p { text-align: center; }
+  .equation-container {
+    display: table;
+    text-align: center;
+    width: 100%;
+  }
+  .equation {
+    vertical-align: middle;
+  }
+  .equation-label {
+    display: table-cell;
+    text-align: right;
+    vertical-align: middle;
+  }
+  .inlinetask {
+    padding: 10px;
+    border: 2px solid gray;
+    margin: 10px;
+    background: #ffffcc;
+  }
+  #org-div-home-and-up
+   { text-align: right; font-size: 70%; white-space: nowrap; }
+  textarea { overflow-x: auto; }
+  .linenr { font-size: smaller }
+  .code-highlighted { background-color: #ffff00; }
+  .org-info-js_info-navigation { border-style: none; }
+  #org-info-js_console-label
+    { font-size: 10px; font-weight: bold; white-space: nowrap; }
+  .org-info-js_search-highlight
+    { background-color: #ffff00; color: #000000; font-weight: bold; }
+  .org-svg { }
+</style>
+</head>
+<body>
+<div id="content" class="content">
+<p>
+As of 2026-10-03. This file is the source of truth; the earlier hosted copy (<a href="https://claude.ai/code/artifact/3cb80f7d-8b37-49e3-a651-cee86022d28b">https://claude.ai/code/artifact/3cb80f7d-8b37-49e3-a651-cee86022d28b</a>) predates both design reviews and is out of date. Checks that can only be done later are listed as tasks under the milestone that needs them.
+</p>
+
+<p>
+## Overview
+</p>
+
+<p>
+Yak VC is a client-only Fabric mod that gives players on any online-mode vanilla server proximity voice chat, with audio flowing peer-to-peer over Iroh. A small optional public service (`yakvc-server`) handles discovery, identity attestation and relay fallback; no Minecraft server mod or plugin is ever required. `yakvc` is the identifier form of the name, used for crate prefixes, the Fabric mod ID, the Java package, protocol IDs and the container image.
+</p>
+
+<p>
+<b><b>Baseline</b></b>
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">Area</td>
+<td class="org-left">Decision</td>
+</tr>
+
+<tr>
+<td class="org-left">---</td>
+<td class="org-left">---</td>
+</tr>
+
+<tr>
+<td class="org-left">Game</td>
+<td class="org-left">Minecraft 26.3 on Java 25, Fabric Loader + Fabric API, client only. Older versions are not supported.</td>
+</tr>
+
+<tr>
+<td class="org-left">Networking</td>
+<td class="org-left">`iroh` 1.3 (see dependency rules)</td>
+</tr>
+
+<tr>
+<td class="org-left">Bridge</td>
+<td class="org-left">Java&rsquo;s FFM API over a C ABI; no JNI</td>
+</tr>
+
+<tr>
+<td class="org-left">License</td>
+<td class="org-left">`MIT OR Apache-2.0` for the mod, crates and server (see licensing)</td>
+</tr>
+
+<tr>
+<td class="org-left">Distribution</td>
+<td class="org-left">Mod jar on Modrinth (slugs `yakvc` and `yak-vc` were free on 2026-10-03) and CurseForge; server image on GHCR; nothing on crates.io</td>
+</tr>
+
+<tr>
+<td class="org-left">Hosting</td>
+<td class="org-left">One maintainer-run VPS in US East for the default rendezvous and relay</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+<b><b>Goals</b></b>
+</p>
+
+<ul class="org-ul">
+<li>Proximity voice between players who both have the mod, on unmodified servers (vanilla, Paper, proxies).</li>
+<li>Voice traffic is peer-to-peer when NAT allows, relayed (still end-to-end encrypted) when it does not.</li>
+<li>Peers are cryptographically bound to their Minecraft UUID; impersonation is not possible without the victim&rsquo;s Mojang session.</li>
+<li>All networking, crypto, codec and audio logic lives in Rust; Java is a thin game-integration layer.</li>
+<li>A headless CLI can do everything the mod can, so the core is testable without launching Minecraft.</li>
+</ul>
+
+<p>
+<b><b>Non-goals (v1)</b></b>
+</p>
+
+<ul class="org-ul">
+<li>Offline-mode (cracked) servers: no trustworthy identity source.</li>
+<li>Server-side moderation or admin control; there is nothing on the server to control.</li>
+<li>Group/radio channels, recording, video. Designed not to preclude them.</li>
+<li>Bedrock, Forge or NeoForge. The Rust core is loader-agnostic, so ports stay possible.</li>
+</ul>
+
+<p>
+<b><b>Glossary</b></b>
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">Term</td>
+<td class="org-left">Meaning</td>
+</tr>
+
+<tr>
+<td class="org-left">---</td>
+<td class="org-left">---</td>
+</tr>
+
+<tr>
+<td class="org-left">Game server</td>
+<td class="org-left">The Minecraft server players are connected to. Untouched.</td>
+</tr>
+
+<tr>
+<td class="org-left">Rendezvous</td>
+<td class="org-left">`yakvc-server`: discovery + attestation service, itself an Iroh endpoint.</td>
+</tr>
+
+<tr>
+<td class="org-left">EndpointId</td>
+<td class="org-left">Iroh endpoint identity: an ed25519 public key. One per client install. (Called `NodeId` in pre-1.0 Iroh releases.)</td>
+</tr>
+
+<tr>
+<td class="org-left">Match set</td>
+<td class="org-left">The Yak VC clients that see each other in their tab lists. Computed by the rendezvous from pair tokens, never named or addressed.</td>
+</tr>
+
+<tr>
+<td class="org-left">Ticket</td>
+<td class="org-left">Short-lived statement signed by a rendezvous issuer key: &ldquo;EndpointId X is Minecraft UUID Y&rdquo;.</td>
+</tr>
+
+<tr>
+<td class="org-left">Issuer</td>
+<td class="org-left">The ed25519 key that signs tickets. Separate from any rendezvous EndpointId; clients trust a list of issuers.</td>
+</tr>
+
+<tr>
+<td class="org-left">Core</td>
+<td class="org-left">`yakvc-client`: the Rust voice engine used by both the mod and the CLI.</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+## System architecture
+</p>
+
+<p>
+Each player runs the Fabric mod with an embedded Rust engine. The unmodified game server already supplies tab lists and positions; `yakvc-server` handles auth, matching and relay fallback; and voice goes directly between engines.
+</p>
+
+<p>
+```
+                     ┌──────────────────────────┐
+           ┌─────────┤ Game server (unmodified) ├─────────┐
+           │         │ vanilla, Paper or proxy  │         │
+           │         └──────────────────────────┘         │
+           │  unchanged Minecraft protocol: tab list      │
+           ▼  and positions to each client                ▼
+┌─ Player A&rsquo;s machine ──┐                      ┌─ Player B&rsquo;s machine ──┐
+│ ┌───────────────────┐ │                      │ ┌───────────────────┐ │
+│ │ Fabric mod (Java) │ │                      │ │ Fabric mod (Java) │ │
+│ │ tab list, input,  │ │                      │ │ tab list, input,  │ │
+│ │ UI, joinServer    │ │                      │ │ UI, joinServer    │ │
+│ └─────────┬─────────┘ │                      │ └─────────┬─────────┘ │
+│           │ FFM       │                      │           │ FFM       │
+│ ┌─────────▼─────────┐ │  Voice: QUIC dgrams  │ ┌─────────▼─────────┐ │
+│ │ Rust engine       │◄├──────────────────────┤►│ Rust engine       │ │
+│ │ Iroh, peers, Opus │ │ direct UDP or relay  │ │ Iroh, peers, Opus │ │
+│ └─────────┬─────────┘ │                      │ └─────────┬─────────┘ │
+└───────────┼───────────┘                      └───────────┼───────────┘
+            │ auth, pair tokens   ┌──────────────────┐     │
+            └────────────────────►│  yakvc-server    │◄────┘
+                                  │ rendezvous +     │
+                                  │ iroh-relay       │
+                                  └────────┬─────────┘
+                                           │ hasJoined
+                                  ┌────────▼─────────┐
+                                  │ Mojang session   │
+                                  │ server           │
+                                  └──────────────────┘
+```
+</p>
+
+<p>
+The game server is touched only through the normal game protocol. Mojang is called by the rendezvous (`hasJoined`) and by the mod through authlib (`joinServer`), never by the Rust engine with the player&rsquo;s token.
+</p>
+
+<p>
+## Repository and workspace layout
+</p>
+
+<p>
+The repo root holds a virtual Cargo manifest and no Rust source; every crate lives under `crates/`, the only root-level Rust is the `xtask` build helper, and the Fabric mod is a separate Gradle project under `mod/`.
+</p>
+
+<p>
+```
+minecraft-p2p-vc/
+├── Cargo.toml              # [workspace] only: members, workspace.dependencies, lints
+├── Cargo.lock
+├── rust-toolchain.toml     # pinned stable toolchain + targets
+├── .cargo/config.toml      # `cargo xtask` alias, per-target linker settings
+├── xtask/                  # build/packaging utility (the only root-level Rust)
+├── crates/
+│   ├── yakvc-shared/       # lib: protocol, tickets, pair tokens, Mojang client
+│   ├── yakvc-audio/        # lib: capture, playback, Opus, jitter buffer, spatial mixer
+│   ├── yakvc-client/       # lib: the voice engine (Iroh endpoint, peers, rendezvous session)
+│   ├── yakvc-ffi/          # cdylib: C ABI bridge called by the mod through FFM
+│   ├── yakvc-cli/          # bin: headless client + diagnostics
+│   ├── yakvc-server/       # bin (+lib): rendezvous + embedded relay
+│   └── yakvc-testkit/      # lib, dev-only: in-process server + N clients for tests
+├── mod/                    # Fabric mod (Gradle, Fabric Loom, Java)
+│   ├── build.gradle
+│   └── src/main/{java,resources}/
+├── deploy/                 # server Dockerfile, example config, systemd unit
+├── docs/
+├── deny.toml               # cargo-deny: allowed licenses, advisories, duplicate deps
+├── LICENSE-MIT
+└── LICENSE-APACHE
+```
+</p>
+
+<p>
+<b><b>Crates</b></b>
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">Crate</td>
+<td class="org-left">Kind</td>
+<td class="org-left">Depends on (internal)</td>
+<td class="org-left">Owns</td>
+</tr>
+
+<tr>
+<td class="org-left">---</td>
+<td class="org-left">---</td>
+<td class="org-left">---</td>
+<td class="org-left">---</td>
+</tr>
+
+<tr>
+<td class="org-left">`yakvc-shared`</td>
+<td class="org-left">lib</td>
+<td class="org-left">none</td>
+<td class="org-left">Wire messages + versioning, ALPN constants, datagram header, `Ticket` (sign/verify), pair-token derivation, Mojang session-server client (`hasJoined`), common error types</td>
+</tr>
+
+<tr>
+<td class="org-left">`yakvc-audio`</td>
+<td class="org-left">lib</td>
+<td class="org-left">none</td>
+<td class="org-left">`cpal` devices, Opus encode/decode, resampling to 48 kHz, jitter buffer, per-source gain/pan mixer, VAD. No networking.</td>
+</tr>
+
+<tr>
+<td class="org-left">`yakvc-client`</td>
+<td class="org-left">lib</td>
+<td class="org-left">shared, audio</td>
+<td class="org-left">`Engine`, in two layers: `net` (Iroh endpoint, rendezvous session, peer manager, protocol routing) and `voice` (send/receive loop, recipient selection, spatial input). Also the world model (positions, tab list), command/event API, `sim` module (feature-gated)</td>
+</tr>
+
+<tr>
+<td class="org-left">`yakvc-ffi`</td>
+<td class="org-left">cdylib</td>
+<td class="org-left">client</td>
+<td class="org-left">`extern &ldquo;C&rdquo;` exports + `cbindgen` header, handle management, panic barrier, error codes, event queue encoding</td>
+</tr>
+
+<tr>
+<td class="org-left">`yakvc-cli`</td>
+<td class="org-left">bin</td>
+<td class="org-left">client, shared</td>
+<td class="org-left">Dev and diagnostics commands (see yakvc-cli section)</td>
+</tr>
+
+<tr>
+<td class="org-left">`yakvc-server`</td>
+<td class="org-left">bin + lib</td>
+<td class="org-left">shared</td>
+<td class="org-left">Rendezvous protocol, Mojang verification, ticket signing, matcher, embedded `iroh-relay`, metrics</td>
+</tr>
+
+<tr>
+<td class="org-left">`yakvc-testkit`</td>
+<td class="org-left">lib (dev)</td>
+<td class="org-left">server, client</td>
+<td class="org-left">Spawns a server and simulated clients in one process for integration tests, with optional per-peer network impairment</td>
+</tr>
+
+<tr>
+<td class="org-left">`xtask`</td>
+<td class="org-left">bin (root)</td>
+<td class="org-left">none</td>
+<td class="org-left">`cargo xtask natives`, `header`, `dist`, `server-image`, `dev`: cross-builds `yakvc-ffi`, regenerates its C header, stages libraries into the mod, runs Gradle</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Each of the seven crates is needed: `yakvc-ffi` must be its own cdylib, `yakvc-testkit` depends on both `server` and `client` so it can&rsquo;t live in either, and a separate `yakvc-audio` crate lets the compiler enforce that networking code never touches audio, at little cost.
+</p>
+
+<p>
+<b><b>Dependency graph</b></b> (arrow = &ldquo;depends on&rdquo;; dashed = dev-only crate or runtime load)
+</p>
+
+<p>
+```
+  mod/ (Java)
+      ┆ FFM downcalls
+      ▼
+  yakvc-ffi          yakvc-cli                         yakvc-server ──┐
+      │                │  ╲                                  ▲        │
+      │                ▼   ╲                                 │        │
+      └──────────► yakvc-client ◄──────────── yakvc-testkit ─┘        │
+                     │      ╲     ╲            (dev-only)             │
+                     ▼       ╲     ╲                                  │
+                yakvc-audio   ╲     ╲                                 │
+                               ▼     ▼                                │
+                             yakvc-shared ◄───────────────────────────┘
+```
+</p>
+
+<p>
+`yakvc-shared` and `yakvc-audio` are the leaves; `xtask` sits outside the graph and only builds `yakvc-ffi` for packaging.
+</p>
+
+<p>
+<b><b>Dependency rules</b></b>
+</p>
+
+<ul class="org-ul">
+<li>The graph is a strict DAG: `shared` and `audio` are leaves; `client` is the only crate that combines them.</li>
+<li>`yakvc-server` never depends on `audio` or `client`, so the server build pulls in no ALSA/CoreAudio or Opus.</li>
+<li>`yakvc-shared` depends on `iroh-base` (key and EndpointId types) rather than full `iroh`, and gates the Mojang HTTP client behind a `mojang` feature.</li>
+<li>Binaries contain no logic beyond argument parsing and wiring; anything worth testing lives in a lib.</li>
+<li>Inside `yakvc-client`, `net` knows nothing about audio. It provides verified peers (EndpointId ↔ UUID), per-peer connections, and a `Protocol` trait that receives a peer&rsquo;s control stream and datagrams for one protocol ID. `voice` is the only `Protocol` in v1 and uses `net` only through that trait. This keeps groups/radio, and a possible generic API for other mods (see milestones), as new protocols rather than changes to `net`. `net` could later move into its own crate without touching `voice`.</li>
+<li>`iroh` is pinned at 1.3 (current stable as of 2026-09-28; 1.0 shipped June 2026). The design relies on these 1.x APIs, checked against its docs: `Connection::send<sub>datagram</sub>` / `read<sub>datagram</sub>` / `max<sub>datagram</sub><sub>size</sub>`, `remote<sub>id</sub>()`, `paths()` for path reporting, `Builder::clear<sub>ip</sub><sub>transports</sub>()` for relay-only, and `Builder::empty()` / `clear<sub>address</sub><sub>lookup</sub>()` to drop n0&rsquo;s default address lookup. Which `iroh-relay` server features are on in 1.3 is checked at M2.</li>
+<li>All third-party versions are declared once in root `[workspace.dependencies]`; crates use `dep = { workspace = true }`. Edition, license (`MIT OR Apache-2.0`) and `[workspace.lints]` (`unsafe<sub>code</sub> = &ldquo;deny&rdquo;` everywhere except `yakvc-ffi`) are inherited the same way.</li>
+<li>Nothing is published to crates.io: `[workspace.package] publish = false`, inherited by every crate. The crates are internal support code for the shipped artifacts (mod jar, server image, CLI binary), so their APIs can change freely between commits.</li>
+</ul>
+
+<p>
+## Identity, discovery and authentication
+</p>
+
+<p>
+A client proves its UUID to the rendezvous once with a Mojang session challenge and receives a signed ticket. The rendezvous then matches clients that appear in each other&rsquo;s tab lists, and peers verify each other&rsquo;s tickets directly, with no further Mojang calls.
+</p>
+
+<p>
+<b><b>Identities</b></b>
+</p>
+
+<ul class="org-ul">
+<li><b><b>Client key:</b></b> one Iroh `SecretKey` per installation, stored in the mod config directory (`config/yakvc/node.key`, mode 0600). Its public half is the EndpointId.</li>
+<li><b><b>Rendezvous endpoint key:</b></b> the server&rsquo;s Iroh `SecretKey`, used only as its dial address (EndpointId). Clients ship with the default rendezvous EndpointId and accept others in config.</li>
+<li><b><b>Issuer key:</b></b> a separate ed25519 key that signs tickets. Clients trust tickets from any key in `trusted<sub>issuers</sub>`. Keeping it apart from the endpoint key lets several rendezvous instances (regions, shards) share one issuer, and lets either key rotate without changing the other.</li>
+<li><b><b>Minecraft identity:</b></b> UUID + name, proven via Mojang&rsquo;s session server. The Mojang access token never leaves Java (authlib makes the call).</li>
+</ul>
+
+<p>
+<b><b>Authentication (client → rendezvous, ALPN `yakvc/rdv/1`)</b></b>
+</p>
+
+<ol class="org-ol">
+<li>Client dials the rendezvous EndpointId. QUIC/TLS gives the server the client&rsquo;s EndpointId cryptographically.</li>
+<li>Client sends `Hello { proto, mod<sub>version</sub>, uuid, name, endpoint<sub>addr</sub>, cached<sub>ticket</sub>: Option&lt;Ticket&gt; }`.</li>
+<li>If `cached<sub>ticket</sub>` was signed by the issuer key this server holds, names this EndpointId and UUID, and has more than 2 h left, the server registers the session and skips to step 8, returning the same ticket. Otherwise it continues with step 4.</li>
+<li>Server sends `Challenge { nonce: [u8; 32] }`.</li>
+<li>Client derives `server<sub>id</sub> = mc<sub>hex</sub><sub>digest</sub>(SHA-1(&ldquo;yakvc-auth-v1&rdquo; ‖ nonce ‖ client<sub>endpoint</sub><sub>id</sub> ‖ rendezvous<sub>endpoint</sub><sub>id</sub>))` and asks Java to call `MinecraftSessionService.joinServer(uuid, token, server<sub>id</sub>)`.</li>
+<li>Client sends `Joined`.</li>
+<li>Server calls `GET <a href="https://sessionserver.mojang.com/session/minecraft/hasJoined?username=%3Cname%3E&amp;serverId=%3Cserver_id%3E">https://sessionserver.mojang.com/session/minecraft/hasJoined?username=%3Cname%3E&amp;serverId=%3Cserver_id%3E</a>` and requires the returned UUID to equal the claimed one.</li>
+<li>Server replies `Ticket { uuid, name, endpoint<sub>id</sub>, issued<sub>at</sub>, expires<sub>at</sub>, issuer, dev, sig }` (ed25519 by the issuer key, 24 h lifetime). Client caches it on disk and renews it once less than 2 h remains, at a random point in that window so renewals don&rsquo;t bunch up.</li>
+</ol>
+
+<p>
+The `joinServer` call must never happen while the game is logging in to a server: it would replace the game&rsquo;s own pending session join and break the login. The client authenticates at title screen / after login completes, and the cached ticket makes this rare.
+</p>
+
+<p>
+The challenge digest cannot be confused with a game login, in either direction. A game server&rsquo;s login hash covers a shared secret the client picks at random, so a malicious game server cannot steer a player&rsquo;s `joinServer` into a valid rendezvous proof. The rendezvous digest covers both EndpointIds and a domain tag, so it is useless as a game login.
+</p>
+
+<p>
+<b><b>Discovery: mutual tab-list matching</b></b>
+</p>
+
+<p>
+Two clients are on the same server if each one&rsquo;s UUID is in the other&rsquo;s tab list (the vanilla player-info packets). The client uses every player-info entry (`getOnlinePlayers()`), not only listed ones: tab-layout plugins often hide real players with `listed = false` and show fake entries instead, and fake entries only add harmless unmatched tokens. This needs no knowledge of server addresses, so SRV records, proxies and anycast IPs don&rsquo;t matter.
+</p>
+
+<ul class="org-ul">
+<li>For each tab-list entry `u`, the client computes a pair token `SHA-256(&ldquo;yakvc-pair-v1&rdquo; ‖ min(me,u) ‖ max(me,u))` and sends the set to the rendezvous (`SetPairs`, then incremental `AddPairs` / `RemovePairs` as players join/leave).</li>
+<li>The rendezvous matches identical tokens held by two sessions whose tickets name exactly that pair, then sends each side `PeerAvailable { ticket, endpoint<sub>addr</sub> }`, and later `PeerGone { endpoint<sub>id</sub> }`.</li>
+<li>The rendezvous is only told about pairs of Yak VC users who are co-located. Tab-list entries without the mod are sent as hashes, but this is <b><b>not</b></b> strong privacy: UUIDs are public, so the rendezvous can test whether any guessed UUID is in a client&rsquo;s tab list, and it could brute-force against a scraped UUID list. Treat the rendezvous as trusted with tab-list contents and say so in the privacy note.</li>
+<li>A lurker cannot discover anyone without actually being on the server and in the other player&rsquo;s tab list.</li>
+<li>On server networks with a global tab list, players on different backends match but never hear each other: audio needs an entity position (see voice section).</li>
+</ul>
+
+<p>
+<b><b>Peer handshake (ALPN `yakvc/peer/1`)</b></b>
+</p>
+
+<ol class="org-ol">
+<li>The peer with the lower EndpointId dials; the other dials only if nothing has arrived after 3 s. Duplicate connections are resolved by keeping the one dialled by the lower EndpointId.</li>
+<li>Both open a control bi-stream and send `PeerHello { proto, ticket, protocols: [(id, version)] }`.</li>
+<li>Each side accepts only if: the signature verifies against a key in `trusted<sub>issuers</sub>`; `ticket.endpoint<sub>id</sub>` equals the connection&rsquo;s remote EndpointId; the ticket is unexpired; `ticket.uuid` is in the local tab list and is not our own UUID.</li>
+<li>On success the connection is shared by every application protocol both sides list (v1 has one: `voice`, version 1). Each protocol gets its own control stream, opened with its protocol ID, and its datagrams start with a one-byte protocol ID. The peer control stream itself carries only `Ping`, `TicketUpdate` and `Close`. On any failure, close with an error code and do not retry for 60 s.</li>
+<li>When a client renews its ticket it sends `TicketUpdate { ticket }` to every open peer, which re-runs the step 3 checks. A peer whose ticket expires without an update is closed.</li>
+</ol>
+
+<p>
+One connection per peer, multiplexed by protocol ID, means one handshake and one hole-punch per peer however many protocols are added later.
+</p>
+
+<p>
+<b><b>Serverless discovery (post-v1)</b></b>
+</p>
+
+<p>
+The same pair tokens can work as `iroh-gossip` topics bootstrapped from the BitTorrent Mainline DHT. Peers would then authenticate each other with a direct Mojang challenge (A sends a nonce, B calls `joinServer`, A calls `hasJoined`). This removes the rendezvous but costs one Mojang round trip per new peer and is harder to debug, so it stays a fallback behind a config flag.
+</p>
+
+<p>
+## Voice transport and audio pipeline
+</p>
+
+<p>
+Voice is 48 kHz mono Opus in 20 ms frames, sent as unreliable QUIC datagrams on each peer&rsquo;s Iroh connection. Each frame goes only to peers within voice range, and the receiver spatializes it from game positions it already knows.
+</p>
+
+<p>
+<b><b>Audio parameters (defaults, configurable)</b></b>
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">Parameter</td>
+<td class="org-left">Value</td>
+</tr>
+
+<tr>
+<td class="org-left">---</td>
+<td class="org-left">---</td>
+</tr>
+
+<tr>
+<td class="org-left">Sample rate / channels</td>
+<td class="org-left">48 kHz, mono capture; stereo output</td>
+</tr>
+
+<tr>
+<td class="org-left">Frame</td>
+<td class="org-left">20 ms (960 samples)</td>
+</tr>
+
+<tr>
+<td class="org-left">Codec</td>
+<td class="org-left">Opus, `VOIP` application, 24 kbps (16–64), in-band FEC on, DTX on</td>
+</tr>
+
+<tr>
+<td class="org-left">Voice range</td>
+<td class="org-left">48 blocks; full volume within 4 blocks. Per player; between two players the shorter range applies</td>
+</tr>
+
+<tr>
+<td class="org-left">Jitter buffer</td>
+<td class="org-left">adaptive, target 40 ms, bounds 20–200 ms</td>
+</tr>
+
+<tr>
+<td class="org-left">Activation</td>
+<td class="org-left">push-to-talk (default) or VAD with 300 ms hangover</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+<b><b>Send path</b></b> (`yakvc-audio` → `yakvc-client`)
+</p>
+
+<ol class="org-ol">
+<li>`cpal` input callback writes samples into a lock-free SPSC ring (`rtrb`). The callback never allocates or locks.</li>
+<li>A dedicated audio thread resamples to 48 kHz if needed (`rubato`), applies optional noise suppression (`nnnoiseless`), gain and VAD, then encodes 20 ms frames.</li>
+<li>If activation is on and the player is not muted, the engine picks recipients: verified peers that have a tracked entity within `range + 8` blocks of the local player, that have not sent `ReceiveState { wants<sub>audio</sub>: false }` (deafened or muted us), capped at the 32 nearest.</li>
+<li>Each frame is sent with `Connection::send<sub>datagram</sub>`. Header: `proto: u8 (voice) | flags: u8 (end<sub>of</sub><sub>talk</sub>) | seq: u32 | ts: u32` then the Opus payload (60 B at the default 24 kbps, up to 160 B at 64 kbps; well under `Connection::max<sub>datagram</sub><sub>size</sub>()`). The first byte is the peer layer&rsquo;s protocol ID; the voice version is agreed in `PeerHello`, so there is no per-packet version byte. The last frame of a talk spurt sets `end<sub>of</sub><sub>talk</sub>`. Opus in-band FEC travels inside the payload, so it needs no flag.</li>
+</ol>
+
+<p>
+<b><b>Receive path</b></b>
+</p>
+
+<ol class="org-ol">
+<li>Datagrams from unverified connections are dropped. Verified ones go into a per-peer jitter buffer ordered by `seq`.</li>
+<li>A mixer thread pulls one frame per peer every 20 ms: decode, use Opus FEC if the next packet is present, else PLC, and reset the stream after `end<sub>of</sub><sub>talk</sub>`.</li>
+<li><b><b>Spatialization:</b></b> Java pushes the listener pose (position, yaw, pitch) and positions of tracked players by UUID every tick (20 Hz), and the mixer interpolates between snapshots. Players whose tab-list game mode is spectator are left out of this set. Entity tracking alone can&rsquo;t be used for this, because vanilla does send spectator player entities to other clients and only hides them client-side (unless the spectator is viewing through another entity). Filtering by game mode means the &ldquo;no tracked entity&rdquo; rule below covers them in both directions. While the local player is a spectator, the engine neither sends nor plays audio. Gain = 1 within 4 blocks, linear to 0 at the voice range. Equal-power stereo pan from azimuth relative to listener yaw, with mild attenuation for sources behind the listener.</li>
+<li><b><b>Range is enforced by the receiver:</b></b> if the speaker has no tracked entity (out of tracking range, other backend, vanished) or is beyond range, the frame is discarded. The sender-side filter only saves bandwidth. Range is a per-player setting, and the sender filters by its own range while the receiver filters by its own, so between two players the shorter range applies. A listener can never hear further than the speaker allows. The settings screen says so next to the range slider.</li>
+<li>Per-peer volume and mute, master volume, the game&rsquo;s Voice/Speech slider and a soft limiter are applied, then the result is written to the `cpal` output ring. Output stays on `cpal` with our own panning in v1; routing PCM into Minecraft&rsquo;s OpenAL (for HRTF) would mean a 50 Hz per-peer stream across FFI and is post-v1. The default output device is the one whose name best matches Minecraft&rsquo;s selected sound device, falling back to the system default.</li>
+</ol>
+
+<p>
+<b><b>Connection lifecycle</b></b>
+</p>
+
+<ul class="org-ul">
+<li>On `PeerAvailable` the engine connects eagerly, tracked peers nearest first, then untracked ones, up to 64 open peer connections. Hole-punching takes up to a few seconds, so connecting only on approach would clip the first words. This matters because Spigot/Paper default to a 48-block player tracking range, so a peer often becomes tracked only at the edge of voice range.</li>
+<li>Idle connections cost only QUIC keepalives, so matched peers stay connected whether or not they are tracked; closing untracked peers would undo the eager connect. Connections close on `PeerGone`. When the cap is reached, the peer that has been untracked longest (or is farthest) is evicted, and it is reconnected when it becomes tracked again.</li>
+<li>Iroh picks the path (direct UDP vs relay) and migrates transparently (multipath since 1.0). The engine reports the selected path per peer from `Connection::paths()` for the UI and the CLI.</li>
+<li>Relayed sends share a per-client budget of 512 kbps (estimated wire cost, relay framing included). Recipients on a relay-only path are served nearest-first. If they don&rsquo;t all fit at 24 kbps (about 8 peers), the encoder steps down to 16 kbps (about 11 peers), using the same step-down as above 16 recipients. Because there is one encoder, direct peers get the lower bitrate too. Relayed recipients that still don&rsquo;t fit get no datagrams and show as `relay<sub>full</sub>` until budget frees up or a direct path appears. Direct peers never count against the budget. This keeps `relay<sub>only</sub>` users and players behind strict NATs usable in a crowd while keeping relay cost per user bounded.</li>
+<li>The endpoint is built with `Builder::empty()` plus our own `RelayMode::Custom` relay map. Iroh&rsquo;s default n0 DNS/pkarr address lookup and n0 relays are not used, because peer addresses come from the rendezvous and publishing them to a third party would leak IPs. `relay<sub>only</sub>` uses `Builder::clear<sub>ip</sub><sub>transports</sub>()`.</li>
+</ul>
+
+<p>
+<b><b>Threads</b></b>
+</p>
+
+<ul class="org-ul">
+<li>A Tokio runtime (2 worker threads) for Iroh, rendezvous and control streams.</li>
+<li>Two `cpal` real-time callbacks (input, output): ring-buffer I/O only.</li>
+<li>One audio worker thread for resample, encode, decode and mix, talking to Tokio through bounded channels.</li>
+</ul>
+
+<p>
+<b><b>Budgets</b></b>
+</p>
+
+<ul class="org-ul">
+<li>Mouth-to-ear latency target is about 105–185 ms: capture 10–20 + framing 20 + Opus lookahead ~5 + network 20–80 + jitter 40 + output 10–20.</li>
+<li>Upload is about 50 kbps per recipient while talking. Each 20 ms packet carries 60 B of Opus, a 10 B header and about 56 B of QUIC (short header ~12 B, AEAD tag 16 B) + UDP + IPv4 overhead, at 50 packets/s. IPv6 adds about 3 kbps, and the relay&rsquo;s TCP/TLS framing adds more. So 10 listeners nearby is about 500 kbps. Above 16 recipients the encoder steps down to 16 kbps (about 42 kbps on the wire), so the 32-recipient cap is about 1.4 Mbps. DTX and push-to-talk mean nothing is sent while silent.</li>
+</ul>
+
+<p>
+## yakvc-server
+</p>
+
+<p>
+`yakvc-server` is one stateless-on-restart binary that runs the rendezvous protocol on an Iroh endpoint and, optionally, an embedded `iroh-relay` on the same host. It never carries voice except as an encrypted relay hop.
+</p>
+
+<p>
+<b><b>Responsibilities</b></b>
+</p>
+
+<ul class="org-ul">
+<li>Authenticate clients (Mojang challenge) and issue signed tickets.</li>
+<li>Hold live sessions and match pair tokens; push `PeerAvailable` / `PeerGone`.</li>
+<li>Relay fallback for peers whose NAT defeats hole-punching (embedded `iroh-relay`, HTTPS + QUIC address discovery). The relay only serves EndpointIds with a live rendezvous session, using `iroh-relay`&rsquo;s access control, so it is not an open relay for the wider Iroh ecosystem.</li>
+<li>Nothing durable apart from its endpoint key, issuer key and relay TLS certificate: all session state is in memory, and clients re-register within seconds of a restart (cached tickets mean no Mojang burst).</li>
+</ul>
+
+<p>
+<b><b>Crate structure</b></b>
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">Module</td>
+<td class="org-left">Role</td>
+</tr>
+
+<tr>
+<td class="org-left">---</td>
+<td class="org-left">---</td>
+</tr>
+
+<tr>
+<td class="org-left">`main.rs`</td>
+<td class="org-left">`clap` CLI: `run &ndash;config &lt;path&gt;`, `keygen [&ndash;issuer]`, `endpoint-id`, `issuer-id`. Wiring only.</td>
+</tr>
+
+<tr>
+<td class="org-left">`lib.rs`</td>
+<td class="org-left">`Server::builder(config).spawn()` so `yakvc-testkit` can run it in-process</td>
+</tr>
+
+<tr>
+<td class="org-left">`config`</td>
+<td class="org-left">TOML config: endpoint and issuer key paths, bind addresses, relay hostname + TLS (ACME or files), ticket lifetime, limits, metrics bind</td>
+</tr>
+
+<tr>
+<td class="org-left">`rdv`</td>
+<td class="org-left">Per-connection protocol handler for `yakvc/rdv/1` (state machine: Hello → Challenge → Joined → Registered)</td>
+</tr>
+
+<tr>
+<td class="org-left">`auth`</td>
+<td class="org-left">Uses `yakvc<sub>shared</sub>::mojang` to call `hasJoined`, signs tickets with the server key</td>
+</tr>
+
+<tr>
+<td class="org-left">`matcher`</td>
+<td class="org-left">`HashMap&lt;EndpointId, Session&gt;` + `HashMap&lt;PairToken, SmallVec&lt;[EndpointId; 2]&gt;&gt;`; O(changed tokens) per update</td>
+</tr>
+
+<tr>
+<td class="org-left">`relay`</td>
+<td class="org-left">Starts `iroh-relay` server when enabled; its access check asks `matcher` whether the EndpointId has a live session</td>
+</tr>
+
+<tr>
+<td class="org-left">`limits`</td>
+<td class="org-left">Token-bucket rate limits per EndpointId and per source IP</td>
+</tr>
+
+<tr>
+<td class="org-left">`metrics`</td>
+<td class="org-left">Prometheus endpoint: sessions, auth ok/fail, matches, Mojang latency, relay bytes</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+<b><b>Limits (defaults)</b></b>
+</p>
+
+<ul class="org-ul">
+<li>5 auth attempts per EndpointId per minute; 30 per source IP per minute.</li>
+<li>At most 2,048 pair tokens per session and 10 pair updates per second.</li>
+<li>5 s timeout on Mojang calls with one retry; auth fails closed on Mojang outage (cached tickets keep working).</li>
+<li>On a Mojang HTTP 429 the server stops calling `hasJoined` until Mojang&rsquo;s `Retry-After` (or 10 s) has passed and answers pending auths with `RetryAfter { secs }`. Clients back off exponentially (10 s doubling to 10 min, with jitter) and keep using any unexpired cached ticket meanwhile.</li>
+<li>Relay: each client keeps its relayed sends within a 512 kbps budget (see connection lifecycle). The server backs this with a per-client send-rate limit in `iroh-relay` of 80 KB/s (640 kbps, leaving headroom for control traffic and bursts). The server also tracks monthly relay transfer against a configured budget and exposes it as a metric.</li>
+</ul>
+
+<p>
+<b><b>Dev mode</b></b>
+</p>
+
+<p>
+`&ndash;insecure-dev-auth` skips Mojang and accepts the claimed UUID. Tickets are marked `dev: true`, and clients reject them unless their own config sets `dev<sub>mode</sub> = true`. This is what the CLI, testkit and local mod runs use.
+</p>
+
+<p>
+<b><b>Deployment</b></b>
+</p>
+
+<ul class="org-ul">
+<li>Docker image + example `config.toml` + systemd unit in `deploy/`. For v1 the project maintainer hosts the default rendezvous and relay on a single small VPS with a public IP in US East, which gives the best average latency to both North American and European players.</li>
+<li>Relay bandwidth is the main cost: about 55–60 kbps in and the same out per relayed voice stream while talking. v1 is planned around the 1–5 TB/month included with a typical VPS. 1 TB/month of outbound transfer covers about 500 relayed streams around the clock if each talks 10% of the time. Metrics track the relayed share and the monthly total so capacity can be planned. The per-client relay budget (see limits) keeps any one user&rsquo;s cost bounded.</li>
+<li>Clients ship with the default server&rsquo;s EndpointId and relay URL. Self-hosters change two config values and add their issuer key to `trusted<sub>issuers</sub>`.</li>
+<li>Single instance in v1. If needed later, add regions or shards that share the issuer key, with a shared pub/sub for cross-instance matches.</li>
+</ul>
+
+<p>
+## yakvc-cli
+</p>
+
+<p>
+`yakvc-cli` drives the same `yakvc-client::Engine` the mod uses, with no game attached, so every networking and audio milestone can be built and tested before touching Java. It stands in for the game by supplying fake identity, tab-list and position inputs.
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">Command</td>
+<td class="org-left">Purpose</td>
+</tr>
+
+<tr>
+<td class="org-left">---</td>
+<td class="org-left">---</td>
+</tr>
+
+<tr>
+<td class="org-left">`keygen [&ndash;out]`</td>
+<td class="org-left">Create a client key; print its EndpointId</td>
+</tr>
+
+<tr>
+<td class="org-left">`audio devices`</td>
+<td class="org-left">List `cpal` input/output devices</td>
+</tr>
+
+<tr>
+<td class="org-left">`audio loopback`</td>
+<td class="org-left">Mic → encode → jitter buffer → decode → speakers, with stats. Proves the audio crate alone.</td>
+</tr>
+
+<tr>
+<td class="org-left">`call listen` / `call dial &lt;endpoint-addr&gt;`</td>
+<td class="org-left">Two-node direct call by EndpointId with no rendezvous or auth. Prints path (direct/relay), RTT and loss.</td>
+</tr>
+
+<tr>
+<td class="org-left">`net report`</td>
+<td class="org-left">Iroh net report: NAT type, IPv4/IPv6 reachability, relay latencies. For user bug reports.</td>
+</tr>
+
+<tr>
+<td class="org-left">`join &ndash;server &lt;endpoint-id&gt; &ndash;dev-uuid &lt;uuid&gt; &ndash;sees &lt;uuid,&hellip;&gt; [&ndash;pos x,y,z]`</td>
+<td class="org-left">Full client against a dev-mode rendezvous: fake identity, tab list and position. Real mic/speakers, or `&ndash;wav` input and `&ndash;null-out`.</td>
+</tr>
+
+<tr>
+<td class="org-left">`bot &ndash;count N &ndash;wav file &ndash;spread R`</td>
+<td class="org-left">N simulated peers in one process speaking a WAV at random positions within R blocks. Load and soak testing.</td>
+</tr>
+
+<tr>
+<td class="org-left">`ticket inspect &lt;file&gt;`</td>
+<td class="org-left">Decode and verify a cached ticket</td>
+</tr>
+</tbody>
+</table>
+
+<ul class="org-ul">
+<li>`join` reads stdin commands (`pos 10 64 -3`, `ptt on`, `mute &lt;uuid&gt;`) so a test script can move fake players around.</li>
+<li>Output is human-readable by default, with `&ndash;json` for scripted assertions in CI.</li>
+<li>`bot` uses `yakvc-client`&rsquo;s `sim` module (behind a `sim` feature: fake game inputs, WAV source, null sink, network impairment).</li>
+<li><b><b>Network impairment:</b></b> in-process tests run over perfect loopback, which would never exercise the jitter buffer, FEC or PLC. The `sim` module can wrap a peer&rsquo;s datagram path with seeded, deterministic loss (uniform or bursty), added delay with jitter, reordering and duplication. These are applied to voice datagrams after receipt, before the jitter buffer, so they need no hook into Iroh&rsquo;s transport. `join` and `bot` expose them as `&ndash;loss`, `&ndash;delay`, `&ndash;jitter` and `&ndash;reorder`, and testkit tests set them per peer. The null sink records the decoded output, so tests can assert on concealed-frame counts and on playout delay staying within the jitter-buffer bounds. `yakvc-testkit` builds on the same module, so load tests and integration tests can&rsquo;t drift apart, and the CLI never depends on the server crate.</li>
+</ul>
+
+<p>
+## Fabric mod and FFM bridge
+</p>
+
+<p>
+The mod is a client-only Fabric mod (`&ldquo;environment&rdquo;: &ldquo;client&rdquo;`) that reads game state, owns input and UI, and talks to the Rust engine through a small poll-based C ABI called with Java&rsquo;s Foreign Function &amp; Memory (FFM) API. Rust never calls into the JVM: there are no upcalls.
+</p>
+
+<p>
+<b><b>Target.</b></b> Minecraft 26.3 on Java 25 (every 26.3 snapshot requires Java 25), with the matching Fabric Loader and Fabric API. Older versions are not supported.
+</p>
+
+<p>
+<b><b>Why FFM.</b></b> Java 25 has FFM as a final API, so JNI&rsquo;s one advantage, working on old Java versions, does not apply. With FFM:
+</p>
+
+<ul class="org-ul">
+<li>Rust exports a plain `extern &ldquo;C&rdquo;` API, with no `jni` crate or `JNIEnv` handling.</li>
+<li>The same API can be exercised from Rust tests without a JVM.</li>
+<li>Java arrays can be passed to native code without copying.</li>
+<li>The Java side has no `native` methods.</li>
+</ul>
+
+<p>
+Calls are coarse (about 20 per second), so performance doesn&rsquo;t matter either way. Loading a library and creating downcall handles are restricted methods, so Java 24+ prints JEP 472&rsquo;s warning unless the launcher passes `&ndash;enable-native-access=ALL-UNNAMED`. It is only a warning today, but a future JDK will deny it by default, so the README documents the flag.
+</p>
+
+<p>
+<b><b>Java side (`mod/`, package `dev.yakvc` as a placeholder)</b></b>
+</p>
+
+<p>
+Names below use Mojang&rsquo;s official mappings, which Fabric uses from 26.1 on (Minecraft is no longer obfuscated). Fabric API renamed some classes to match, for example `KeyBindingHelper` → `KeyMappingHelper`.
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">Class / area</td>
+<td class="org-left">Role</td>
+</tr>
+
+<tr>
+<td class="org-left">---</td>
+<td class="org-left">---</td>
+</tr>
+
+<tr>
+<td class="org-left">`YakVcClient`</td>
+<td class="org-left">`ClientModInitializer`: load natives, create engine, register events and keybinds</td>
+</tr>
+
+<tr>
+<td class="org-left">`natives.NativeLoader`</td>
+<td class="org-left">Map `os.name`/`os.arch` to `natives/&lt;os&gt;-&lt;arch&gt;/`, extract the library to `config/yakvc/natives/&lt;sha256&gt;/`, open it with `SymbolLookup.libraryLookup(path, Arena.global())`. The library is never unloaded, because it owns live Tokio and audio threads. Unsupported platform: disable the mod and show a toast.</td>
+</tr>
+
+<tr>
+<td class="org-left">`NativeBridge`</td>
+<td class="org-left">One `static final MethodHandle` per C function (below), built with `Linker.nativeLinker().downcallHandle`, plus thin typed wrappers that turn error codes into `YakVcException`. Nothing else.</td>
+</tr>
+
+<tr>
+<td class="org-left">`VoiceSession`</td>
+<td class="org-left">Per-connection lifecycle on `ClientPlayConnectionEvents` JOIN/DISCONNECT; tracks whether a login is in progress. Voice stays off until the server-data packet arrives (5 s timeout), so the MOTD opt-out is checked first. It also stays off while `getChatStatus()` is `DISABLED<sub>BY</sub><sub>PROFILE</sub>` or `DISABLED<sub>BY</sub><sub>LAUNCHER</sub>` (`respect<sub>chat</sub><sub>restrictions</sub>`)</td>
+</tr>
+
+<tr>
+<td class="org-left">`GameStateFeeder`</td>
+<td class="org-left">On `END<sub>CLIENT</sub><sub>TICK</sub>`: listener pose from the camera; tracked players from `level.players()`, minus spectators; tab-list diff from `getOnlinePlayers()`; local spectator state as an input flag; players blocked in Social Interactions as mutes (`mute<sub>blocked</sub><sub>players</sub>`); the Voice/Speech slider; push to native; then drain events</td>
+</tr>
+
+<tr>
+<td class="org-left">`SessionJoiner`</td>
+<td class="org-left">Handles `JoinRequest` events on a worker thread via authlib `MinecraftSessionService.joinServer`, refuses while logging in, replies with `completeJoin`</td>
+</tr>
+
+<tr>
+<td class="org-left">`input`</td>
+<td class="org-left">Keybinds via `KeyMappingHelper`: push-to-talk (default `V`, unused by vanilla); mute, deafen and open voice menu are unbound by default to avoid clashing with minimap and utility mods</td>
+</tr>
+
+<tr>
+<td class="org-left">`ui`</td>
+<td class="org-left">Talking indicator over heads, own mic/connection HUD icon, peer list with volume/mute, settings (devices, PTT/VAD, range, bitrate, relay-only)</td>
+</tr>
+
+<tr>
+<td class="org-left">`config`</td>
+<td class="org-left">TOML in `config/yakvc/client.toml`, passed to native as a string. Includes `respect<sub>chat</sub><sub>restrictions</sub>` and `mute<sub>blocked</sub><sub>players</sub>`, both default `true` and both can be turned off</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Fabric API events are preferred over mixins; the target is zero mixins in v1.
+</p>
+
+<p>
+<b><b>C ABI (`yakvc-ffi`, header `yakvc.h`)</b></b>
+</p>
+
+<p>
+```c
+typedef struct YakVcEngine YakVcEngine;  <i>/ opaque
+/</i> Every int32<sub>t</sub> return is 0 on success or a negative YAKVC<sub>ERR</sub><sub>*</sub> code.
+// Strings are UTF-8 (ptr, len), not NUL-terminated. UUIDs are 16 bytes, big-endian (msb then lsb).
+</p>
+
+<p>
+uint32<sub>t</sub> yakvc<sub>abi</sub><sub>version</sub>(void);
+int32<sub>t</sub>  yakvc<sub>create</sub>(const uint8<sub>t</sub> *config<sub>dir</sub>, size<sub>t</sub> dir<sub>len</sub>,
+                      const uint8<sub>t</sub> *config<sub>toml</sub>, size<sub>t</sub> toml<sub>len</sub>,
+                      uint32<sub>t</sub> abi<sub>version</sub>, YakVcEngine **out);
+void     yakvc<sub>destroy</sub>(YakVcEngine *e);                      <i>/ graceful close, 500 ms cap
+int32<sub>t</sub>  yakvc<sub>set</sub><sub>identity</sub>(YakVcEngine *e, const uint8<sub>t</sub> uuid[16],
+                            const uint8<sub>t</sub> *name, size<sub>t</sub> name<sub>len</sub>);
+int32<sub>t</sub>  yakvc<sub>set</sub><sub>tab</sub><sub>list</sub>(YakVcEngine *e, const uint8<sub>t</sub> *uuids, size<sub>t</sub> count);   /</i> full replace, only when changed
+int32<sub>t</sub>  yakvc<sub>push</sub><sub>world</sub>(YakVcEngine *e, const double listener[5],               <i>/ x, y, z, yaw, pitch
+                          const uint8<sub>t</sub> *uuids, const double *xyz, size<sub>t</sub> count); /</i> tracked players
+int32<sub>t</sub>  yakvc<sub>set</sub><sub>input</sub>(YakVcEngine *e, uint32<sub>t</sub> flags);                         <i>/ PTT | MUTED | DEAFENED | SPECTATOR
+int32<sub>t</sub>  yakvc<sub>set</sub><sub>game</sub><sub>volume</sub>(YakVcEngine *e, float voice);                     /</i> game&rsquo;s Voice/Speech slider, 0..1
+int32<sub>t</sub>  yakvc<sub>set</sub><sub>peer</sub><sub>volume</sub>(YakVcEngine *e, const uint8<sub>t</sub> uuid[16], float volume, bool muted);
+int32<sub>t</sub>  yakvc<sub>complete</sub><sub>join</sub>(YakVcEngine *e, uint32<sub>t</sub> request<sub>id</sub>, bool ok);
+int32<sub>t</sub>  yakvc<sub>poll</sub><sub>events</sub>(YakVcEngine *e, uint8<sub>t</sub> *buf, size<sub>t</sub> cap, size<sub>t</sub> *written);
+int32<sub>t</sub>  yakvc<sub>update</sub><sub>config</sub>(YakVcEngine *e, const uint8<sub>t</sub> *toml, size<sub>t</sub> len);
+int32<sub>t</sub>  yakvc<sub>list</sub><sub>devices</sub>(YakVcEngine *e, uint8<sub>t</sub> *buf, size<sub>t</sub> cap, size<sub>t</sub> *needed); <i>/ JSON; retry if needed &gt; cap
+size<sub>t</sub>   yakvc<sub>last</sub><sub>error</sub>(uint8<sub>t</sub> *buf, size<sub>t</sub> cap);         /</i> message for this thread&rsquo;s last failed call
+```
+</p>
+
+<ul class="org-ul">
+<li><b><b>Header:</b></b> `cbindgen` generates `crates/yakvc-ffi/include/yakvc.h`, which is checked in. `cargo xtask header &ndash;check` fails CI when it is stale, so changes to the ABI show up in review. Java bindings are hand-written (14 functions) rather than generated with `jextract`, which is not part of the JDK.</li>
+<li><b><b>ABI check:</b></b> Java calls `yakvc<sub>abi</sub><sub>version</sub>()` before anything else and refuses to continue on a mismatch; `yakvc<sub>create</sub>` checks again.</li>
+<li><b><b>Memory:</b></b> each wrapper call uses a confined `Arena` for strings and small buffers, freed on return. `yakvc<sub>push</sub><sub>world</sub>` and `yakvc<sub>poll</sub><sub>events</sub>` run every tick, so their handles use `Linker.Option.critical(true)`, and Java passes `MemorySegment.ofArray(&hellip;)` heap arrays with no copy. Native code never keeps a pointer after the call returns.</li>
+<li><b><b>Events</b></b> are little-endian TLV records `u16 type | u16 len | payload` written into a reusable buffer: `JoinRequest{id, server<sub>id</sub>}`, `RendezvousState`, `PeerState{uuid, connecting|direct|relayed|relay<sub>full</sub>|failed}`, `Talking{uuid, bool}`, `MicLevel{f32}`, `Error{code, msg}`. Records are never split; if the buffer fills, the rest stay queued for the next poll.</li>
+<li><b><b>Threads:</b></b> `YakVcEngine` is `Send + Sync`. Every function except `yakvc<sub>destroy</sub>` may be called from any thread: the client thread feeds the world on each tick, and `SessionJoiner`&rsquo;s worker calls `complete<sub>join</sub>`. Java makes `yakvc<sub>destroy</sub>` the last call with a closed flag.</li>
+<li><b><b>Rust side (`yakvc-ffi`):</b></b> the handle is `Box&lt;Bridge&gt;` passed as an opaque pointer. Every export is `#[unsafe(no<sub>mangle</sub>)] pub extern &ldquo;C&rdquo;` and runs inside an `ffi<sub>guard</sub>` that does `catch<sub>unwind</sub>` (a panic crossing `extern &ldquo;C&rdquo;` would abort the game) and maps errors and panics to codes plus the thread-local `last<sub>error</sub>` message. After a panic the engine is marked poisoned, later calls return `YAKVC<sub>ERR</sub><sub>POISONED</sub>`, and the mod disables voice with a toast. This is the only crate with `unsafe` allowed.</li>
+<li><b><b>`yakvc-client` API</b></b> is FFI-agnostic: `Engine::start(Config) -&gt; (EngineHandle, EventReceiver)`, where `EngineHandle` has the same operations as above with typed arguments. The CLI uses it directly; `yakvc-ffi` is only marshalling. `yakvc-ffi` has its own Rust tests that call the `extern &ldquo;C&rdquo;` functions directly, so the ABI is tested without a JVM.</li>
+</ul>
+
+<p>
+<b><b>Lifecycle</b></b>
+</p>
+
+<ol class="org-ol">
+<li>Game start: load natives, check `yakvc<sub>abi</sub><sub>version</sub>`, `yakvc<sub>create</sub>`. Engine authenticates with the rendezvous at the title screen, using the cached ticket if valid.</li>
+<li>Join a server: `VoiceSession` starts. Tab list and positions flow every tick; matched peers connect in the background.</li>
+<li>Leave: empty the tab list. Peers drop and the rendezvous session stays up.</li>
+<li>Game exit: `yakvc<sub>destroy</sub>` (graceful close, 500 ms cap). The library itself stays loaded until the JVM exits.</li>
+</ol>
+
+<p>
+## Build, packaging and CI
+</p>
+
+<p>
+`cargo xtask` is the single entry point that builds `yakvc-ffi` for each platform and stages it into the mod&rsquo;s resources. Gradle calls it for host-only dev builds, and CI builds each platform on its native runner and assembles one jar.
+</p>
+
+<p>
+<b><b>Native targets</b></b>
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">Target</td>
+<td class="org-left">Built on</td>
+<td class="org-left">Notes</td>
+</tr>
+
+<tr>
+<td class="org-left">---</td>
+<td class="org-left">---</td>
+<td class="org-left">---</td>
+</tr>
+
+<tr>
+<td class="org-left">`x86<sub>64</sub>-unknown-linux-gnu`</td>
+<td class="org-left">Linux runner, `cargo-zigbuild` targeting glibc 2.17</td>
+<td class="org-left">ALSA linked dynamically; PipeWire/Pulse provide ALSA compatibility</td>
+</tr>
+
+<tr>
+<td class="org-left">`aarch64-unknown-linux-gnu`</td>
+<td class="org-left">Linux runner, `cargo-zigbuild`</td>
+<td class="org-left">Raspberry Pi / ARM Linux. `alsa-sys` needs arm64 `libasound` headers in a sysroot (or build on an ARM runner).</td>
+</tr>
+
+<tr>
+<td class="org-left">`x86<sub>64</sub>-pc-windows-msvc`</td>
+<td class="org-left">Windows runner</td>
+<td class="org-left">WASAPI via `cpal`</td>
+</tr>
+
+<tr>
+<td class="org-left">`x86<sub>64</sub>-apple-darwin` + `aarch64-apple-darwin`</td>
+<td class="org-left">macOS runner</td>
+<td class="org-left">Merged with `lipo` into one universal `.dylib`</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+libopus is built from source and linked statically (needs `cmake` in CI), so the jar has no system dependency besides the OS audio stack.
+</p>
+
+<p>
+<b><b>xtask commands</b></b>
+</p>
+
+<ul class="org-ul">
+<li>`cargo xtask natives [&ndash;target host|all|&lt;triple&gt;]` builds `yakvc-ffi` in release and copies it to `mod/src/main/resources/natives/&lt;os&gt;-&lt;arch&gt;/` (gitignored), with a `natives.sha256` manifest.</li>
+<li>`cargo xtask header [&ndash;check]` regenerates `yakvc.h` with `cbindgen`, or fails if the checked-in copy is stale.</li>
+<li>`cargo xtask dist` stages natives from `&ndash;from &lt;dir&gt;` (CI artifacts) or builds them, runs `./gradlew build`, generates `THIRD<sub>PARTY</sub><sub>LICENSES</sub>` (see licensing) into the jar and the server image, and writes the jar to `dist/`.</li>
+<li>`cargo xtask server-image` builds the `yakvc-server` Docker image.</li>
+<li>`cargo xtask dev` starts a dev-mode server and prints the config snippet for `runClient` / the CLI.</li>
+</ul>
+
+<p>
+<b><b>Gradle integration</b></b>
+</p>
+
+<ul class="org-ul">
+<li>`processResources` depends on a `cargoNatives` Exec task (`cargo xtask natives &ndash;target host`), so `./gradlew runClient` just works on a dev machine.</li>
+<li>`-Pyakvc.prebuiltNatives=&lt;dir&gt;` skips cargo for CI packaging.</li>
+<li>The Gradle Java toolchain is pinned to 25, and `runClient` passes `&ndash;enable-native-access=ALL-UNNAMED`.</li>
+<li>`NativeLoader` checks the extracted library against `natives.sha256` before opening it.</li>
+</ul>
+
+<p>
+<b><b>CI (GitHub Actions)</b></b>
+</p>
+
+<ol class="org-ol">
+<li>`rust`: `cargo fmt &ndash;check`, `cargo clippy &ndash;workspace &ndash;all-targets -D warnings`, `cargo xtask header &ndash;check`, `cargo deny check`, `cargo test &ndash;workspace` (includes `yakvc-testkit` integration tests with dev auth and null audio).</li>
+<li>`natives` (matrix: ubuntu, windows, macos): `cargo xtask natives &ndash;target &lt;list&gt;`, upload artifacts.</li>
+<li>`mod`: download natives, `cargo xtask dist &ndash;from artifacts/`, run Fabric client gametests (load mod, create engine, destroy). Loom runs them under Xvfb on Linux when `CI` is set.</li>
+<li>`release` (on tag): publish the jar to Modrinth/CurseForge, the server image to GHCR, and `yakvc-cli` binaries (for `net report` in bug reports) as GitHub release assets.</li>
+</ol>
+
+<p>
+<b><b>Licensing</b></b>
+</p>
+
+<ul class="org-ul">
+<li>Everything in the repo is `MIT OR Apache-2.0`, the usual Rust dual license. The SPDX expression is set once in `[workspace.package]` and repeated in `fabric.mod.json`.</li>
+<li>Dependencies must stay compatible: for example libopus and `nnnoiseless` are BSD-3-Clause, and Iroh is MIT/Apache-2.0. `deny.toml` lists the allowed licenses and `cargo deny check licenses` enforces them in CI.</li>
+<li>MIT, Apache-2.0 and the BSD licenses of statically linked libraries like libopus require their notices to ship with the binaries, so `cargo xtask dist` generates `THIRD<sub>PARTY</sub><sub>LICENSES</sub>` with `cargo-about`.</li>
+</ul>
+
+<p>
+<b><b>Versioning</b></b>
+</p>
+
+<ul class="org-ul">
+<li>Connection protocols (`rdv/1`, `peer/1`) are versioned in the ALPN; incompatible changes bump the ALPN, and the server serves old and new side by side during rollouts. Application protocols on a peer connection (`voice` v1) are versioned in `PeerHello`, and peers use the highest version both support.</li>
+<li>`ABI<sub>VERSION</sub>` ties the Java and native halves of one mod build together; a mismatch fails at `yakvc<sub>abi</sub><sub>version</sub>()` before the engine starts.</li>
+<li>Mod version and Rust workspace version stay in lockstep: one release = one version number.</li>
+</ul>
+
+<p>
+## Security, privacy and abuse
+</p>
+
+<p>
+The design rule is <b><b>you only send voice to, and only play voice from, players your game can currently see as entities within range.</b></b> Most privacy properties follow from that one rule plus Mojang-backed tickets.
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">Threat</td>
+<td class="org-left">Mitigation</td>
+</tr>
+
+<tr>
+<td class="org-left">---</td>
+<td class="org-left">---</td>
+</tr>
+
+<tr>
+<td class="org-left">Impersonating another player</td>
+<td class="org-left">Ticket requires a Mojang `hasJoined` proof for the UUID; peers check `ticket.endpoint<sub>id</sub>` against the QUIC-authenticated remote EndpointId</td>
+</tr>
+
+<tr>
+<td class="org-left">Eavesdropping in transit</td>
+<td class="org-left">QUIC/TLS 1.3 end to end between peers; relays forward ciphertext only</td>
+</tr>
+
+<tr>
+<td class="org-left">Remote eavesdropper (not on the server)</td>
+<td class="org-left">Discovery needs mutual tab-list presence; the sender only transmits to peers with a tracked entity in range</td>
+</tr>
+
+<tr>
+<td class="org-left">Vanished staff / spectators listening</td>
+<td class="org-left">No tracked entity means no audio is sent to them or played from them. Peers whose tab-list game mode is spectator are excluded both ways.</td>
+</tr>
+
+<tr>
+<td class="org-left">Peers learn your IP address</td>
+<td class="org-left">Inherent to direct P2P. Because matched peers connect eagerly, every Yak VC user on the same server (or network, with a global tab list) learns your IP, not just nearby players. The README and settings screen say so plainly. A `relay<sub>only</sub>` setting (opt-in, off by default) removes Iroh&rsquo;s IP transports (`Builder::clear<sub>ip</sub><sub>transports</sub>()`), so no direct addresses are advertised and all traffic goes through the relay. Under the relay budget, that means up to about 11 nearby listeners at once.</td>
+</tr>
+
+<tr>
+<td class="org-left">Rendezvous learns who plays with whom</td>
+<td class="org-left">Only co-located mod users and their IPs; other tab-list entries stay hashed. No logs of pairs are kept; documented in a privacy note.</td>
+</tr>
+
+<tr>
+<td class="org-left">Harassment</td>
+<td class="org-left">Per-player mute and volume persisted by UUID; players blocked in vanilla Social Interactions are muted both ways (`mute<sub>blocked</sub><sub>players</sub>`, default on); &ldquo;only hear friends&rdquo; mode (a UUID allow-list in the client config); deafen. Mutes also tell the speaker to stop sending (`ReceiveState`).</td>
+</tr>
+
+<tr>
+<td class="org-left">Flooding a peer</td>
+<td class="org-left">Per-peer cap of 100 datagrams/s and 400 B/frame; overflow drops packets, and sustained abuse closes the connection with a 10-minute ban</td>
+</tr>
+
+<tr>
+<td class="org-left">Rendezvous abuse</td>
+<td class="org-left">Rate limits per EndpointId and IP, pair-set caps, dev tickets rejected by production clients</td>
+</tr>
+
+<tr>
+<td class="org-left">Relay used by unrelated Iroh apps</td>
+<td class="org-left">Relay access restricted to EndpointIds with a live rendezvous session</td>
+</tr>
+
+<tr>
+<td class="org-left">Restricted (e.g. child) accounts</td>
+<td class="org-left">Voice is disabled when the Microsoft profile or launcher disables chat (`respect<sub>chat</sub><sub>restrictions</sub>`, default on)</td>
+</tr>
+
+<tr>
+<td class="org-left">Tampered native library</td>
+<td class="org-left">Releases built only in CI and downloaded from Modrinth/CurseForge with their file hashes. The in-jar SHA-256 manifest only catches a corrupted or swapped extracted copy; anyone who can modify the jar can modify the manifest too.</td>
+</tr>
+
+<tr>
+<td class="org-left">Server owner doesn&rsquo;t want voice</td>
+<td class="org-left">No technical control exists. The client honours an opt-out marker `[no-yakvc]` in the server MOTD and disables itself there. The MOTD arrives after join in the server-data packet, so this works for direct connects too, not just the server list. Voice waits for that packet before starting. See server opt-out below.</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+<b><b>Server opt-out</b></b>
+</p>
+
+<p>
+v1 uses only the MOTD marker. A denylist on the rendezvous would require clients to send it server addresses, which the privacy model avoids. If owners object to a visible marker, the planned alternative is a DNS TXT record (`<sub>yakvc</sub>.&lt;host&gt;`) that the client checks locally, which also keeps server addresses on the client.
+</p>
+
+<p>
+<b><b>Dependencies on Mojang</b></b>
+</p>
+
+<ul class="org-ul">
+<li>Auth relies on the public `sessionserver` `hasJoined` endpoint and authlib&rsquo;s `joinServer`, the same mechanism third-party Minecraft login services use. If Mojang changes or rate-limits it, cached tickets keep existing users working for up to 24 h while a fix ships.</li>
+<li>Mojang does not document `sessionserver` limits; third-party reports put them at about 400 requests per 10 s per source IP, with HTTP 429 above that. With 24 h tickets renewed at a random point in their last 2 h, even 100k active users average about 1–1.5 auths/s from the rendezvous. Bursts (mass expiry, a client bug) are handled by the 429 policy under server limits. Real limits are measured at M5.</li>
+<li>Mojang access tokens never cross into Rust or leave the machine except to Mojang through authlib.</li>
+</ul>
+
+<p>
+## Milestones
+</p>
+
+<p>
+Build order runs Rust-first: every networking and audio milestone is provable with the CLI before any Java exists, and the mod arrives at M4 as a thin integration layer.
+</p>
+
+<ol class="org-ol">
+<li><b><b>M0 Skeleton.</b></b> Virtual workspace, all seven crates as stubs with the final dependency graph, license metadata and `deny.toml`, `xtask` stub, CI running fmt/clippy/deny/test.
+<ul class="org-ul">
+<li>Exit: `cargo test &ndash;workspace` is green; `cargo tree -p yakvc-server -e normal` shows no `cpal`/`opus`.</li>
+</ul></li>
+<li><b><b>M1 Audio.</b></b> `yakvc-audio` (devices, Opus, jitter buffer, mixer) and `cli audio loopback`.
+<ul class="org-ul">
+<li>Exit: loopback runs 10 min with no underruns; added latency ≤ 60 ms.</li>
+</ul></li>
+<li><b><b>M2 Direct call.</b></b> Datagram header in `shared`, voice send/receive in `client`, `cli call listen/dial`, `cli net report`. Confirm which `iroh-relay` server features are available in 1.3: QUIC address discovery, ACME, relay access control and per-client rate limits.
+<ul class="org-ul">
+<li>Exit: two machines on different home networks talk; with UDP blocked the call continues over the relay.</li>
+</ul></li>
+<li><b><b>M3 Rendezvous (dev auth).</b></b> Server protocol, matcher, tickets; client rendezvous session; `cli join` and `cli bot`; `yakvc-testkit` integration tests.
+<ul class="org-ul">
+<li>Exit: three CLI clients with overlapping fake tab lists connect only to mutual matches, and gain/pan follow `pos` commands. A testkit test with 5% bursty loss and 30 ms of jitter plays continuous audio: every lost frame is covered by FEC or PLC, and playout delay stays within the jitter-buffer bounds.</li>
+</ul></li>
+<li><b><b>M4 Mod integration.</b></b> Fabric project, `NativeLoader`, `yakvc-ffi` + `NativeBridge` (FFM), `GameStateFeeder`, push-to-talk, dev mode.
+<ul class="org-ul">
+<li>Exit: two dev clients on a local vanilla server hear each other spatially. A gametest confirms spectators are excluded in both directions.</li>
+</ul></li>
+<li><b><b>M5 Real auth.</b></b> Mojang challenge on server and client, `SessionJoiner`, ticket cache, Mojang 429 handling. Measure the real `sessionserver` rate limits.
+<ul class="org-ul">
+<li>Exit: two real accounts on a public online-mode server, no dev flags.</li>
+</ul></li>
+<li><b><b>M6 Beta.</b></b> All-platform natives, settings and peer UI, talking indicators, relay-only mode, MOTD opt-out, production server deployed. Check the CurseForge project name is free, and check the default keybinds against popular modpacks. During the beta, resize the VPS from relayed-share and monthly-transfer metrics.
+<ul class="org-ul">
+<li>Exit: the same jar works on Windows, macOS and Linux; public beta on Modrinth.</li>
+</ul></li>
+<li><b><b>Post-v1.</b></b> Serverless discovery, OpenAL/HRTF output, groups, NeoForge port.
+<ul class="org-ul">
+<li><b><b>Read-only Java API for other mods:</b></b> talking and peer-state events, plus per-player mute and volume, so HUD and social mods can integrate without data channels.</li>
+<li><b><b>Generic P2P channels for other mods</b></b>, only if mod authors ask for it. This would extract `net` into a separate library mod that other mods register protocols with. It must first solve: per-protocol consent (a mod can&rsquo;t send to peers that haven&rsquo;t installed it), relay quotas per protocol, the fact that every peer learns your IP, a server opt-out covering all protocols, and a stable Java API. Generic position-sharing channels make PvP radar cheats easy, so server-owner opt-out matters more here than for voice.</li>
+</ul></li>
+</ol>
+</div>
+<div id="postamble" class="status">
+<p class="date">Created: 2026-10-03 Sat 20:02</p>
+</div>
+</body>
+</html>

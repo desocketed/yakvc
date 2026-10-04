@@ -152,7 +152,7 @@ Each of the seven crates is needed: `yakvc-ffi` must be its own cdylib, `yakvc-t
 - `yakvc-shared` depends on `iroh-base` (key and EndpointId types) rather than full `iroh`, and gates the Mojang HTTP client behind a `mojang` feature.
 - Binaries contain no logic beyond argument parsing and wiring; anything worth testing lives in a lib.
 - Inside `yakvc-client`, `net` knows nothing about audio. It provides verified peers (EndpointId ↔ UUID), per-peer connections, and a `Protocol` trait that receives a peer's control stream and datagrams for one protocol ID. `voice` is the only `Protocol` in v1 and uses `net` only through that trait. This keeps groups/radio, and a possible generic API for other mods (see milestones), as new protocols rather than changes to `net`. `net` could later move into its own crate without touching `voice`.
-- `iroh` is pinned at 1.3 (current stable as of 2026-09-28; 1.0 shipped June 2026). The design relies on these 1.x APIs, checked against its docs: `Connection::send_datagram` / `read_datagram` / `max_datagram_size`, `remote_id()`, `paths()` for path reporting, `Builder::clear_ip_transports()` for relay-only, and `Builder::empty()` / `clear_address_lookup()` to drop n0's default address lookup. Which `iroh-relay` server features are on in 1.3 is checked at M2.
+- `iroh` is pinned at 1.3 (current stable as of 2026-09-28; 1.0 shipped June 2026). The design relies on these 1.x APIs, checked against its docs: `Connection::send_datagram` / `read_datagram` / `max_datagram_size`, `remote_id()`, `paths()` for path reporting, `Builder::clear_ip_transports()` for relay-only, and `Builder::empty()` / `clear_address_lookup()` to drop n0's default address lookup. The `iroh-relay` 1.3 server (feature `server`) was checked against its source on 2026-10-04: `Server::spawn(ServerConfig)` embeds it as a library; `QuicConfig` serves QUIC address discovery; `CertConfig::LetsEncrypt` provides ACME (or `Manual` for certificate files); `RelayConfig::access` takes an async `AccessControl` with `on_connect` / `on_disconnect`; `Limits::client_rx` rate-limits bytes read from each client; and `relay_service().clients().disconnect(endpoint_id, None)` drops a client. Clients retry a refused relay connection with exponential backoff capped at 16 s.
 - All third-party versions are declared once in root `[workspace.dependencies]`; crates use `dep = { workspace = true }`. Edition, license (`MIT OR Apache-2.0`) and `[workspace.lints]` (`unsafe_code = "deny"` everywhere except `yakvc-ffi`) are inherited the same way.
 - Nothing is published to crates.io: `[workspace.package] publish = false`, inherited by every crate. The crates are internal support code for the shipped artifacts (mod jar, server image, CLI binary), so their APIs can change freely between commits.
 
@@ -263,7 +263,7 @@ Voice is 48 kHz mono Opus in 20 ms frames, sent as unreliable QUIC datagrams on 
 
 - Authenticate clients (Mojang challenge) and issue signed tickets.
 - Hold live sessions and match pair tokens; push `PeerAvailable` / `PeerGone`.
-- Relay fallback for peers whose NAT defeats hole-punching (embedded `iroh-relay`, HTTPS + QUIC address discovery). The relay only serves EndpointIds with a live rendezvous session, using `iroh-relay`'s access control, so it is not an open relay for the wider Iroh ecosystem.
+- Relay fallback for peers whose NAT defeats hole-punching (embedded `iroh-relay`, HTTPS + QUIC address discovery). The relay is not an open relay for the wider Iroh ecosystem: it serves only EndpointIds that hold a live rendezvous session, after a short grace period for new connections (see `relay` below).
 - Nothing durable apart from its endpoint key, issuer key and relay TLS certificate: all session state is in memory, and clients re-register within seconds of a restart (cached tickets mean no Mojang burst).
 
 **Crate structure**
@@ -276,7 +276,7 @@ Voice is 48 kHz mono Opus in 20 ms frames, sent as unreliable QUIC datagrams on 
 | `rdv` | Per-connection protocol handler for `yakvc/rdv/1` (state machine: Hello → Challenge → Joined → Registered) |
 | `auth` | Uses `yakvc_shared::mojang` to call `hasJoined`, signs tickets with the server key |
 | `matcher` | `HashMap<EndpointId, Session>` + `HashMap<PairToken, SmallVec<[EndpointId; 2]>>`; O(changed tokens) per update |
-| `relay` | Starts `iroh-relay` server when enabled; its access check asks `matcher` whether the EndpointId has a live session |
+| `relay` | Starts the `iroh-relay` server when enabled. Its `AccessControl` admits an EndpointId that has a live session. It also admits one without a session for a 30 s grace period, because a client's relay connection can arrive before its rendezvous session, and a `relay_only` client can only reach the rendezvous through the relay. If no session is registered within the grace period, or when a session ends, the server disconnects that EndpointId from the relay. Grace admissions are rate-limited per EndpointId (and per source IP if `iroh-relay` exposes it, checked at M3). |
 | `limits` | Token-bucket rate limits per EndpointId and per source IP |
 | `metrics` | Prometheus endpoint: sessions, auth ok/fail, matches, Mojang latency, relay bytes |
 
@@ -286,7 +286,7 @@ Voice is 48 kHz mono Opus in 20 ms frames, sent as unreliable QUIC datagrams on 
 - At most 2,048 pair tokens per session and 10 pair updates per second.
 - 5 s timeout on Mojang calls with one retry; auth fails closed on Mojang outage (cached tickets keep working).
 - On a Mojang HTTP 429 the server stops calling `hasJoined` until Mojang's `Retry-After` (or 10 s) has passed and answers pending auths with `RetryAfter { secs }`. Clients back off exponentially (10 s doubling to 10 min, with jitter) and keep using any unexpired cached ticket meanwhile.
-- Relay: each client keeps its relayed sends within a 512 kbps budget (see connection lifecycle). The server backs this with a per-client send-rate limit in `iroh-relay` of 80 KB/s (640 kbps, leaving headroom for control traffic and bursts). The server also tracks monthly relay transfer against a configured budget and exposes it as a metric.
+- Relay: each client keeps its relayed sends within a 512 kbps budget (see connection lifecycle). The server backs this with `iroh-relay`'s per-client receive limit (`Limits::client_rx`, which caps what each client sends into the relay) of 80 KB/s (640 kbps, leaving headroom for control traffic and bursts). The server also tracks monthly relay transfer against a configured budget and exposes it as a metric.
 
 **Dev mode**
 
@@ -458,7 +458,7 @@ The design rule is **you only send voice to, and only play voice from, players y
 | Harassment | Per-player mute and volume persisted by UUID; players blocked in vanilla Social Interactions are muted both ways (`mute_blocked_players`, default on); "only hear friends" mode (a UUID allow-list in the client config); deafen. Mutes also tell the speaker to stop sending (`ReceiveState`). |
 | Flooding a peer | Per-peer cap of 100 datagrams/s and 400 B/frame; overflow drops packets, and sustained abuse closes the connection with a 10-minute ban |
 | Rendezvous abuse | Rate limits per EndpointId and IP, pair-set caps, dev tickets rejected by production clients |
-| Relay used by unrelated Iroh apps | Relay access restricted to EndpointIds with a live rendezvous session |
+| Relay used by unrelated Iroh apps | Relay access restricted to EndpointIds with a live rendezvous session, apart from a rate-limited 30 s grace period that lets clients register |
 | Restricted (e.g. child) accounts | Voice is disabled when the Microsoft profile or launcher disables chat (`respect_chat_restrictions`, default on) |
 | Tampered native library | Releases built only in CI and downloaded from Modrinth/CurseForge with their file hashes. The in-jar SHA-256 manifest only catches a corrupted or swapped extracted copy; anyone who can modify the jar can modify the manifest too. |
 | Server owner doesn't want voice | No technical control exists. The client honours an opt-out marker `[no-yakvc]` in the server MOTD and disables itself there. The MOTD arrives after join in the server-data packet, so this works for direct connects too, not just the server list. Voice waits for that packet before starting. See server opt-out below. |
@@ -481,7 +481,7 @@ Build order runs Rust-first: every networking and audio milestone is provable wi
    - Exit: `cargo test --workspace` is green; `cargo tree -p yakvc-server -e normal` shows no `cpal`/`opus`.
 2. **M1 Audio.** `yakvc-audio` (devices, Opus, jitter buffer, mixer) and `cli audio loopback`.
    - Exit: loopback runs 10 min with no underruns; added latency ≤ 60 ms.
-3. **M2 Direct call.** Datagram header in `shared`, voice send/receive in `client`, `cli call listen/dial`, `cli net report`. Confirm which `iroh-relay` server features are available in 1.3: QUIC address discovery, ACME, relay access control and per-client rate limits.
+3. **M2 Direct call.** Datagram header in `shared`, voice send/receive in `client`, `cli call listen/dial`, `cli net report`.
    - Exit: two machines on different home networks talk; with UDP blocked the call continues over the relay.
 4. **M3 Rendezvous (dev auth).** Server protocol, matcher, tickets; client rendezvous session; `cli join` and `cli bot`; `yakvc-testkit` integration tests.
    - Exit: three CLI clients with overlapping fake tab lists connect only to mutual matches, and gain/pan follow `pos` commands. A testkit test with 5% bursty loss and 30 ms of jitter plays continuous audio: every lost frame is covered by FEC or PLC, and playout delay stays within the jitter-buffer bounds.
