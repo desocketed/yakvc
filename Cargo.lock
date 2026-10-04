@@ -4570,6 +4570,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "serde_json",
  "yakvc-audio",
  "yakvc-client",
 ]
@@ -4590,7 +4591,10 @@ dependencies = [
 name = "yakvc-ffi"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
+ "toml 1.1.6+spec-1.1.0",
  "yakvc-client",
+ "yakvc-shared",
 ]
 
 [[package]]
@@ -4631,6 +4635,7 @@ name = "yakvc-testkit"
 version = "0.1.0"
 dependencies = [
  "thiserror 2.0.21",
+ "tokio",
  "yakvc-audio",
  "yakvc-client",
  "yakvc-server",
