@@ -1,0 +1,450 @@
+//! Who hears whom, and how loud: the rules from DESIGN.md "Voice transport
+//! and audio pipeline", as plain functions over a snapshot of game state.
+
+use std::collections::HashMap;
+
+use yakvc_audio::Spatial;
+use yakvc_shared::Uuid;
+
+use crate::config::{Activation, AudioConfig};
+use crate::engine::PeerAudio;
+use crate::world::{Input, Pose, Vec3, World};
+
+/// Within this distance a speaker plays at full volume.
+const FULL_VOLUME_DISTANCE: f64 = 4.0;
+/// The sender adds this to its range, since its view of positions may lag
+/// the receiver's. The receiver enforces the exact range.
+const SEND_MARGIN: f64 = 8.0;
+/// Directly behind the listener a speaker is this much quieter.
+const BEHIND_ATTENUATION: f64 = 0.3;
+const MAX_RECIPIENTS: usize = 32;
+/// Above this many recipients the encoder steps down to save upload.
+const STEP_DOWN_RECIPIENTS: usize = 16;
+pub(crate) const STEP_DOWN_BITRATE: u32 = 16_000;
+/// Per-client budget for relayed voice, in bits per second.
+const RELAY_BUDGET: u32 = 512_000;
+/// Wire bytes per voice packet besides the Opus payload: the 10-byte voice
+/// header, about 56 bytes of QUIC, UDP and IPv4, and about 10 of relay
+/// framing.
+const PACKET_OVERHEAD_BYTES: u32 = 76;
+const PACKETS_PER_SECOND: u32 = 50;
+
+/// What the voice layer knows about the game and the user's settings.
+#[derive(Debug, Clone)]
+pub(crate) struct VoiceState {
+    pub own_uuid: Option<Uuid>,
+    pub world: World,
+    pub input: Input,
+    pub game_volume: f32,
+    pub peer_audio: HashMap<Uuid, PeerAudio>,
+    pub voice_range: f32,
+    pub friends_only: Option<Vec<Uuid>>,
+    pub audio: AudioConfig,
+    /// A direct call with no game (`yakvc-cli call`): every peer is heard at
+    /// full volume and sent to, whatever the world says.
+    pub direct: bool,
+}
+
+/// A connected peer we might send this frame to.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Candidate {
+    pub uuid: Uuid,
+    pub distance: f64,
+    pub relayed: bool,
+}
+
+/// Who gets this frame and at what bitrate.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct SendPlan {
+    pub recipients: Vec<Uuid>,
+    /// Relayed peers in range that don't fit in the relay budget.
+    pub relay_full: Vec<Uuid>,
+    pub bitrate: u32,
+}
+
+impl VoiceState {
+    pub(crate) fn new(
+        audio: AudioConfig,
+        voice_range: f32,
+        friends_only: Option<Vec<Uuid>>,
+    ) -> Self {
+        VoiceState {
+            own_uuid: None,
+            world: World::default(),
+            input: Input::default(),
+            game_volume: 1.0,
+            peer_audio: HashMap::new(),
+            voice_range,
+            friends_only,
+            audio,
+            direct: false,
+        }
+    }
+
+    /// Whether the microphone goes out this frame. `voice_detected` is the
+    /// VAD result, used in voice-activation mode.
+    pub(crate) fn transmitting(&self, voice_detected: bool) -> bool {
+        if self.input.spectator || self.input.muted {
+            return false;
+        }
+        match self.audio.activation {
+            Activation::PushToTalk => self.input.push_to_talk,
+            Activation::Voice => voice_detected,
+        }
+    }
+
+    /// Whether we want `peer`'s audio at all. Sent to the peer as
+    /// `ReceiveState` so it can stop sending when we don't.
+    pub(crate) fn wants_audio_from(&self, peer: Uuid) -> bool {
+        !self.input.deafened && !self.muted(peer) && self.is_friend(peer)
+    }
+
+    /// How to play a frame from `peer`, or `None` to discard it.
+    pub(crate) fn playback(&self, peer: Uuid) -> Option<Spatial> {
+        if self.input.spectator || !self.wants_audio_from(peer) {
+            return None;
+        }
+        let volume = self.peer_audio.get(&peer).map_or(1.0, |audio| audio.volume);
+        let spatial = if self.direct {
+            Spatial {
+                gain: 1.0,
+                pan: 0.0,
+            }
+        } else {
+            spatial(&self.world.listener, self.position(peer)?, self.voice_range)?
+        };
+        Some(Spatial {
+            gain: spatial.gain * volume,
+            ..spatial
+        })
+    }
+
+    /// The distance to `peer` if it is close enough to send to. Whether the
+    /// peer wants our audio is up to the peer and checked separately.
+    pub(crate) fn send_distance(&self, peer: Uuid) -> Option<f64> {
+        if !self.is_friend(peer) {
+            return None;
+        }
+        if self.direct {
+            return Some(0.0);
+        }
+        let distance = distance(self.world.listener.pos, self.position(peer)?);
+        (distance <= f64::from(self.voice_range) + SEND_MARGIN).then_some(distance)
+    }
+
+    fn position(&self, peer: Uuid) -> Option<Vec3> {
+        let (_, pos) = self.world.players.iter().find(|(uuid, _)| *uuid == peer)?;
+        Some(*pos)
+    }
+
+    fn muted(&self, peer: Uuid) -> bool {
+        self.peer_audio.get(&peer).is_some_and(|audio| audio.muted)
+    }
+
+    fn is_friend(&self, peer: Uuid) -> bool {
+        self.friends_only
+            .as_ref()
+            .is_none_or(|friends| friends.contains(&peer))
+    }
+}
+
+/// Gain and pan for a source at `source`, heard by `listener` with voice
+/// range `range`. `None` beyond range.
+///
+/// Gain is 1 within 4 blocks and falls linearly to 0 at the range; sources
+/// behind the listener are a little quieter. Pan is the sideways part of
+/// the direction to the source, so equal-power panning in the mixer puts a
+/// source at 90° fully to one side.
+pub(crate) fn spatial(listener: &Pose, source: Vec3, range: f32) -> Option<Spatial> {
+    let range = f64::from(range);
+    let distance = distance(listener.pos, source);
+    if distance > range {
+        return None;
+    }
+    let mut gain = if distance <= FULL_VOLUME_DISTANCE {
+        1.0
+    } else {
+        (range - distance) / (range - FULL_VOLUME_DISTANCE)
+    };
+
+    // Minecraft yaw: 0 faces +Z and grows clockwise seen from above, so
+    // facing +Z the listener's right hand points to -X.
+    let yaw = f64::from(listener.yaw).to_radians();
+    let (forward_x, forward_z) = (-yaw.sin(), yaw.cos());
+    let (right_x, right_z) = (-yaw.cos(), -yaw.sin());
+    let (dx, dz) = (source.x - listener.pos.x, source.z - listener.pos.z);
+    let horizontal = dx.hypot(dz);
+    let (pan, front) = if horizontal < 1e-6 {
+        (0.0, 1.0)
+    } else {
+        (
+            (dx * right_x + dz * right_z) / horizontal,
+            (dx * forward_x + dz * forward_z) / horizontal,
+        )
+    };
+    if front < 0.0 {
+        gain *= 1.0 + BEHIND_ATTENUATION * front;
+    }
+    Some(Spatial {
+        gain: gain as f32,
+        pan: pan as f32,
+    })
+}
+
+fn distance(a: Vec3, b: Vec3) -> f64 {
+    let (dx, dy, dz) = (a.x - b.x, a.y - b.y, a.z - b.z);
+    (dx * dx + dy * dy + dz * dz).sqrt()
+}
+
+/// Picks recipients nearest first, steps the bitrate down for big crowds,
+/// and keeps relayed recipients within the relay budget (DESIGN.md
+/// "Connection lifecycle").
+pub(crate) fn plan_send(mut candidates: Vec<Candidate>, bitrate: u32) -> SendPlan {
+    candidates.sort_by(|a, b| a.distance.total_cmp(&b.distance));
+    candidates.truncate(MAX_RECIPIENTS);
+
+    let relayed = candidates.iter().filter(|c| c.relayed).count();
+    let mut bitrate = bitrate;
+    if candidates.len() > STEP_DOWN_RECIPIENTS || relayed > relay_capacity(bitrate) {
+        bitrate = bitrate.min(STEP_DOWN_BITRATE);
+    }
+
+    let capacity = relay_capacity(bitrate);
+    let mut plan = SendPlan {
+        recipients: Vec::new(),
+        relay_full: Vec::new(),
+        bitrate,
+    };
+    let mut relayed_sent = 0;
+    for candidate in candidates {
+        if candidate.relayed {
+            if relayed_sent == capacity {
+                plan.relay_full.push(candidate.uuid);
+                continue;
+            }
+            relayed_sent += 1;
+        }
+        plan.recipients.push(candidate.uuid);
+    }
+    plan
+}
+
+/// How many relayed streams fit in the relay budget at `bitrate`.
+fn relay_capacity(bitrate: u32) -> usize {
+    let per_stream = bitrate + PACKET_OVERHEAD_BYTES * 8 * PACKETS_PER_SECOND;
+    (RELAY_BUDGET / per_stream) as usize
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn uuid(n: u8) -> Uuid {
+        Uuid::from_bytes([n; 16])
+    }
+
+    fn state() -> VoiceState {
+        let mut state = VoiceState::new(AudioConfig::default(), 48.0, None);
+        state.world.listener = listener(0.0);
+        state
+    }
+
+    fn at(x: f64, z: f64) -> Vec3 {
+        Vec3::new(x, 64.0, z)
+    }
+
+    fn listener(yaw: f32) -> Pose {
+        Pose {
+            pos: at(0.0, 0.0),
+            yaw,
+            pitch: 0.0,
+        }
+    }
+
+    #[test]
+    fn gain_is_full_up_close_and_fades_to_zero_at_range() {
+        let gain = |d: f64| spatial(&listener(0.0), at(0.0, d), 48.0).map(|s| s.gain);
+        assert_eq!(gain(0.0), Some(1.0));
+        assert_eq!(gain(4.0), Some(1.0));
+        assert!((gain(26.0).unwrap() - 0.5).abs() < 1e-6);
+        assert_eq!(gain(48.0), Some(0.0));
+        assert_eq!(gain(48.1), None);
+    }
+
+    #[test]
+    fn pan_follows_yaw() {
+        let pan = |yaw: f32, x: f64, z: f64| spatial(&listener(yaw), at(x, z), 48.0).unwrap().pan;
+        // Facing +Z (south): -X is to the right.
+        assert!((pan(0.0, -10.0, 0.0) - 1.0).abs() < 1e-6);
+        assert!((pan(0.0, 10.0, 0.0) + 1.0).abs() < 1e-6);
+        assert!(pan(0.0, 0.0, 10.0).abs() < 1e-6);
+        // Facing -X (west, yaw 90): -Z is to the right.
+        assert!((pan(90.0, 0.0, -10.0) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn sources_behind_are_quieter() {
+        let front = spatial(&listener(0.0), at(0.0, 10.0), 48.0).unwrap().gain;
+        let behind = spatial(&listener(0.0), at(0.0, -10.0), 48.0).unwrap().gain;
+        assert!((behind - front * 0.7).abs() < 1e-6);
+    }
+
+    #[test]
+    fn playback_needs_a_tracked_entity_in_range() {
+        let mut state = state();
+        state.world.players = vec![(uuid(1), at(10.0, 0.0)), (uuid(2), at(60.0, 0.0))];
+        assert!(state.playback(uuid(1)).is_some());
+        assert_eq!(state.playback(uuid(2)), None, "beyond range");
+        assert_eq!(state.playback(uuid(3)), None, "no tracked entity");
+    }
+
+    #[test]
+    fn receiver_range_is_its_own() {
+        let mut state = state();
+        state.voice_range = 20.0;
+        state.world.players = vec![(uuid(1), at(25.0, 0.0))];
+        // Within the sender margin, so a sender with the same range would
+        // still send, but we don't play it.
+        assert_eq!(state.playback(uuid(1)), None);
+        assert!(state.send_distance(uuid(1)).is_some());
+    }
+
+    #[test]
+    fn deafen_mute_and_spectator_silence_playback() {
+        let mut state = state();
+        state.world.players = vec![(uuid(1), at(1.0, 0.0)), (uuid(2), at(1.0, 0.0))];
+        state.peer_audio.insert(
+            uuid(1),
+            PeerAudio {
+                volume: 1.0,
+                muted: true,
+            },
+        );
+        assert_eq!(state.playback(uuid(1)), None);
+        assert!(!state.wants_audio_from(uuid(1)));
+        assert!(state.wants_audio_from(uuid(2)));
+
+        state.input.deafened = true;
+        assert_eq!(state.playback(uuid(2)), None);
+        assert!(!state.wants_audio_from(uuid(2)));
+
+        state.input.deafened = false;
+        state.input.spectator = true;
+        assert_eq!(state.playback(uuid(2)), None);
+    }
+
+    #[test]
+    fn peer_volume_scales_gain() {
+        let mut state = state();
+        state.world.players = vec![(uuid(1), at(1.0, 0.0))];
+        state.peer_audio.insert(
+            uuid(1),
+            PeerAudio {
+                volume: 0.25,
+                muted: false,
+            },
+        );
+        assert_eq!(state.playback(uuid(1)).unwrap().gain, 0.25);
+    }
+
+    #[test]
+    fn friends_only_limits_both_directions() {
+        let mut state = state();
+        state.world.players = vec![(uuid(1), at(1.0, 0.0)), (uuid(2), at(1.0, 0.0))];
+        state.friends_only = Some(vec![uuid(1)]);
+        assert!(state.playback(uuid(1)).is_some());
+        assert_eq!(state.playback(uuid(2)), None);
+        assert!(state.send_distance(uuid(1)).is_some());
+        assert_eq!(state.send_distance(uuid(2)), None);
+    }
+
+    #[test]
+    fn transmitting_follows_activation_mute_and_spectator() {
+        let mut state = state();
+        assert!(!state.transmitting(true), "push-to-talk not held");
+        state.input.push_to_talk = true;
+        assert!(state.transmitting(false));
+        state.input.muted = true;
+        assert!(!state.transmitting(false));
+        state.input.muted = false;
+        state.input.spectator = true;
+        assert!(!state.transmitting(false), "spectators never send");
+
+        state.input.spectator = false;
+        state.input.push_to_talk = false;
+        state.audio.activation = Activation::Voice;
+        assert!(state.transmitting(true));
+        assert!(!state.transmitting(false));
+    }
+
+    #[test]
+    fn send_range_includes_the_margin() {
+        let mut state = state();
+        state.world.players = vec![(uuid(1), at(55.0, 0.0)), (uuid(2), at(57.0, 0.0))];
+        assert_eq!(state.send_distance(uuid(1)), Some(55.0));
+        assert_eq!(state.send_distance(uuid(2)), None);
+        assert_eq!(state.send_distance(uuid(3)), None, "untracked");
+    }
+
+    #[test]
+    fn direct_calls_ignore_the_world() {
+        let mut state = state();
+        state.direct = true;
+        assert_eq!(state.send_distance(uuid(1)), Some(0.0));
+        assert_eq!(
+            state.playback(uuid(1)),
+            Some(Spatial {
+                gain: 1.0,
+                pan: 0.0
+            })
+        );
+    }
+
+    fn candidates(direct: usize, relayed: usize) -> Vec<Candidate> {
+        (0..direct + relayed)
+            .map(|i| Candidate {
+                uuid: uuid(i as u8),
+                distance: i as f64,
+                relayed: i >= direct,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn nearest_32_are_sent_to() {
+        let mut far_first = candidates(40, 0);
+        far_first.reverse();
+        let plan = plan_send(far_first, 24_000);
+        assert_eq!(plan.recipients.len(), 32);
+        assert_eq!(plan.recipients[0], uuid(0));
+        assert!(!plan.recipients.contains(&uuid(32)));
+    }
+
+    #[test]
+    fn crowds_step_the_bitrate_down() {
+        assert_eq!(plan_send(candidates(16, 0), 24_000).bitrate, 24_000);
+        assert_eq!(plan_send(candidates(17, 0), 24_000).bitrate, 16_000);
+        // Never steps up.
+        assert_eq!(plan_send(candidates(17, 0), 12_000).bitrate, 12_000);
+    }
+
+    #[test]
+    fn relay_budget_fits_about_nine_then_eleven() {
+        assert_eq!(relay_capacity(24_000), 9);
+        assert_eq!(relay_capacity(16_000), 11);
+
+        let plan = plan_send(candidates(2, 9), 24_000);
+        assert_eq!(plan.bitrate, 24_000);
+        assert!(plan.relay_full.is_empty());
+
+        // Ten relayed don't fit at 24 kbps, so the encoder steps down.
+        let plan = plan_send(candidates(2, 10), 24_000);
+        assert_eq!(plan.bitrate, 16_000);
+        assert_eq!(plan.recipients.len(), 12);
+
+        // Beyond eleven, the farthest relayed peers get nothing.
+        let plan = plan_send(candidates(2, 14), 24_000);
+        assert_eq!(plan.recipients.len(), 13);
+        assert_eq!(plan.relay_full, vec![uuid(13), uuid(14), uuid(15)]);
+    }
+}

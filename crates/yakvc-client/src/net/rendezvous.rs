@@ -1,0 +1,381 @@
+//! The client side of `yakvc/rdv/1`: authenticate, keep the ticket fresh,
+//! send pair tokens for the tab list, and turn matches into peer
+//! connections. Reconnects with backoff for as long as the engine runs.
+
+use std::collections::HashSet;
+use std::convert::Infallible;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
+
+use iroh::endpoint::{Connection, SendStream};
+use iroh::{EndpointAddr, TransportAddr, Watcher};
+use rand::RngExt;
+use tokio::sync::{mpsc, oneshot};
+use tokio::time::Instant;
+use yakvc_shared::auth::session_server_id;
+use yakvc_shared::rdv::{ALPN, ClientMsg, CloseCode, Hello, ServerMsg};
+use yakvc_shared::{PairToken, SignedTicket, Ticket, Uuid, wire};
+
+use super::{Identity, Inner};
+use crate::config::RendezvousConfig;
+use crate::event::{Event, RendezvousState};
+
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+/// A ticket is renewed at a random point in this last stretch of its
+/// lifetime, so renewals from many clients don't bunch up.
+const RENEW_WINDOW: Duration = Duration::from_secs(2 * 60 * 60);
+
+/// Why a session ended.
+#[derive(Debug)]
+enum Ended {
+    /// The game changed the local identity; start over with the new one.
+    IdentityChanged,
+    /// Mojang is rate-limiting the rendezvous.
+    RetryAfter(Duration),
+    /// `joinServer` failed or the rendezvous refused our proof.
+    AuthFailed(String),
+    /// Network trouble or a protocol error.
+    Failed(String),
+}
+
+impl From<wire::WireError> for Ended {
+    fn from(err: wire::WireError) -> Self {
+        Ended::Failed(err.to_string())
+    }
+}
+
+pub(super) async fn run(inner: Arc<Inner>, config: RendezvousConfig, ticket_cache: PathBuf) {
+    // Network trouble retries quickly; rate limits and auth failures back off
+    // as DESIGN.md "Limits" asks: 10 s doubling to 10 min.
+    let mut network_backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(60));
+    let mut auth_backoff = Backoff::new(Duration::from_secs(10), Duration::from_secs(600));
+    let mut identity = inner.identity.subscribe();
+    loop {
+        let current = match identity.wait_for(Option::is_some).await {
+            Ok(current) => current.clone().expect("waited for an identity"),
+            Err(_) => return,
+        };
+        identity.mark_unchanged();
+        report(&inner, RendezvousState::Connecting);
+
+        let mut session = Session {
+            inner: &inner,
+            config: &config,
+            ticket_cache: &ticket_cache,
+            identity: current,
+            registered: false,
+        };
+        let ended = match session.run().await {
+            Err(ended) => ended,
+            Ok(never) => match never {},
+        };
+        if session.registered {
+            network_backoff.reset();
+            auth_backoff.reset();
+        }
+        let delay = match ended {
+            Ended::IdentityChanged => continue,
+            Ended::RetryAfter(asked) => {
+                let delay = auth_backoff.next().max(asked);
+                report(&inner, RendezvousState::RetryingIn(delay));
+                delay
+            }
+            Ended::AuthFailed(reason) => {
+                inner
+                    .events
+                    .send(Event::Error(format!("voice chat sign-in failed: {reason}")));
+                let delay = auth_backoff.next();
+                report(&inner, RendezvousState::RetryingIn(delay));
+                delay
+            }
+            Ended::Failed(reason) => {
+                tracing::debug!(%reason, "rendezvous session ended");
+                report(&inner, RendezvousState::Disconnected);
+                network_backoff.next()
+            }
+        };
+        tokio::time::sleep(delay).await;
+    }
+}
+
+fn report(inner: &Inner, state: RendezvousState) {
+    inner.events.send(Event::Rendezvous(state));
+}
+
+/// One connection to the rendezvous.
+struct Session<'a> {
+    inner: &'a Arc<Inner>,
+    config: &'a RendezvousConfig,
+    ticket_cache: &'a Path,
+    identity: Identity,
+    /// Got a ticket on this connection.
+    registered: bool,
+}
+
+impl Session<'_> {
+    async fn run(&mut self) -> Result<Infallible, Ended> {
+        let conn = self.connect().await?;
+        let result = self.serve(&conn).await;
+        conn.close(rdv_close(CloseCode::Normal), b"");
+        result
+    }
+
+    async fn connect(&self) -> Result<Connection, Ended> {
+        let addrs = self.config.addrs.iter().copied().map(TransportAddr::Ip);
+        let relay = self.config.relay.clone().map(TransportAddr::Relay);
+        let addr = EndpointAddr::from_parts(self.config.endpoint_id, addrs.chain(relay));
+        let connect = self.inner.endpoint.connect(addr, ALPN);
+        match tokio::time::timeout(CONNECT_TIMEOUT, connect).await {
+            Ok(Ok(conn)) => Ok(conn),
+            Ok(Err(err)) => Err(Ended::Failed(err.to_string())),
+            Err(_) => Err(Ended::Failed("timed out connecting".into())),
+        }
+    }
+
+    async fn serve(&mut self, conn: &Connection) -> Result<Infallible, Ended> {
+        let (mut send, mut recv) = conn
+            .open_bi()
+            .await
+            .map_err(|err| Ended::Failed(err.to_string()))?;
+        let hello = Hello {
+            mod_version: env!("CARGO_PKG_VERSION").to_owned(),
+            uuid: self.identity.uuid,
+            name: self.identity.name.clone(),
+            addr: self.inner.endpoint.addr(),
+            cached_ticket: self.cached_ticket(),
+        };
+        wire::write_msg(&mut send, &ClientMsg::Hello(hello)).await?;
+        report(self.inner, RendezvousState::Authenticating);
+
+        // Reading a message is not cancel-safe, so it gets its own task.
+        let (msg_tx, mut from_server) = mpsc::channel(16);
+        let reader = tokio::spawn(async move {
+            loop {
+                let msg = wire::read_msg::<ServerMsg>(&mut recv).await;
+                let end = !matches!(msg, Ok(Some(_)));
+                if msg_tx.send(msg).await.is_err() || end {
+                    break;
+                }
+            }
+        });
+        let result = self.event_loop(conn, &mut send, &mut from_server).await;
+        reader.abort();
+        result
+    }
+
+    async fn event_loop(
+        &mut self,
+        conn: &Connection,
+        send: &mut SendStream,
+        from_server: &mut mpsc::Receiver<Result<Option<ServerMsg>, wire::WireError>>,
+    ) -> Result<Infallible, Ended> {
+        let mut identity = self.inner.identity.subscribe();
+        identity.mark_unchanged();
+        let mut tab_list = self.inner.tab_list.subscribe();
+        let mut our_addr = self.inner.endpoint.watch_addr();
+        // The pair tokens the rendezvous holds; `None` until registered.
+        let mut sent_pairs: Option<HashSet<PairToken>> = None;
+        let mut pending_join: Option<oneshot::Receiver<bool>> = None;
+        let mut renew_at: Option<Instant> = None;
+
+        loop {
+            tokio::select! {
+                msg = from_server.recv() => {
+                    let msg = match msg {
+                        Some(Ok(Some(msg))) => msg,
+                        Some(Err(err)) => return Err(err.into()),
+                        Some(Ok(None)) | None => return Err(closed_reason(conn)),
+                    };
+                    match msg {
+                        ServerMsg::Challenge(nonce) => {
+                            let server_id = session_server_id(
+                                &nonce,
+                                self.inner.endpoint.id(),
+                                self.config.endpoint_id,
+                            );
+                            let (id, answer) = self.inner.new_join();
+                            self.inner.events.send(Event::JoinRequest { id, server_id });
+                            pending_join = Some(answer);
+                        }
+                        ServerMsg::Registered(signed) => {
+                            let ticket = self.accept_ticket(signed)?;
+                            renew_at = Some(renewal_time(&ticket));
+                            if sent_pairs.is_none() {
+                                let pairs = pair_tokens(self.identity.uuid, &tab_list.borrow_and_update());
+                                let msg = ClientMsg::SetPairs(pairs.iter().copied().collect());
+                                wire::write_msg(send, &msg).await?;
+                                sent_pairs = Some(pairs);
+                            }
+                        }
+                        ServerMsg::RetryAfter { secs } => {
+                            return Err(Ended::RetryAfter(Duration::from_secs(secs.into())));
+                        }
+                        ServerMsg::PeerAvailable { ticket, addr } => {
+                            self.inner.peer_available(ticket, addr);
+                        }
+                        ServerMsg::PeerGone(remote) => self.inner.peer_gone(remote),
+                    }
+                }
+                ok = wait_for_join(&mut pending_join), if pending_join.is_some() => {
+                    pending_join = None;
+                    if !ok {
+                        return Err(Ended::AuthFailed("Minecraft session check failed".into()));
+                    }
+                    wire::write_msg(send, &ClientMsg::Joined).await?;
+                }
+                Ok(()) = tab_list.changed(), if sent_pairs.is_some() => {
+                    let pairs = pair_tokens(self.identity.uuid, &tab_list.borrow_and_update());
+                    let sent = sent_pairs.as_mut().expect("guarded by the branch condition");
+                    let added: Vec<PairToken> = pairs.difference(sent).copied().collect();
+                    let removed: Vec<PairToken> = sent.difference(&pairs).copied().collect();
+                    if !removed.is_empty() {
+                        wire::write_msg(send, &ClientMsg::RemovePairs(removed)).await?;
+                    }
+                    if !added.is_empty() {
+                        wire::write_msg(send, &ClientMsg::AddPairs(added)).await?;
+                    }
+                    *sent = pairs;
+                }
+                () = sleep_until(renew_at), if renew_at.is_some() => {
+                    renew_at = None;
+                    wire::write_msg(send, &ClientMsg::Renew).await?;
+                }
+                Ok(addr) = our_addr.updated() => {
+                    wire::write_msg(send, &ClientMsg::UpdateAddr(addr)).await?;
+                }
+                Ok(()) = identity.changed() => return Err(Ended::IdentityChanged),
+            }
+        }
+    }
+
+    /// Checks a ticket from the rendezvous, then caches and adopts it.
+    fn accept_ticket(&mut self, signed: SignedTicket) -> Result<Ticket, Ended> {
+        let ticket = self.verify_own(&signed).map_err(Ended::Failed)?;
+        // Losing the cache only costs a fresh Mojang check next start.
+        let _ = std::fs::write(self.ticket_cache, signed.to_bytes());
+        self.inner.own_ticket.send_replace(Some(signed));
+        self.registered = true;
+        let expires_at = SystemTime::UNIX_EPOCH + Duration::from_secs(ticket.expires_at);
+        report(self.inner, RendezvousState::Registered { expires_at });
+        Ok(ticket)
+    }
+
+    /// Our cached ticket, if it still names us and has enough time left for
+    /// the rendezvous to accept it.
+    fn cached_ticket(&self) -> Option<SignedTicket> {
+        let bytes = std::fs::read(self.ticket_cache).ok()?;
+        let signed = SignedTicket::from_bytes(&bytes).ok()?;
+        let ticket = self.verify_own(&signed).ok()?;
+        (ticket.remaining(SystemTime::now()) > RENEW_WINDOW).then_some(signed)
+    }
+
+    fn verify_own(&self, signed: &SignedTicket) -> Result<Ticket, String> {
+        let verifier = self.inner.trust.lock().unwrap().verifier.clone();
+        let ticket = verifier
+            .verify(signed, SystemTime::now())
+            .map_err(|err| format!("rendezvous sent a bad ticket: {err}"))?;
+        if ticket.endpoint_id != self.inner.endpoint.id() || ticket.uuid != self.identity.uuid {
+            return Err("rendezvous sent a ticket for someone else".into());
+        }
+        Ok(ticket)
+    }
+}
+
+/// Tokens for every pair of us and a tab-list entry.
+fn pair_tokens(me: Uuid, tab_list: &HashSet<Uuid>) -> HashSet<PairToken> {
+    tab_list
+        .iter()
+        .filter(|&&other| other != me)
+        .map(|&other| PairToken::new(me, other))
+        .collect()
+}
+
+/// A random point in the ticket's last [`RENEW_WINDOW`], leaving a little
+/// slack before it actually expires.
+fn renewal_time(ticket: &Ticket) -> Instant {
+    let remaining = ticket.remaining(SystemTime::now());
+    let window = RENEW_WINDOW.min(remaining).mul_f64(0.9);
+    let window_start = remaining.saturating_sub(RENEW_WINDOW);
+    let offset = window.mul_f64(rand::rng().random::<f64>());
+    Instant::now() + window_start + offset
+}
+
+async fn wait_for_join(pending: &mut Option<oneshot::Receiver<bool>>) -> bool {
+    match pending {
+        // A dropped sender means the engine is shutting down.
+        Some(answer) => answer.await.unwrap_or(false),
+        None => std::future::pending().await,
+    }
+}
+
+async fn sleep_until(when: Option<Instant>) {
+    match when {
+        Some(when) => tokio::time::sleep_until(when).await,
+        None => std::future::pending().await,
+    }
+}
+
+fn closed_reason(conn: &Connection) -> Ended {
+    use iroh::endpoint::ConnectionError;
+    match conn.close_reason() {
+        Some(ConnectionError::ApplicationClosed(close))
+            if close.error_code == rdv_close(CloseCode::AuthFailed) =>
+        {
+            Ended::AuthFailed("the rendezvous did not accept the Minecraft session".into())
+        }
+        Some(reason) => Ended::Failed(reason.to_string()),
+        None => Ended::Failed("rendezvous closed the stream".into()),
+    }
+}
+
+fn rdv_close(code: CloseCode) -> iroh::endpoint::VarInt {
+    iroh::endpoint::VarInt::from_u32(code as u32)
+}
+
+/// Exponential backoff with jitter.
+#[derive(Debug)]
+struct Backoff {
+    first: Duration,
+    max: Duration,
+    next: Duration,
+}
+
+impl Backoff {
+    fn new(first: Duration, max: Duration) -> Self {
+        Backoff {
+            first,
+            max,
+            next: first,
+        }
+    }
+
+    fn next(&mut self) -> Duration {
+        let delay = self.next;
+        self.next = (self.next * 2).min(self.max);
+        // ±25 % so clients that failed together don't retry together.
+        delay.mul_f64(rand::rng().random_range(0.75..1.25))
+    }
+
+    fn reset(&mut self) {
+        self.next = self.first;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backoff_doubles_up_to_the_cap_with_jitter() {
+        let mut backoff = Backoff::new(Duration::from_secs(10), Duration::from_secs(600));
+        let delays: Vec<Duration> = (0..10).map(|_| backoff.next()).collect();
+        let nominal = [10, 20, 40, 80, 160, 320, 600, 600, 600, 600];
+        for (delay, nominal) in delays.iter().zip(nominal) {
+            let nominal = Duration::from_secs(nominal);
+            assert!(*delay >= nominal.mul_f64(0.75) && *delay <= nominal.mul_f64(1.25));
+        }
+        backoff.reset();
+        assert!(backoff.next() <= Duration::from_secs(13));
+    }
+}
