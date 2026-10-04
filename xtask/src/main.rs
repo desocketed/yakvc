@@ -285,7 +285,7 @@ fn server_image() -> Result<()> {
     if context.exists() {
         fs::remove_dir_all(&context)?;
     }
-    fs::create_dir_all(&context)?;
+    fs::create_dir_all(context.join("state"))?;
     let binary = root()
         .join("target")
         .join(triple)
