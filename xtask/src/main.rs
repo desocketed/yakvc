@@ -274,7 +274,7 @@ fn dist(from: Option<&Path>) -> Result<()> {
 }
 
 /// Builds a static yakvc-server and the Docker image around it, tagged
-/// `yakvc-server:<version>`.
+/// `yakvc-server:<version>` and `yakvc-server:latest`.
 fn server_image() -> Result<()> {
     let triple = "x86_64-unknown-linux-musl";
     run(cargo()
@@ -296,9 +296,9 @@ fn server_image() -> Result<()> {
 
     let tag = format!("yakvc-server:{VERSION}");
     run(Command::new("docker")
-        .args(["build", "--tag", &tag])
+        .args(["build", "--tag", &tag, "--tag", "yakvc-server:latest"])
         .arg(&context))?;
-    println!("built image {tag}");
+    println!("built image {tag} (also yakvc-server:latest)");
     Ok(())
 }
 
