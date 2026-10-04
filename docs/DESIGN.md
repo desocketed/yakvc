@@ -156,6 +156,17 @@ Each of the seven crates is needed: `yakvc-ffi` must be its own cdylib, `yakvc-t
 - All third-party versions are declared once in root `[workspace.dependencies]`; crates use `dep = { workspace = true }`. Edition, license (`MIT OR Apache-2.0`) and `[workspace.lints]` (`unsafe_code = "deny"` everywhere except `yakvc-ffi`) are inherited the same way.
 - Nothing is published to crates.io: `[workspace.package] publish = false`, inherited by every crate. The crates are internal support code for the shipped artifacts (mod jar, server image, CLI binary), so their APIs can change freely between commits.
 
+## Wire format
+
+All network messages are Rust-to-Rust (Java only talks to the engine through the C ABI), so the encoding is chosen for Rust alone.
+
+- **Control messages** (`rdv/1`, the peer control stream, and each application protocol's control stream) use `postcard`. Each direction of each protocol is one enum (for example `RdvClientMsg` and `RdvServerMsg`). Each message is sent on its QUIC stream as a varint length prefix plus the postcard bytes, capped at 128 KiB, which fits a full `SetPairs` of 2,048 tokens. A message that fails to decode closes the connection with a protocol error.
+- **No in-place schema evolution.** Postcard cannot add a field that old peers ignore, so any wire change is a new protocol version (a new ALPN or application-protocol version; see versioning). Each version lives in its own module, so the server can keep serving old ones during rollouts. Protobuf was considered for additive evolution and rejected: a schema language, code generation and all-optional fields cost more than occasional version bumps with one maintainer-run server.
+- **Tickets are verified over the bytes received.** A ticket travels as `SignedTicket { body: Vec<u8>, sig: [u8; 64] }`, where `body` is a postcard-encoded `TicketBody` and `sig` is ed25519 over `b"yakvc-ticket-v1" ‖ body`. Verifiers check the signature over `body` exactly as received, then decode it, so nothing is ever re-encoded and encoder changes cannot invalidate tickets. The domain tag keeps the signature from being valid for anything else. The disk cache stores the same bytes.
+- **Voice datagrams** use the fixed 10-byte header described in the voice section, parsed by hand, with no serde.
+- **Field conventions:** UUIDs are `[u8; 16]`; EndpointIds and issuer keys are 32-byte ed25519 public keys; times are Unix seconds as `u64`; sets travel as `Vec`s, and wire types contain no `HashMap`s.
+- The FFI event buffer keeps its own TLV layout (see the FFM bridge section); it is a C ABI, not a network format.
+
 ## Identity, discovery and authentication
 
 A client proves its UUID to the rendezvous once with a Mojang session challenge and receives a signed ticket. The rendezvous then matches clients that appear in each other's tab lists, and peers verify each other's tickets directly, with no further Mojang calls.
@@ -176,7 +187,7 @@ A client proves its UUID to the rendezvous once with a Mojang session challenge 
 5. Client derives `server_id = mc_hex_digest(SHA-1("yakvc-auth-v1" ‖ nonce ‖ client_endpoint_id ‖ rendezvous_endpoint_id))` and asks Java to call `MinecraftSessionService.joinServer(uuid, token, server_id)`.
 6. Client sends `Joined`.
 7. Server calls `GET https://sessionserver.mojang.com/session/minecraft/hasJoined?username=<name>&serverId=<server_id>` and requires the returned UUID to equal the claimed one.
-8. Server replies `Ticket { uuid, name, endpoint_id, issued_at, expires_at, issuer, dev, sig }` (ed25519 by the issuer key, 24 h lifetime). Client caches it on disk and renews it once less than 2 h remains, at a random point in that window so renewals don't bunch up.
+8. Server replies with a `SignedTicket` whose body is `TicketBody { uuid, name, endpoint_id, issued_at, expires_at, issuer, dev }`, signed by the issuer key (see wire format), with a 24 h lifetime. Client caches it on disk and renews it once less than 2 h remains, at a random point in that window so renewals don't bunch up.
 
 The `joinServer` call must never happen while the game is logging in to a server: it would replace the game's own pending session join and break the login. The client authenticates at title screen / after login completes, and the cached ticket makes this rare.
 

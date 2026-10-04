@@ -11,9 +11,8 @@ How the implementation is built: milestones from [DESIGN.md](DESIGN.md), worked 
 | Contract pass | Next. Blocked on the open decisions below. |
 | M1–M3 | Planned as one parallel push (see below). |
 
-**Open decisions** (needed before the contract pass):
+**Open decisions** (needed before the contract pass; wire encoding was settled 2026-10-04, see DESIGN.md wire format):
 
-- Wire encoding. Proposed: `postcard` for messages; a fixed byte layout with a domain tag for the signed `Ticket` body, not serde output.
 - Java package. `dev.yakvc` is still a placeholder.
 
 ## Parallel development with consumer-driven contracts
