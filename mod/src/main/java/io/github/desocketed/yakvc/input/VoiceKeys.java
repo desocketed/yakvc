@@ -6,8 +6,8 @@ import net.minecraft.client.KeyMapping;
 import net.minecraft.resources.Identifier;
 
 /**
- * Voice keybinds. Push-to-talk defaults to V, which vanilla doesn't use. Mute and deafen are unbound by default so they
- * don't clash with minimap and utility mods.
+ * Voice keybinds. Push-to-talk defaults to V, which vanilla doesn't use. Mute, deafen and the voice menu are unbound by
+ * default so they don't clash with minimap and utility mods.
  */
 public final class VoiceKeys {
 	/** Holds push-to-talk down for dev and test runs that have no keyboard. */
@@ -16,13 +16,15 @@ public final class VoiceKeys {
 	public final KeyMapping pushToTalk;
 	public final KeyMapping mute;
 	public final KeyMapping deafen;
+	public final KeyMapping openMenu;
 	private boolean muted;
 	private boolean deafened;
 
-	private VoiceKeys(KeyMapping pushToTalk, KeyMapping mute, KeyMapping deafen) {
+	private VoiceKeys(KeyMapping pushToTalk, KeyMapping mute, KeyMapping deafen, KeyMapping openMenu) {
 		this.pushToTalk = pushToTalk;
 		this.mute = mute;
 		this.deafen = deafen;
+		this.openMenu = openMenu;
 	}
 
 	public static VoiceKeys register() {
@@ -33,13 +35,22 @@ public final class VoiceKeys {
 				KeyMappingHelper.registerKeyMapping(
 						new KeyMapping("key.yakvc.mute", InputConstants.UNKNOWN.getValue(), category)),
 				KeyMappingHelper.registerKeyMapping(
-						new KeyMapping("key.yakvc.deafen", InputConstants.UNKNOWN.getValue(), category)));
+						new KeyMapping("key.yakvc.deafen", InputConstants.UNKNOWN.getValue(), category)),
+				KeyMappingHelper.registerKeyMapping(
+						new KeyMapping("key.yakvc.open_menu", InputConstants.UNKNOWN.getValue(), category)));
 	}
 
 	/** Applies mute and deafen presses since the last tick. */
 	public void tick() {
 		while (mute.consumeClick()) muted = !muted;
 		while (deafen.consumeClick()) deafened = !deafened;
+	}
+
+	/** Whether the voice menu key was pressed since the last call. */
+	public boolean menuPressed() {
+		boolean pressed = false;
+		while (openMenu.consumeClick()) pressed = true;
+		return pressed;
 	}
 
 	public boolean pushToTalkDown() {
@@ -52,5 +63,14 @@ public final class VoiceKeys {
 
 	public boolean deafened() {
 		return deafened;
+	}
+
+	/** For the voice menu's buttons. */
+	public void setMuted(boolean muted) {
+		this.muted = muted;
+	}
+
+	public void setDeafened(boolean deafened) {
+		this.deafened = deafened;
 	}
 }
