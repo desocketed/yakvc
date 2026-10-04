@@ -4,6 +4,8 @@ How the implementation is built: milestones from [DESIGN.md](DESIGN.md), worked 
 
 ## Status
 
+Open work, exit checks and decisions are tracked as issues under the milestones on GitHub (`desocketed/yakvc`); this table is the summary.
+
 | Milestone | State |
 | --- | --- |
 | M0 Skeleton | Done. Workspace, crate stubs, xtask (`header`, `natives`), CI, plus a minimal Fabric mod that loads `yakvc-ffi` through FFM (verified in `runClient` on 26.3). A Fabric client gametest (`scripts/gametest-headless.sh`, also in CI) checks that the mod and native engine load and a singleplayer world renders; it passed from a fresh clone 2026-10-04. |
