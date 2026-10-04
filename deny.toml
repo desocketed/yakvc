@@ -1,8 +1,21 @@
 [graph]
 all-features = true
+# The platforms we ship. Leaves out iroh's wasm-only dependencies.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+]
 
 [advisories]
 yanked = "deny"
+ignore = [
+    # paste is unmaintained. It is a build-time proc macro used by the netlink
+    # crates under iroh's netwatch; nothing to fix on our side.
+    "RUSTSEC-2024-0436",
+]
 
 [licenses]
 # Everything we ship is MIT OR Apache-2.0; dependencies must be compatible.
@@ -11,6 +24,8 @@ allow = [
     "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",
     "BSD-3-Clause",
+    # webpki-roots / webpki-root-certs (Mozilla's CA list as data).
+    "CDLA-Permissive-2.0",
     "ISC",
     "MIT",
     "Unicode-3.0",

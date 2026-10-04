@@ -10,7 +10,10 @@ publish.workspace = true
 [dependencies]
 iroh-base.workspace = true
 postcard.workspace = true
+rand.workspace = true
 serde.workspace = true
+sha1.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["io-util"] }
 uuid.workspace = true
