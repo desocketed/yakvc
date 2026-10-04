@@ -100,8 +100,13 @@ impl IssuerKey {
 
     /// Encodes and signs `body`.
     pub fn sign(&self, body: &TicketBody) -> SignedTicket {
-        let _ = body;
-        todo!()
+        let body = postcard::to_stdvec(body).expect("a TicketBody always encodes");
+        let sig = self.0.sign(&signed_message(&body));
+        SignedTicket {
+            issuer: self.id(),
+            body,
+            sig,
+        }
     }
 }
 
@@ -134,8 +139,15 @@ impl TicketBody {
         now: SystemTime,
         lifetime: Duration,
     ) -> Self {
-        let _ = (uuid, name, endpoint_id, now, lifetime);
-        todo!()
+        let issued_at = unix_secs(now);
+        TicketBody {
+            uuid,
+            name,
+            endpoint_id,
+            issued_at,
+            expires_at: issued_at.saturating_add(lifetime.as_secs()),
+            dev: false,
+        }
     }
 }
 
@@ -146,13 +158,12 @@ impl SignedTicket {
 
     /// Encodes for the on-disk ticket cache.
     pub fn to_bytes(&self) -> Vec<u8> {
-        todo!()
+        postcard::to_stdvec(self).expect("a SignedTicket always encodes")
     }
 
     /// Decodes from the on-disk ticket cache. Does not verify.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, WireError> {
-        let _ = bytes;
-        todo!()
+        Ok(postcard::from_bytes(bytes)?)
     }
 }
 
@@ -174,8 +185,7 @@ impl Ticket {
 
     /// Time left before expiry, or zero if already expired.
     pub fn remaining(&self, now: SystemTime) -> Duration {
-        let _ = now;
-        todo!()
+        Duration::from_secs(self.body.expires_at.saturating_sub(unix_secs(now)))
     }
 }
 
@@ -204,7 +214,190 @@ impl TicketVerifier {
 
     /// Checks issuer, signature, expiry and the dev flag, in that order.
     pub fn verify(&self, ticket: &SignedTicket, now: SystemTime) -> Result<Ticket, TicketError> {
-        let _ = (ticket, now, &self.trusted, self.accept_dev);
-        todo!()
+        if !self.trusted.contains(&ticket.issuer) {
+            return Err(TicketError::UntrustedIssuer);
+        }
+        ticket
+            .issuer
+            .0
+            .verify(&signed_message(&ticket.body), &ticket.sig)
+            .map_err(|_| TicketError::BadSignature)?;
+        let body: TicketBody =
+            postcard::from_bytes(&ticket.body).map_err(TicketError::Malformed)?;
+        if body.expires_at <= unix_secs(now) {
+            return Err(TicketError::Expired);
+        }
+        if body.dev && !self.accept_dev {
+            return Err(TicketError::DevTicket);
+        }
+        Ok(Ticket {
+            body,
+            signed: ticket.clone(),
+        })
+    }
+}
+
+/// What the issuer signs: the domain tag, then the body bytes.
+fn signed_message(body: &[u8]) -> Vec<u8> {
+    [SIGNING_CONTEXT, body].concat()
+}
+
+/// Times before 1970 count as 0; they only occur with a broken clock.
+fn unix_secs(time: SystemTime) -> u64 {
+    time.duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const HOUR: Duration = Duration::from_secs(3600);
+
+    fn now() -> SystemTime {
+        SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000)
+    }
+
+    fn body() -> TicketBody {
+        let endpoint_id = SecretKey::from_bytes(&[3; 32]).public();
+        TicketBody::new(
+            Uuid::from_u128(42),
+            "alice".into(),
+            endpoint_id,
+            now(),
+            24 * HOUR,
+        )
+    }
+
+    fn issuer() -> IssuerKey {
+        IssuerKey::from_bytes(&[9; 32])
+    }
+
+    #[test]
+    fn body_times() {
+        let body = body();
+        assert_eq!(body.issued_at, 1_800_000_000);
+        assert_eq!(body.expires_at, 1_800_000_000 + 24 * 3600);
+        assert!(!body.dev);
+    }
+
+    #[test]
+    fn signed_ticket_verifies() {
+        let key = issuer();
+        let signed = key.sign(&body());
+        assert_eq!(signed.issuer(), key.id());
+        let ticket = TicketVerifier::new([key.id()])
+            .verify(&signed, now())
+            .unwrap();
+        assert_eq!(*ticket, body());
+        assert_eq!(ticket.name, "alice");
+        assert_eq!(ticket.signed().to_bytes(), signed.to_bytes());
+        assert_eq!(ticket.remaining(now()), 24 * HOUR);
+        assert_eq!(ticket.remaining(now() + 30 * HOUR), Duration::ZERO);
+    }
+
+    #[test]
+    fn untrusted_issuer() {
+        let signed = IssuerKey::generate().sign(&body());
+        let err = TicketVerifier::new([issuer().id()]).verify(&signed, now());
+        assert!(matches!(err, Err(TicketError::UntrustedIssuer)));
+    }
+
+    #[test]
+    fn tampered_body_or_signature() {
+        let key = issuer();
+        let verifier = TicketVerifier::new([key.id()]);
+
+        let mut signed = key.sign(&body());
+        let last = signed.body.len() - 1;
+        signed.body[last] ^= 1;
+        assert!(matches!(
+            verifier.verify(&signed, now()),
+            Err(TicketError::BadSignature)
+        ));
+
+        let mut signed = key.sign(&body());
+        let mut sig = signed.sig.to_bytes();
+        sig[0] ^= 1;
+        signed.sig = Signature::from_bytes(&sig);
+        assert!(matches!(
+            verifier.verify(&signed, now()),
+            Err(TicketError::BadSignature)
+        ));
+    }
+
+    #[test]
+    fn signature_covers_the_domain_tag() {
+        let key = issuer();
+        let body = postcard::to_stdvec(&body()).unwrap();
+        let signed = SignedTicket {
+            issuer: key.id(),
+            sig: key.0.sign(&body),
+            body,
+        };
+        let err = TicketVerifier::new([key.id()]).verify(&signed, now());
+        assert!(matches!(err, Err(TicketError::BadSignature)));
+    }
+
+    #[test]
+    fn malformed_body() {
+        let key = issuer();
+        let body = vec![0xff; 4];
+        let signed = SignedTicket {
+            issuer: key.id(),
+            sig: key.0.sign(&signed_message(&body)),
+            body,
+        };
+        let err = TicketVerifier::new([key.id()]).verify(&signed, now());
+        assert!(matches!(err, Err(TicketError::Malformed(_))));
+    }
+
+    #[test]
+    fn expired() {
+        let key = issuer();
+        let signed = key.sign(&body());
+        let verifier = TicketVerifier::new([key.id()]);
+        let just_before = now() + 24 * HOUR - Duration::from_secs(1);
+        assert!(verifier.verify(&signed, just_before).is_ok());
+        assert!(matches!(
+            verifier.verify(&signed, now() + 24 * HOUR),
+            Err(TicketError::Expired)
+        ));
+    }
+
+    #[test]
+    fn dev_tickets_need_opt_in() {
+        let key = issuer();
+        let signed = key.sign(&TicketBody {
+            dev: true,
+            ..body()
+        });
+        let verifier = TicketVerifier::new([key.id()]);
+        assert!(matches!(
+            verifier.verify(&signed, now()),
+            Err(TicketError::DevTicket)
+        ));
+        assert!(verifier.accept_dev(true).verify(&signed, now()).is_ok());
+    }
+
+    #[test]
+    fn cache_bytes_round_trip() {
+        let key = issuer();
+        let signed = key.sign(&body());
+        let decoded = SignedTicket::from_bytes(&signed.to_bytes()).unwrap();
+        assert_eq!(decoded.to_bytes(), signed.to_bytes());
+        assert!(
+            TicketVerifier::new([key.id()])
+                .verify(&decoded, now())
+                .is_ok()
+        );
+        assert!(SignedTicket::from_bytes(&[1, 2, 3]).is_err());
+    }
+
+    #[test]
+    fn issuer_id_text_round_trips() {
+        let id = issuer().id();
+        assert_eq!(id.to_string().parse::<IssuerId>().unwrap(), id);
+        assert_eq!(IssuerKey::from_bytes(&issuer().to_bytes()).id(), id);
     }
 }
