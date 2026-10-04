@@ -4571,6 +4571,7 @@ dependencies = [
  "anyhow",
  "clap",
  "serde_json",
+ "tokio",
  "yakvc-audio",
  "yakvc-client",
 ]

@@ -51,6 +51,8 @@ pub const YAKVC_ERR_ABI_MISMATCH: i32 = -2;
 pub const YAKVC_ERR_CONFIG: i32 = -3;
 /// The engine failed to start (key file, network).
 pub const YAKVC_ERR_START: i32 = -4;
+/// `yakvc_list_devices` could not list audio devices. A device that is
+/// missing or fails while the engine runs is a `YAKVC_EVENT_ERROR` instead.
 pub const YAKVC_ERR_AUDIO: i32 = -5;
 /// This call panicked. The engine is now poisoned.
 pub const YAKVC_ERR_PANIC: i32 = -6;
@@ -308,6 +310,29 @@ pub unsafe extern "C" fn yakvc_set_game_volume(engine: *mut YakVcEngine, volume:
                 )));
             }
             e.engine.set_game_volume(volume);
+            Ok(())
+        })
+    }
+}
+
+/// The name of the game's selected sound device; null or zero length means
+/// the system default. Voice output follows the closest-named device unless
+/// `audio.output_device` is set.
+///
+/// # Safety
+/// `engine` must be live; `name` must be readable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn yakvc_set_game_device(
+    engine: *mut YakVcEngine,
+    name: *const u8,
+    len: usize,
+) -> i32 {
+    // SAFETY: the caller guarantees `engine` is live.
+    unsafe {
+        with_engine(engine, |e| {
+            // SAFETY: the caller guarantees `name` is readable.
+            let name = str_arg(name, len, "name")?;
+            e.engine.set_game_device((!name.is_empty()).then_some(name));
             Ok(())
         })
     }

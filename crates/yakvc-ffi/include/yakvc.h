@@ -35,6 +35,10 @@
  */
 #define YAKVC_ERR_START -4
 
+/**
+ * `yakvc_list_devices` could not list audio devices. A device that is
+ * missing or fails while the engine runs is a `YAKVC_EVENT_ERROR` instead.
+ */
 #define YAKVC_ERR_AUDIO -5
 
 /**
@@ -173,6 +177,16 @@ int32_t yakvc_set_input(struct YakVcEngine *engine, uint32_t flags);
  * `engine` must be live.
  */
 int32_t yakvc_set_game_volume(struct YakVcEngine *engine, float volume);
+
+/**
+ * The name of the game's selected sound device; null or zero length means
+ * the system default. Voice output follows the closest-named device unless
+ * `audio.output_device` is set.
+ *
+ * # Safety
+ * `engine` must be live; `name` must be readable.
+ */
+int32_t yakvc_set_game_device(struct YakVcEngine *engine, const uint8_t *name, size_t len);
 
 /**
  * # Safety
