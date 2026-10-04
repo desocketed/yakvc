@@ -198,7 +198,8 @@ impl ServerBuilder {
         self
     }
 
-    /// Mojang session server to verify against. Defaults to Mojang's.
+    /// Mojang session server to verify against. Defaults to Mojang's, with
+    /// the URL taken from Mojang's discovery document.
     pub fn session_server(mut self, server: SessionServer) -> Self {
         self.session_server = Some(server);
         self
@@ -263,6 +264,10 @@ impl ServerBuilder {
         } else {
             Some(self.session_server.unwrap_or_default())
         };
+        let mut tasks = JoinSet::new();
+        if let Some(mojang) = &mojang {
+            tasks.spawn(mojang.clone().discovery_loop());
+        }
         let minute = Duration::from_secs(60);
         let shared = Arc::new(Shared {
             auth: Auth::new(self.issuer_key, self.ticket_lifetime, mojang, endpoint_id),
@@ -277,7 +282,6 @@ impl ServerBuilder {
             metrics: Metrics::default(),
         });
 
-        let mut tasks = JoinSet::new();
         tasks.spawn(accept_loop(endpoint.clone(), shared.clone()));
         tasks.spawn(prune_loop(shared.clone()));
         if let Some(addr) = self.metrics {
