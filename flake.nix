@@ -28,6 +28,10 @@
             zig
             cmake
             pkg-config
+            # GitHub CLI and JSON tooling, from the Nix store so they survive
+            # container restarts.
+            gh
+            jq
           ] ++ lib.optionals stdenv.hostPlatform.isLinux [ alsa-lib ];
           JAVA_HOME = pkgs.jdk25.home;
         };
