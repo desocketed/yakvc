@@ -12,7 +12,7 @@ use crate::config::{Config, ConfigError};
 use crate::event::{self, Event, Events, JoinId, PeerState, RendezvousState};
 use crate::net::{Identity, Net, Trust};
 use crate::voice::{AudioIo, Voice};
-use crate::world::{Input, World};
+use crate::world::{Input, World, distance};
 
 /// A running voice engine. Dropping it shuts down gracefully, waiting at most
 /// 500 ms.
@@ -22,6 +22,9 @@ pub struct Engine {
     voice: Voice,
     /// Taken on drop to shut it down.
     runtime: Option<Runtime>,
+    /// A relay is configured. Without one there is nothing to measure the
+    /// network against.
+    has_relay: bool,
 }
 
 /// Configures an [`Engine`] before starting it.
@@ -64,10 +67,68 @@ pub struct NetReport {
     pub relay_latency: Vec<(yakvc_shared::RelayUrl, Duration)>,
 }
 
+impl NetReport {
+    fn from_iroh(report: Option<iroh::unstable_net_report::NetReport>) -> NetReport {
+        let Some(report) = report else {
+            return NetReport {
+                udp_v4: false,
+                udp_v6: false,
+                public_v4: None,
+                public_v6: None,
+                symmetric_nat: None,
+                relay_latency: Vec::new(),
+            };
+        };
+        // Iroh measures each relay several ways; keep the fastest.
+        let mut relay_latency: Vec<(yakvc_shared::RelayUrl, Duration)> = Vec::new();
+        for (_, url, latency) in report.relay_latency.iter() {
+            match relay_latency.iter_mut().find(|(known, _)| known == url) {
+                Some((_, best)) => *best = (*best).min(latency),
+                None => relay_latency.push((url.clone(), latency)),
+            }
+        }
+        NetReport {
+            udp_v4: report.udp_v4,
+            udp_v6: report.udp_v6,
+            public_v4: report.global_v4,
+            public_v6: report.global_v6,
+            symmetric_nat: report.mapping_varies_by_dest(),
+            relay_latency,
+        }
+    }
+}
+
 impl std::fmt::Display for NetReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let _ = f;
-        todo!()
+        let yes_no = |b: bool| if b { "yes" } else { "no" };
+        let addr = |a: Option<String>| a.unwrap_or_else(|| "unknown".to_owned());
+        writeln!(f, "UDP over IPv4: {}", yes_no(self.udp_v4))?;
+        writeln!(f, "UDP over IPv6: {}", yes_no(self.udp_v6))?;
+        writeln!(
+            f,
+            "Public IPv4:   {}",
+            addr(self.public_v4.map(|a| a.to_string()))
+        )?;
+        writeln!(
+            f,
+            "Public IPv6:   {}",
+            addr(self.public_v6.map(|a| a.to_string()))
+        )?;
+        let nat = match self.symmetric_nat {
+            Some(true) => "symmetric (peers will likely go through the relay)",
+            Some(false) => "not symmetric",
+            None => "unknown (needs two relays to tell)",
+        };
+        writeln!(f, "NAT:           {nat}")?;
+        if self.relay_latency.is_empty() {
+            write!(f, "Relays:        none reached")?;
+        } else {
+            write!(f, "Relays:")?;
+            for (url, latency) in &self.relay_latency {
+                write!(f, "\n  {url}  {} ms", latency.as_millis())?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -126,6 +187,12 @@ impl Engine {
 
     /// Pushes this tick's world snapshot.
     pub fn set_world(&self, world: World) {
+        let distances = world
+            .players
+            .iter()
+            .map(|&(uuid, pos)| (uuid, distance(world.listener.pos, pos)))
+            .collect();
+        self.net.set_tracked(&distances);
         self.voice.set_world(world);
     }
 
@@ -142,13 +209,16 @@ impl Engine {
     /// default). Output follows the closest-named device unless
     /// `audio.output_device` overrides it.
     pub fn set_game_device(&self, name: Option<&str>) {
-        todo!("{name:?}")
+        self.voice.set_game_device(name);
     }
 
     /// Measures how this machine reaches the network, for bug reports
     /// (`yakvc net report`). Takes a few seconds.
     pub async fn net_report(&self) -> NetReport {
-        todo!()
+        if !self.has_relay {
+            return NetReport::from_iroh(None);
+        }
+        NetReport::from_iroh(self.net.net_report().await)
     }
 
     pub fn set_peer_audio(&self, uuid: Uuid, audio: PeerAudio) {
@@ -196,9 +266,11 @@ impl Engine {
                 DIRECT_CALL_TICKET_LIFETIME,
             )
         };
-        self.set_identity(uuid, name);
+        // First, so the rendezvous is stopped before an identity would
+        // start authentication.
         self.net
             .enable_direct_calls(IssuerKey::generate().sign(&body));
+        self.set_identity(uuid, name);
         self.voice.set_direct(true);
     }
 
@@ -303,6 +375,10 @@ impl EngineBuilder {
             net,
             voice,
             runtime: Some(runtime),
+            has_relay: config
+                .rendezvous
+                .as_ref()
+                .is_some_and(|r| r.relay.is_some()),
         };
         Ok((engine, events))
     }
@@ -393,6 +469,7 @@ mod tests {
     use yakvc_audio::{NullSink, Recording, ToneSource};
 
     use super::*;
+    use crate::config::RendezvousConfig;
     use crate::net::test_util::{eventually, uuid};
     use crate::world::{Pose, Vec3};
 
@@ -598,6 +675,113 @@ mod tests {
             ..Input::default()
         });
         bob.stays_silent().await;
+    }
+
+    /// A plain-HTTP relay on loopback that admits everyone.
+    async fn relay() -> (iroh_relay::server::Server, yakvc_shared::RelayUrl) {
+        use iroh_relay::server::{RelayConfig, Server, ServerConfig};
+        let mut config = ServerConfig::default();
+        config.relay = Some(RelayConfig::new(([127, 0, 0, 1], 0)));
+        let server = Server::spawn(config).await.unwrap();
+        let url = format!("http://{}", server.http_addr().unwrap());
+        (server, url.parse().unwrap())
+    }
+
+    /// Config that uses `relay`. There is no rendezvous behind it, which a
+    /// direct call doesn't need.
+    fn relay_config(relay: &yakvc_shared::RelayUrl, relay_only: bool) -> Config {
+        Config {
+            rendezvous: Some(RendezvousConfig {
+                endpoint_id: SecretKey::generate().public(),
+                addrs: Vec::new(),
+                relay: Some(relay.clone()),
+            }),
+            relay_only,
+            ..Config::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn direct_calls_stop_the_rendezvous() {
+        let (_relay, url) = relay().await;
+        let (engine, mut events) = Engine::builder(relay_config(&url, false))
+            .data_dir(data_dir("direct-no-rdv"))
+            .audio_source(ToneSource::new(440.0))
+            .audio_sink(NullSink::new().0)
+            .start()
+            .unwrap();
+        engine.enable_direct_calls(uuid(1), "alice");
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        while let Some(event) = events.try_next() {
+            assert!(
+                !matches!(event, Event::Rendezvous(_) | Event::JoinRequest { .. }),
+                "{event:?}"
+            );
+        }
+    }
+
+    /// The M2 fallback: with no UDP path, a call made with the public
+    /// direct-call API goes through the relay.
+    #[tokio::test]
+    async fn direct_call_without_udp_goes_through_the_relay() {
+        let (_relay, url) = relay().await;
+        let relayed_player = |n: u8, name: &str| {
+            let (sink, recording) = NullSink::new();
+            let builder = Engine::builder(relay_config(&url, true))
+                .data_dir(data_dir(name))
+                .audio_source(ToneSource::new(220.0 * f32::from(n)))
+                .audio_sink(sink);
+            start_player(builder, n, name, recording)
+        };
+        let mut alice = relayed_player(1, "relay-alice");
+        let mut bob = relayed_player(2, "relay-bob");
+        eventually("alice to be on the relay", || {
+            alice.engine.endpoint_addr().relay_urls().next().is_some()
+        })
+        .await;
+
+        bob.engine.call(alice.engine.endpoint_addr());
+        alice.wait_for_peer(uuid(2), PeerState::Relayed).await;
+        bob.wait_for_peer(uuid(1), PeerState::Relayed).await;
+        alice.talk(true);
+        bob.hears().await;
+    }
+
+    #[tokio::test]
+    async fn net_report_measures_the_relay() {
+        let (_relay, url) = relay().await;
+        let (engine, _events) = Engine::builder(relay_config(&url, false))
+            .data_dir(data_dir("net-report"))
+            .audio_source(ToneSource::new(440.0))
+            .audio_sink(NullSink::new().0)
+            .start()
+            .unwrap();
+        let report = engine.net_report().await;
+        assert_eq!(
+            report
+                .relay_latency
+                .iter()
+                .map(|(url, _)| url)
+                .collect::<Vec<_>>(),
+            vec![&url],
+            "{report}"
+        );
+        assert!(report.to_string().contains(url.as_str()), "{report}");
+    }
+
+    #[tokio::test]
+    async fn net_report_without_a_relay_is_empty() {
+        let (engine, _events) = Engine::builder(Config::default())
+            .data_dir(data_dir("net-report-none"))
+            .audio_source(ToneSource::new(440.0))
+            .audio_sink(NullSink::new().0)
+            .start()
+            .unwrap();
+        let report = tokio::time::timeout(Duration::from_secs(1), engine.net_report())
+            .await
+            .expect("no waiting without a relay");
+        assert!(report.relay_latency.is_empty());
+        assert!(report.to_string().contains("none reached"), "{report}");
     }
 
     #[cfg(feature = "sim")]
