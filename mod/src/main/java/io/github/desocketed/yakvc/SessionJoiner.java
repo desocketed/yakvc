@@ -51,6 +51,7 @@ public final class SessionJoiner {
 		}
 		try {
 			mojang.joinServer(serverId);
+			YakVcClient.LOGGER.info("Voice sign-in: joined the Mojang session");
 			return true;
 		} catch (AuthenticationException e) {
 			// Covers an unreachable session server and invalid or expired credentials alike.
