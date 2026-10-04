@@ -209,7 +209,14 @@ impl Session<'_> {
                             }
                         }
                         ServerMsg::RetryAfter { secs } => {
-                            return Err(Ended::RetryAfter(Duration::from_secs(secs.into())));
+                            let delay = Duration::from_secs(secs.into());
+                            if !self.registered {
+                                // The rendezvous closes the connection next.
+                                return Err(Ended::RetryAfter(delay));
+                            }
+                            // A refused renewal: the session and the current
+                            // ticket stay valid, so just renew again later.
+                            renew_at = Some(Instant::now() + delay);
                         }
                         ServerMsg::PeerAvailable { ticket, addr } => {
                             self.inner.peer_available(ticket, addr);
@@ -241,7 +248,9 @@ impl Session<'_> {
                     renew_at = None;
                     wire::write_msg(send, &ClientMsg::Renew).await?;
                 }
-                Ok(addr) = our_addr.updated() => {
+                // Before registration the rendezvous only accepts the
+                // challenge reply; the Hello already carried our address.
+                Ok(addr) = our_addr.updated(), if self.registered => {
                     wire::write_msg(send, &ClientMsg::UpdateAddr(addr)).await?;
                 }
                 Ok(()) = identity.changed() => return Err(Ended::IdentityChanged),

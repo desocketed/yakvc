@@ -546,8 +546,326 @@ impl FloodGuard {
 }
 
 #[cfg(test)]
-pub(super) mod tests {
+mod tests {
+    use std::collections::HashSet;
+
+    use iroh::endpoint::{ConnectionError, VarInt};
+    use yakvc_shared::{IssuerKey, TicketVerifier};
+
+    use super::super::test_util::{
+        connect, eventually, loopback_addr, loopback_endpoint, probe, ticket, uuid,
+    };
     use super::*;
+    use crate::event::{self, Event, Events, PeerState};
+    use crate::net::{Identity, Net, Trust};
+
+    fn status(uuid: Uuid) -> (Arc<PeerStatus>, Events) {
+        let (events, rx) = event::channel();
+        let status = PeerStatus {
+            uuid,
+            events,
+            flags: Default::default(),
+        };
+        (Arc::new(status), rx)
+    }
+
+    fn closed_with(reason: ConnectionError, code: CloseCode) -> bool {
+        matches!(reason, ConnectionError::ApplicationClosed(close)
+            if close.error_code == VarInt::from_u32(code as u32))
+    }
+
+    #[tokio::test]
+    async fn datagrams_and_control_streams_reach_the_named_protocol() {
+        let (a, b) = (loopback_endpoint().await, loopback_endpoint().await);
+        let (conn_a, conn_b) = connect(&a, &b).await;
+        let (voice_a, mut voice_links_a) = probe(1, 1);
+        let (other_a, mut other_links_a) = probe(2, 1);
+        let (voice_b, mut voice_links_b) = probe(1, 1);
+        let (other_b, mut other_links_b) = probe(2, 1);
+        let (status_a, _events_a) = status(uuid(2));
+        let (status_b, _events_b) = status(uuid(1));
+        let bans = Bans::default();
+        let agreed_a = vec![(voice_a, 1), (other_a, 3)];
+        let agreed_b = vec![(voice_b, 1), (other_b, 3)];
+        let (_tasks_a, _tasks_b) = tokio::join!(
+            start_protocols(&conn_a, true, &agreed_a, &status_a, &bans),
+            start_protocols(&conn_b, false, &agreed_b, &status_b, &bans),
+        );
+        let mut voice_a = voice_links_a.recv().await.unwrap();
+        let mut other_a = other_links_a.recv().await.unwrap();
+        let mut voice_b = voice_links_b.recv().await.unwrap();
+        let mut other_b = other_links_b.recv().await.unwrap();
+        assert_eq!(voice_b.peer.uuid(), uuid(1));
+        assert_eq!(other_b.peer.version(), 3);
+
+        voice_a.peer.send_datagram(b"voice").unwrap();
+        other_a.peer.send_datagram(b"other").unwrap();
+        assert_eq!(&voice_b.datagrams.recv().await.unwrap()[..], b"voice");
+        assert_eq!(&other_b.datagrams.recv().await.unwrap()[..], b"other");
+
+        // Unknown protocols and oversized datagrams are dropped.
+        conn_a
+            .send_datagram(Bytes::from_static(&[9, 1, 2, 3]))
+            .unwrap();
+        conn_a.send_datagram(Bytes::from(vec![1; 402])).unwrap();
+        voice_a.peer.send_datagram(b"after").unwrap();
+        assert_eq!(&voice_b.datagrams.recv().await.unwrap()[..], b"after");
+
+        // Control streams pair up by protocol, in both directions.
+        let mut byte = [0u8; 1];
+        voice_a.control_send.0.write_all(b"v").await.unwrap();
+        voice_b.control_recv.0.read_exact(&mut byte).await.unwrap();
+        assert_eq!(&byte, b"v");
+        other_b.control_send.0.write_all(b"o").await.unwrap();
+        other_a.control_recv.0.read_exact(&mut byte).await.unwrap();
+        assert_eq!(&byte, b"o");
+
+        // Closing the connection ends every protocol's datagram stream.
+        conn_a.close(VarInt::from_u32(0), b"");
+        assert_eq!(voice_b.datagrams.recv().await, None);
+        assert_eq!(other_b.datagrams.recv().await, None);
+    }
+
+    /// A [`Net`] on a loopback endpoint, with no protocols.
+    async fn net_without_handshake() -> (Net, Events) {
+        let (events_tx, events) = event::channel();
+        let trust = Trust {
+            verifier: TicketVerifier::new([]),
+            direct_calls: false,
+        };
+        let net = Net::new(loopback_endpoint().await, vec![], trust, events_tx);
+        (net, events)
+    }
+
+    #[tokio::test]
+    async fn duplicate_connections_keep_the_one_dialed_by_the_lower_id() {
+        let (net, mut events) = net_without_handshake().await;
+        let inner = net.inner();
+        let a = &inner.endpoint;
+        let b = loopback_endpoint().await;
+        let a_is_lower = a.id() < b.id();
+        let (first, first_b) = connect(a, &b).await;
+        let (second, second_b) = connect(a, &b).await;
+
+        // Pretend the first was dialed by the lower id and the second wasn't.
+        assert!(register(inner, &first, a_is_lower, uuid(2), "bob").is_some());
+        assert!(register(inner, &second, !a_is_lower, uuid(2), "bob").is_none());
+        assert_eq!(
+            events.try_next(),
+            Some(Event::Peer {
+                uuid: uuid(2),
+                state: PeerState::Direct
+            })
+        );
+        assert!(first.close_reason().is_none());
+        drop((second, second_b));
+
+        // A newer connection that was also dialed by the lower id replaces
+        // the old one, which is closed as a duplicate.
+        let (third, _third_b) = connect(a, &b).await;
+        assert!(register(inner, &third, a_is_lower, uuid(2), "bob").is_some());
+        assert!(closed_with(first_b.closed().await, CloseCode::Duplicate));
+
+        // The stale connection ending doesn't remove the peer; the current
+        // one ending does.
+        unregister(inner, b.id(), &first);
+        assert_eq!(net.peers().len(), 1);
+        unregister(inner, b.id(), &third);
+        assert!(net.peers().is_empty());
+        assert_eq!(
+            events.try_next(),
+            Some(Event::Peer {
+                uuid: uuid(2),
+                state: PeerState::Gone
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn leaving_the_tab_list_closes_the_connection() {
+        let (net, _events) = net_without_handshake().await;
+        let inner = net.inner();
+        let b = loopback_endpoint().await;
+        let (conn, conn_b) = connect(&inner.endpoint, &b).await;
+        net.set_tab_list(HashSet::from([uuid(2)]));
+        register(inner, &conn, true, uuid(2), "bob").unwrap();
+
+        net.set_tab_list(HashSet::from([uuid(3)]));
+        assert!(closed_with(conn_b.closed().await, CloseCode::NotVisible));
+    }
+
+    #[tokio::test]
+    async fn peer_gone_closes_and_reports() {
+        let (net, mut events) = net_without_handshake().await;
+        let inner = net.inner();
+        let b = loopback_endpoint().await;
+        let (conn, conn_b) = connect(&inner.endpoint, &b).await;
+        register(inner, &conn, true, uuid(2), "bob").unwrap();
+        let _connected = events.try_next();
+
+        inner.peer_gone(b.id());
+        assert!(closed_with(conn_b.closed().await, CloseCode::Normal));
+        assert_eq!(
+            events.try_next(),
+            Some(Event::Peer {
+                uuid: uuid(2),
+                state: PeerState::Gone
+            })
+        );
+    }
+
+    /// One side of a handshake test: a [`Net`] with a probe protocol, an
+    /// identity and a ticket from `issuer`, trusting `trusted`.
+    struct Side {
+        net: Net,
+        events: Events,
+        _links: tokio::sync::mpsc::UnboundedReceiver<PeerLink>,
+    }
+
+    async fn side(n: u8, issuer: &IssuerKey, trusted: &IssuerKey) -> Side {
+        let endpoint = loopback_endpoint().await;
+        let (events_tx, events) = event::channel();
+        let (probe, links) = probe(1, 1);
+        let trust = Trust {
+            verifier: TicketVerifier::new([trusted.id()]),
+            direct_calls: false,
+        };
+        let net = Net::new(endpoint.clone(), vec![probe], trust, events_tx);
+        net.set_identity(Identity {
+            uuid: uuid(n),
+            name: format!("player{n}"),
+        });
+        let own = ticket(issuer, uuid(n), &endpoint);
+        net.inner().own_ticket.send_replace(Some(own));
+        Side {
+            net,
+            events,
+            _links: links,
+        }
+    }
+
+    impl Side {
+        fn sees(&self, players: &[u8]) {
+            self.net
+                .set_tab_list(players.iter().map(|&n| uuid(n)).collect());
+        }
+
+        fn addr(&self) -> EndpointAddr {
+            loopback_addr(&self.net.inner().endpoint)
+        }
+
+        async fn dial(&self, to: &Side) -> Result<(), SetupError> {
+            dial(self.net.inner(), to.addr()).await
+        }
+
+        async fn next_peer_state(&mut self) -> (Uuid, PeerState) {
+            let next = async {
+                loop {
+                    if let Some(Event::Peer { uuid, state }) = self.events.next().await {
+                        return (uuid, state);
+                    }
+                }
+            };
+            tokio::time::timeout(Duration::from_secs(5), next)
+                .await
+                .expect("no peer event")
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "needs yakvc-shared tickets and framing (round 1)"]
+    async fn peers_with_trusted_tickets_connect() {
+        let issuer = IssuerKey::generate();
+        let mut alice = side(1, &issuer, &issuer).await;
+        let mut bob = side(2, &issuer, &issuer).await;
+        alice.sees(&[2]);
+        bob.sees(&[1]);
+
+        alice.dial(&bob).await.unwrap();
+        assert_eq!(alice.next_peer_state().await, (uuid(2), PeerState::Direct));
+        assert_eq!(bob.next_peer_state().await, (uuid(1), PeerState::Direct));
+        eventually("both sides list the peer", || {
+            alice.net.peers().len() == 1 && bob.net.peers().len() == 1
+        })
+        .await;
+        assert_eq!(alice.net.peers()[0].name, "player2");
+    }
+
+    #[tokio::test]
+    #[ignore = "needs yakvc-shared tickets and framing (round 1)"]
+    async fn untrusted_issuer_is_rejected() {
+        let issuer = IssuerKey::generate();
+        let rogue = IssuerKey::generate();
+        let alice = side(1, &issuer, &issuer).await;
+        let bob = side(2, &rogue, &issuer).await;
+        alice.sees(&[2]);
+        bob.sees(&[1]);
+
+        let result = alice.dial(&bob).await;
+        assert!(matches!(
+            result,
+            Err(SetupError::Rejected(CloseCode::BadTicket))
+        ));
+        assert!(alice.net.peers().is_empty());
+    }
+
+    #[tokio::test]
+    #[ignore = "needs yakvc-shared tickets and framing (round 1)"]
+    async fn ticket_for_another_endpoint_is_rejected() {
+        let issuer = IssuerKey::generate();
+        let alice = side(1, &issuer, &issuer).await;
+        let bob = side(2, &issuer, &issuer).await;
+        // Bob presents a valid ticket that names someone else's endpoint.
+        let stolen = ticket(&issuer, uuid(2), &loopback_endpoint().await);
+        bob.net.inner().own_ticket.send_replace(Some(stolen));
+        alice.sees(&[2]);
+        bob.sees(&[1]);
+
+        let result = alice.dial(&bob).await;
+        assert!(matches!(
+            result,
+            Err(SetupError::Rejected(CloseCode::BadTicket))
+        ));
+    }
+
+    #[tokio::test]
+    #[ignore = "needs yakvc-shared tickets and framing (round 1)"]
+    async fn peer_outside_the_tab_list_is_rejected() {
+        let issuer = IssuerKey::generate();
+        let alice = side(1, &issuer, &issuer).await;
+        let bob = side(2, &issuer, &issuer).await;
+        alice.sees(&[3]);
+        bob.sees(&[1]);
+
+        let result = alice.dial(&bob).await;
+        assert!(matches!(
+            result,
+            Err(SetupError::Rejected(CloseCode::NotVisible))
+        ));
+    }
+
+    #[tokio::test]
+    #[ignore = "needs yakvc-shared tickets and framing (round 1)"]
+    async fn the_accepting_side_checks_too() {
+        let issuer = IssuerKey::generate();
+        let alice = side(1, &issuer, &issuer).await;
+        let mut bob = side(2, &issuer, &issuer).await;
+        alice.sees(&[2]);
+        // Bob can't see Alice, so he closes the connection Alice opened.
+        bob.sees(&[3]);
+
+        let _ = alice.dial(&bob).await;
+        eventually("alice drops the connection", || {
+            alice
+                .net
+                .peers()
+                .iter()
+                .all(|peer| peer.state != PeerState::Direct)
+        })
+        .await;
+        let no_event = tokio::time::timeout(Duration::from_millis(300), bob.next_peer_state());
+        assert!(no_event.await.is_err(), "bob never accepted alice");
+    }
 
     #[test]
     fn flood_guard_drops_oversized_and_excess_datagrams() {

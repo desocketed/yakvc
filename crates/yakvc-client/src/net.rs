@@ -10,6 +10,8 @@
 
 mod peer;
 mod rendezvous;
+#[cfg(test)]
+pub(crate) mod test_util;
 
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -365,6 +367,11 @@ impl Net {
     fn inner(&self) -> &Arc<Inner> {
         &self.inner
     }
+
+    #[cfg(test)]
+    pub(crate) fn loopback_addr(&self) -> EndpointAddr {
+        test_util::loopback_addr(&self.inner.endpoint)
+    }
 }
 
 impl Inner {
@@ -602,5 +609,76 @@ impl std::fmt::Debug for Inner {
         f.debug_struct("Net")
             .field("id", &self.endpoint.id())
             .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use iroh::SecretKey;
+    use yakvc_shared::TicketBody;
+
+    use super::test_util::uuid;
+    use super::*;
+
+    fn body(uuid: Uuid, endpoint: EndpointId) -> TicketBody {
+        TicketBody {
+            uuid,
+            name: "bob".into(),
+            endpoint_id: endpoint,
+            issued_at: 0,
+            expires_at: u64::MAX,
+            dev: false,
+        }
+    }
+
+    #[test]
+    fn peer_checks_follow_the_handshake_rules() {
+        let remote = SecretKey::generate().public();
+        let other = SecretKey::generate().public();
+        let me = Some(uuid(1));
+        let tab_list = HashSet::from([uuid(1), uuid(2)]);
+        let check = |body: &TicketBody, direct| check_peer(body, remote, me, &tab_list, direct);
+
+        assert_eq!(check(&body(uuid(2), remote), false), Ok(()));
+        assert_eq!(
+            check(&body(uuid(2), other), false),
+            Err(CloseCode::BadTicket),
+            "ticket names another endpoint"
+        );
+        assert_eq!(
+            check(&body(uuid(1), remote), false),
+            Err(CloseCode::BadTicket),
+            "claims to be us"
+        );
+        assert_eq!(
+            check(&body(uuid(3), remote), false),
+            Err(CloseCode::NotVisible),
+            "not in our tab list"
+        );
+        assert_eq!(check(&body(uuid(3), remote), true), Ok(()), "direct call");
+        assert_eq!(
+            check(&body(uuid(3), other), true),
+            Err(CloseCode::BadTicket),
+            "direct calls still bind the endpoint"
+        );
+    }
+
+    #[test]
+    fn peer_state_combines_connection_and_path() {
+        let state = |connected, failed, relayed, relay_full| {
+            StatusFlags {
+                connected,
+                failed,
+                relayed,
+                relay_full,
+                reported: None,
+            }
+            .state()
+        };
+        assert_eq!(state(false, false, false, false), PeerState::Connecting);
+        assert_eq!(state(false, true, false, false), PeerState::Failed);
+        assert_eq!(state(true, false, false, true), PeerState::Direct);
+        assert_eq!(state(true, false, true, false), PeerState::Relayed);
+        assert_eq!(state(true, false, true, true), PeerState::RelayFull);
     }
 }
