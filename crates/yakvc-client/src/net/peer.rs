@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use bytes::Bytes;
-use iroh::endpoint::{Connection, RecvStream, SendStream};
+use iroh::endpoint::{Connection, ConnectionError, RecvStream, SendStream};
 use iroh::{EndpointAddr, EndpointId};
 use tokio::sync::mpsc;
 use tokio::task::JoinSet;
@@ -61,8 +61,16 @@ pub(super) async fn accept_loop(inner: Arc<Inner>) {
         let inner = inner.clone();
         tokio::spawn(async move {
             let Ok(conn) = incoming.await else { return };
-            if conn.alpn() != ALPN || inner.is_banned(conn.remote_id()) {
+            let remote = conn.remote_id();
+            if conn.alpn() != ALPN || inner.is_banned(remote) {
                 close(&conn, CloseCode::ProtocolError);
+                return;
+            }
+            // At the cap, only a peer that outranks an open one gets in (and
+            // the worst one is then evicted). Refusing others also stops a
+            // peer we evicted from coming straight back.
+            if connected_count(&inner) >= MAX_PEERS && !inner.wants(remote) {
+                close(&conn, CloseCode::Normal);
                 return;
             }
             match setup(&inner, &conn, false).await {
@@ -78,7 +86,7 @@ pub(super) async fn accept_loop(inner: Arc<Inner>) {
 /// aborted when the rendezvous sends `PeerGone`.
 pub(super) async fn keep_connected(inner: Arc<Inner>, remote: EndpointId) {
     loop {
-        let (addr, open_conn, retry_after, uuid) = {
+        let (addr, open_conn, retry_after) = {
             let peers = inner.peers.lock().unwrap();
             let Some(entry) = peers.get(&remote) else {
                 return;
@@ -87,7 +95,6 @@ pub(super) async fn keep_connected(inner: Arc<Inner>, remote: EndpointId) {
                 entry.addr.clone(),
                 entry.open_conn().cloned(),
                 entry.retry_after,
-                entry.uuid,
             )
         };
         let Some(addr) = addr else { return };
@@ -101,8 +108,10 @@ pub(super) async fn keep_connected(inner: Arc<Inner>, remote: EndpointId) {
             tokio::time::sleep_until(when).await;
             continue;
         }
-        // Only dial players we can see, and stay under the connection cap.
-        if !inner.tab_list.borrow().contains(&uuid) || connected_count(&inner) >= MAX_PEERS {
+        // Only dial players we can see that rank among the best MAX_PEERS,
+        // so nearer players get connections first. A peer evicted at the cap
+        // is dialed again once it ranks high enough, e.g. when tracked again.
+        if !inner.wants(remote) {
             tokio::time::sleep(Duration::from_secs(1)).await;
             continue;
         }
@@ -140,6 +149,17 @@ pub(super) async fn dial(inner: &Arc<Inner>, addr: EndpointAddr) -> Result<(), S
 async fn setup(inner: &Arc<Inner>, conn: &Connection, dialed: bool) -> Result<Hello, SetupError> {
     let result = match tokio::time::timeout(HANDSHAKE_TIMEOUT, handshake(inner, conn, dialed)).await
     {
+        // The peer closing the connection during the handshake means it
+        // refused us (bad ticket, not visible, at its cap), which is retried
+        // only after a while.
+        Ok(Err(SetupError::Connection(_)))
+            if matches!(
+                conn.close_reason(),
+                Some(ConnectionError::ApplicationClosed(_))
+            ) =>
+        {
+            Err(SetupError::Rejected(CloseCode::Normal))
+        }
         Ok(result) => result,
         Err(_) => Err(SetupError::TimedOut),
     };
