@@ -23,7 +23,7 @@ Yak VC is a client-only Fabric mod that gives players on any online-mode vanilla
 - Voice traffic is peer-to-peer when NAT allows, relayed (still end-to-end encrypted) when it does not.
 - Peers are cryptographically bound to their Minecraft UUID; impersonation is not possible without the victim's Mojang session.
 - All networking, crypto, codec and audio logic lives in Rust; Java is a thin game-integration layer.
-- A headless CLI can do everything the mod can, so the core is testable without launching Minecraft.
+- The core is testable without launching Minecraft: `yakvc-testkit` runs whole networks in-process, and a small CLI covers what automated tests can't (real audio hardware, real NATs).
 
 **Non-goals (v1)**
 
@@ -98,7 +98,7 @@ minecraft-p2p-vc/
 │   ├── yakvc-audio/        # lib: capture, playback, Opus, jitter buffer, spatial mixer
 │   ├── yakvc-client/       # lib: the voice engine (Iroh endpoint, peers, rendezvous session)
 │   ├── yakvc-ffi/          # cdylib: C ABI bridge called by the mod through FFM
-│   ├── yakvc-cli/          # bin: headless client + diagnostics
+│   ├── yakvc-cli/          # bin: audio and network diagnostics
 │   ├── yakvc-server/       # bin (+lib): rendezvous + embedded relay
 │   └── yakvc-testkit/      # lib, dev-only: in-process server + N clients for tests
 ├── mod/                    # Fabric mod (Gradle, Fabric Loom, Java)
@@ -119,7 +119,7 @@ minecraft-p2p-vc/
 | `yakvc-audio` | lib | none | `cpal` devices, Opus encode/decode, resampling to 48 kHz, jitter buffer, per-source gain/pan mixer, VAD. No networking. Also hardware-free I/O for tests: WAV and tone sources, and a recording null sink. |
 | `yakvc-client` | lib | shared, audio | `Engine`, in two layers: `net` (Iroh endpoint, rendezvous session, peer manager, protocol routing) and `voice` (send/receive loop, recipient selection, spatial input). Also the world model (positions, tab list), command/event API, and a `sim` feature for network impairment |
 | `yakvc-ffi` | cdylib | client | `extern "C"` exports + `cbindgen` header, handle management, panic barrier, error codes, event queue encoding |
-| `yakvc-cli` | bin | client, shared, audio | Dev and diagnostics commands (see yakvc-cli section) |
+| `yakvc-cli` | bin | client, audio | Manual audio and network diagnostics (see yakvc-cli section) |
 | `yakvc-server` | bin + lib | shared | Rendezvous protocol, Mojang verification, ticket signing, matcher, embedded `iroh-relay`, metrics |
 | `yakvc-testkit` | lib (dev) | server, client, audio | Spawns a server and simulated clients in one process for integration tests, with optional per-peer network impairment |
 | `xtask` | bin (root) | none | `cargo xtask natives`, `header`, `dist`, `server-image`, `dev`: cross-builds `yakvc-ffi`, regenerates its C header, stages libraries into the mod, runs Gradle |
@@ -133,13 +133,13 @@ Each of the seven crates is needed: `yakvc-ffi` must be its own cdylib, `yakvc-t
       ┆ FFM downcalls
       ▼
   yakvc-ffi          yakvc-cli                         yakvc-server ──┐
-      │                │  ╲                                  ▲        │
-      │                ▼   ╲                                 │        │
+      │                │                                     ▲        │
+      │                ▼                                     │        │
       └──────────► yakvc-client ◄──────────── yakvc-testkit ─┘        │
-                     │      ╲     ╲            (dev-only)             │
-                     ▼       ╲     ╲                                  │
-                yakvc-audio   ╲     ╲                                 │
-                               ▼     ▼                                │
+                     │      ╲                  (dev-only)             │
+                     ▼       ╲                                        │
+                yakvc-audio   ╲                                       │
+                               ▼                                      │
                              yakvc-shared ◄───────────────────────────┘
 ```
 
@@ -313,23 +313,17 @@ Voice is 48 kHz mono Opus in 20 ms frames, sent as unreliable QUIC datagrams on 
 
 ## yakvc-cli
 
-`yakvc-cli` drives the same `yakvc-client::Engine` the mod uses, with no game attached, so every networking and audio milestone can be built and tested before touching Java. It stands in for the game by supplying fake identity, tab-list and position inputs.
+`yakvc-cli` is a developer and diagnostics tool; players never use it. It drives the same `yakvc-client::Engine` and `yakvc-audio` the mod uses, with no game attached, for the checks automated tests can't make: real sound hardware, and real networks between real machines. The rendezvous, matching and multi-player behaviour are tested in-process by `yakvc-testkit` instead.
 
 | Command | Purpose |
 | --- | --- |
-| `keygen [--out]` | Create a client key; print its EndpointId |
 | `audio devices` | List `cpal` input/output devices |
-| `audio loopback` | Mic → encode → jitter buffer → decode → speakers, with stats. Proves the audio crate alone. |
+| `audio loopback [--wav file] [--null-out]` | Mic → encode → jitter buffer → decode → speakers, with stats. Proves the audio crate alone. |
 | `call listen` / `call dial <endpoint-addr>` | Two-node direct call by EndpointId with no rendezvous or auth. Prints path (direct/relay), RTT and loss. |
 | `net report` | Iroh net report: NAT type, IPv4/IPv6 reachability, relay latencies. For user bug reports. |
-| `join --server <endpoint-id> --dev-uuid <uuid> --sees <uuid,...> [--pos x,y,z]` | Full client against a dev-mode rendezvous: fake identity, tab list and position. Real mic/speakers, or `--wav` input and `--null-out`. |
-| `bot --count N --wav file --spread R` | N simulated peers in one process speaking a WAV at random positions within R blocks. Load and soak testing. |
-| `ticket inspect <file>` | Decode and verify a cached ticket |
-
-- `join` reads stdin commands (`pos 10 64 -3`, `ptt on`, `mute <uuid>`) so a test script can move fake players around.
-- Output is human-readable by default, with `--json` for scripted assertions in CI.
-- `bot` drives engines with `yakvc-audio`'s WAV source and null sink and `yakvc-client`'s `sim` feature (network impairment).
-- **Network impairment:** in-process tests run over perfect loopback, which would never exercise the jitter buffer, FEC or PLC. The `sim` feature can wrap a peer's datagram path with seeded, deterministic loss (uniform or bursty), added delay, jitter (which reorders packets once it exceeds the frame interval) and duplication. These are applied to voice datagrams after receipt, before the jitter buffer, so they need no hook into Iroh's transport. `join` and `bot` expose them as `--loss`, `--delay` and `--jitter`, and testkit tests set them per client. The null sink records the decoded output, so tests can assert on concealed-frame counts and on playout delay staying within the jitter-buffer bounds. `yakvc-testkit` builds on the same module, so load tests and integration tests can't drift apart, and the CLI never depends on the server crate.
+- Output is human-readable by default, with `--json` for scripted use.
+- Key generation lives in `yakvc-server keygen`; clients create their own key on first start.
+- **Network impairment:** in-process tests run over perfect loopback, which would never exercise the jitter buffer, FEC or PLC. `yakvc-client`'s `sim` feature can wrap a peer's datagram path with seeded, deterministic loss (uniform or bursty), added delay, jitter (which reorders packets once it exceeds the frame interval) and duplication. These are applied to voice datagrams after receipt, before the jitter buffer, so they need no hook into Iroh's transport. Testkit tests set them per client and use `yakvc-audio`'s WAV source and null sink. The null sink records the decoded output, so tests can assert on concealed-frame counts and on playout delay staying within the jitter-buffer bounds. Load and soak tests are testkit tests too.
 
 ## Fabric mod and FFM bridge
 
@@ -427,7 +421,7 @@ libopus is built from source and linked statically (needs `cmake` in CI), so the
 - `cargo xtask header [--check]` regenerates `yakvc.h` with `cbindgen`, or fails if the checked-in copy is stale.
 - `cargo xtask dist` stages natives from `--from <dir>` (CI artifacts) or builds them, runs `./gradlew build`, generates `THIRD_PARTY_LICENSES` (see licensing) into the jar and the server image, and writes the jar to `dist/`.
 - `cargo xtask server-image` builds the `yakvc-server` Docker image.
-- `cargo xtask dev` starts a dev-mode server and prints the config snippet for `runClient` / the CLI.
+- `cargo xtask dev` starts a dev-mode server and prints the config snippet for `runClient`.
 
 **Gradle integration**
 
@@ -487,7 +481,7 @@ v1 uses only the MOTD marker. A denylist on the rendezvous would require clients
 
 ## Milestones
 
-Build order runs Rust-first: every networking and audio milestone is provable with the CLI before any Java exists, and the mod arrives at M4 as a thin integration layer.
+Build order runs Rust-first: every networking and audio milestone is provable with the CLI and testkit before any Java exists, and the mod arrives at M4 as a thin integration layer.
 
 1. **M0 Skeleton.** Virtual workspace, all seven crates as stubs with the final dependency graph, license metadata and `deny.toml`, `xtask` stub, CI running fmt/clippy/deny/test.
    - Exit: `cargo test --workspace` is green; `cargo tree -p yakvc-server -e normal` shows no `cpal`/`opus`.
@@ -495,8 +489,8 @@ Build order runs Rust-first: every networking and audio milestone is provable wi
    - Exit: loopback runs 10 min with no underruns; added latency ≤ 60 ms.
 3. **M2 Direct call.** Datagram header in `shared`, voice send/receive in `client`, `cli call listen/dial`, `cli net report`.
    - Exit: two machines on different home networks talk; with UDP blocked the call continues over the relay.
-4. **M3 Rendezvous (dev auth).** Server protocol, matcher, tickets; client rendezvous session; `cli join` and `cli bot`; `yakvc-testkit` integration tests.
-   - Exit: three CLI clients with overlapping fake tab lists connect only to mutual matches, and gain/pan follow `pos` commands. A testkit test with 5% bursty loss and 30 ms of jitter plays continuous audio: every lost frame is covered by FEC or PLC, and playout delay stays within the jitter-buffer bounds.
+4. **M3 Rendezvous (dev auth).** Server protocol, matcher, tickets; client rendezvous session; `yakvc-testkit` integration tests.
+   - Exit: in a testkit test, three clients with overlapping fake tab lists connect only to mutual matches, and gain/pan follow their moves. A testkit test with 5% bursty loss and 30 ms of jitter plays continuous audio: every lost frame is covered by FEC or PLC, and playout delay stays within the jitter-buffer bounds.
 5. **M4 Mod integration.** Fabric project, `NativeLoader`, `yakvc-ffi` + `NativeBridge` (FFM), `GameStateFeeder`, push-to-talk, dev mode.
    - Exit: two dev clients on a local vanilla server hear each other spatially. A gametest confirms spectators are excluded in both directions.
 6. **M5 Real auth.** Mojang challenge on server and client, `SessionJoiner`, ticket cache, Mojang 429 handling. Measure the real `sessionserver` rate limits.

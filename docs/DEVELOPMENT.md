@@ -31,7 +31,7 @@ Agents don't negotiate with each other directly; all coordination goes through t
 | protocol | `yakvc-shared`, `yakvc-server` | M3 server side |
 | audio | `yakvc-audio` | M1 |
 | engine | `yakvc-client` (`net` + `voice`) | M2, M3 client side |
-| harness | `yakvc-cli`, `yakvc-testkit`, `yakvc-ffi` | CLI commands for M1–M3, testkit, FFI growth |
+| harness | `yakvc-cli`, `yakvc-testkit`, `yakvc-ffi` | CLI diagnostics for M1–M2, testkit, FFI growth |
 
 **Seams the contract must pin down:**
 
