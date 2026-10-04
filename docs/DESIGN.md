@@ -90,6 +90,7 @@ minecraft-p2p-vc/
 ├── Cargo.toml              # [workspace] only: members, workspace.dependencies, lints
 ├── Cargo.lock
 ├── rust-toolchain.toml     # pinned stable toolchain + targets
+├── flake.nix               # Nix dev shell: toolchain from rust-toolchain.toml, JDK 25, cargo-deny, zig
 ├── .cargo/config.toml      # `cargo xtask` alias, per-target linker settings
 ├── xtask/                  # build/packaging utility (the only root-level Rust)
 ├── crates/
@@ -340,8 +341,8 @@ Names below use Mojang's official mappings, which Fabric uses from 26.1 on (Mine
 | Class / area | Role |
 | --- | --- |
 | `YakVcClient` | `ClientModInitializer`: load natives, create engine, register events and keybinds |
-| `natives.NativeLoader` | Map `os.name`/`os.arch` to `natives/<os>-<arch>/`, extract the library to `config/yakvc/natives/<sha256>/`, open it with `SymbolLookup.libraryLookup(path, Arena.global())`. The library is never unloaded, because it owns live Tokio and audio threads. Unsupported platform: disable the mod and show a toast. |
-| `NativeBridge` | One `static final MethodHandle` per C function (below), built with `Linker.nativeLinker().downcallHandle`, plus thin typed wrappers that turn error codes into `YakVcException`. Nothing else. |
+| `natives.NativeLoader` | Map `os.name`/`os.arch` to `natives/<os>-<arch>/` (falling back to `natives/<os>-universal/`, used for the macOS universal library), extract the library to `config/yakvc/natives/<sha256>/`, open it with `SymbolLookup.libraryLookup(path, Arena.global())`. The library is never unloaded, because it owns live Tokio and audio threads. Unsupported platform: disable the mod and show a toast. |
+| `NativeBridge` | One `final MethodHandle` field per C function (below), built with `Linker.nativeLinker().downcallHandle`, plus thin typed wrappers that turn error codes into `YakVcException`. Nothing else. |
 | `VoiceSession` | Per-connection lifecycle on `ClientPlayConnectionEvents` JOIN/DISCONNECT; tracks whether a login is in progress. Voice stays off until the server-data packet arrives (5 s timeout), so the MOTD opt-out is checked first. It also stays off while `getChatStatus()` is `DISABLED_BY_PROFILE` or `DISABLED_BY_LAUNCHER` (`respect_chat_restrictions`) |
 | `GameStateFeeder` | On `END_CLIENT_TICK`: listener pose from the camera; tracked players from `level.players()`, minus spectators; tab-list diff from `getOnlinePlayers()`; local spectator state as an input flag; players blocked in Social Interactions as mutes (`mute_blocked_players`); the Voice/Speech slider; push to native; then drain events |
 | `SessionJoiner` | Handles `JoinRequest` events on a worker thread via authlib `MinecraftSessionService.joinServer`, refuses while logging in, replies with `completeJoin` |
@@ -410,7 +411,7 @@ libopus is built from source and linked statically (needs `cmake` in CI), so the
 
 **xtask commands**
 
-- `cargo xtask natives [--target host|all|<triple>]` builds `yakvc-ffi` in release and copies it to `mod/src/main/resources/natives/<os>-<arch>/` (gitignored), with a `natives.sha256` manifest.
+- `cargo xtask natives [--target host|all|<triple>]` builds `yakvc-ffi` in release and copies it to `mod/build/natives/<os>-<arch>/` (or `--out <dir>`), with a `natives.sha256` manifest. Gradle adds that directory to the jar under `natives/`.
 - `cargo xtask header [--check]` regenerates `yakvc.h` with `cbindgen`, or fails if the checked-in copy is stale.
 - `cargo xtask dist` stages natives from `--from <dir>` (CI artifacts) or builds them, runs `./gradlew build`, generates `THIRD_PARTY_LICENSES` (see licensing) into the jar and the server image, and writes the jar to `dist/`.
 - `cargo xtask server-image` builds the `yakvc-server` Docker image.
@@ -419,7 +420,7 @@ libopus is built from source and linked statically (needs `cmake` in CI), so the
 **Gradle integration**
 
 - `processResources` depends on a `cargoNatives` Exec task (`cargo xtask natives --target host`), so `./gradlew runClient` just works on a dev machine.
-- `-Pyakvc.prebuiltNatives=<dir>` skips cargo for CI packaging.
+- `-Pyakvc.prebuiltNatives=<dir>` packages an already staged natives directory instead and skips cargo, for CI packaging.
 - The Gradle Java toolchain is pinned to 25, and `runClient` passes `--enable-native-access=ALL-UNNAMED`.
 - `NativeLoader` checks the extracted library against `natives.sha256` before opening it.
 

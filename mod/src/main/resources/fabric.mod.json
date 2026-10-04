@@ -1,0 +1,20 @@
+{
+	"schemaVersion": 1,
+	"id": "yakvc",
+	"version": "${version}",
+	"name": "Yak VC",
+	"description": "Peer-to-peer proximity voice chat for online-mode servers. No server mod required.",
+	"license": "MIT OR Apache-2.0",
+	"environment": "client",
+	"entrypoints": {
+		"client": [
+			"dev.yakvc.YakVcClient"
+		]
+	},
+	"depends": {
+		"fabricloader": ">=0.19.5",
+		"minecraft": "~26.3",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}

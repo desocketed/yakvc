@@ -1,0 +1,75 @@
+plugins {
+	id 'net.fabricmc.fabric-loom' version "${loom_version}"
+}
+
+base {
+	archivesName = 'yakvc'
+}
+
+dependencies {
+	minecraft "com.mojang:minecraft:${project.minecraft_version}"
+	implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+
+	testImplementation platform("org.junit:junit-bom:${project.junit_version}")
+	testImplementation 'org.junit.jupiter:junit-jupiter'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+java {
+	toolchain {
+		languageVersion = JavaLanguageVersion.of(25)
+	}
+}
+
+tasks.withType(JavaCompile).configureEach {
+	it.options.release = 25
+}
+
+// Native library staging. By default `cargo xtask natives` builds yakvc-ffi
+// for the host; `-Pyakvc.prebuiltNatives=<dir>` uses an already staged
+// directory instead (CI packaging) and skips cargo.
+def prebuiltNatives = providers.gradleProperty('yakvc.prebuiltNatives')
+def hostNativesDir = layout.buildDirectory.dir('natives')
+
+def cargoNatives = tasks.register('cargoNatives', Exec) {
+	description = 'Builds yakvc-ffi for the host with `cargo xtask natives`.'
+	workingDir = rootDir.parentFile
+	def out = hostNativesDir.get().asFile
+	commandLine 'cargo', 'xtask', 'natives', '--target', 'host', '--out', out.absolutePath
+	outputs.dir(out)
+	// Cargo does its own up-to-date checking.
+	outputs.upToDateWhen { false }
+}
+
+processResources {
+	def version = project.version
+	inputs.property 'version', version
+	filesMatching('fabric.mod.json') {
+		expand 'version': version
+	}
+
+	if (prebuiltNatives.isPresent()) {
+		from(prebuiltNatives.map { file(it) }) { into 'natives' }
+	} else {
+		from(cargoNatives) { into 'natives' }
+	}
+}
+
+loom {
+	runs {
+		configureEach {
+			vmArg '--enable-native-access=ALL-UNNAMED'
+		}
+	}
+}
+
+test {
+	useJUnitPlatform()
+	jvmArgs '--enable-native-access=ALL-UNNAMED'
+}
+
+jar {
+	from(rootProject.file('../LICENSE-MIT'))
+	from(rootProject.file('../LICENSE-APACHE'))
+}
