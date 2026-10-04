@@ -23,6 +23,8 @@ pub struct Config {
     /// When set, only these players are heard and sent to.
     pub friends_only: Option<Vec<Uuid>>,
     pub audio: AudioConfig,
+    /// Test audio for machines without sound hardware. Needs `dev_mode`.
+    pub dev: DevConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -63,6 +65,17 @@ pub struct AudioConfig {
     pub vad_threshold_db: f32,
 }
 
+/// The `[dev]` section: stand-ins for the microphone and speakers, so dev
+/// clients can talk on a machine with no sound card.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DevConfig {
+    /// Capture a sine tone of this frequency instead of the microphone.
+    pub tone_hz: Option<f32>,
+    /// Discard the output instead of opening speakers.
+    pub null_output: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Activation {
@@ -99,6 +112,14 @@ impl Config {
         if !(-100.0..=0.0).contains(&self.audio.vad_threshold_db) {
             return invalid("audio.vad_threshold_db must be between -100 and 0");
         }
+        if self.dev != DevConfig::default() && !self.dev_mode {
+            return invalid("the [dev] section needs dev_mode = true");
+        }
+        if let Some(hz) = self.dev.tone_hz
+            && !(1.0..=20_000.0).contains(&hz)
+        {
+            return invalid("dev.tone_hz must be between 1 and 20000");
+        }
         Ok(())
     }
 }
@@ -119,6 +140,7 @@ impl Default for Config {
             voice_range: 48.0,
             friends_only: None,
             audio: AudioConfig::default(),
+            dev: DevConfig::default(),
         }
     }
 }
@@ -210,6 +232,19 @@ mod tests {
     }
 
     #[test]
+    fn dev_audio_needs_dev_mode() {
+        let config =
+            Config::from_toml("dev_mode = true\n[dev]\ntone_hz = 440.0\nnull_output = true")
+                .unwrap();
+        assert_eq!(config.dev.tone_hz, Some(440.0));
+        assert!(config.dev.null_output);
+        assert!(matches!(
+            Config::from_toml("[dev]\nnull_output = true"),
+            Err(ConfigError::Invalid(_))
+        ));
+    }
+
+    #[test]
     fn out_of_range_values_are_rejected() {
         for toml in [
             "voice_range = 0.0",
@@ -217,6 +252,7 @@ mod tests {
             "[audio]\nbitrate = 8000",
             "[audio]\ninput_gain = -1.0",
             "[audio]\nvad_threshold_db = 3.0",
+            "dev_mode = true\n[dev]\ntone_hz = 0.0",
         ] {
             assert!(
                 matches!(Config::from_toml(toml), Err(ConfigError::Invalid(_))),

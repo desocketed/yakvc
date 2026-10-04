@@ -338,8 +338,15 @@ impl EngineBuilder {
         let EngineBuilder {
             config,
             data_dir,
-            io,
+            mut io,
         } = self;
+        // Dev test audio, unless the caller supplied its own.
+        if let (None, Some(hz)) = (&io.source, config.dev.tone_hz) {
+            io.source = Some(Box::new(yakvc_audio::ToneSource::new(hz)));
+        }
+        if io.sink.is_none() && config.dev.null_output {
+            io.sink = Some(Box::new(yakvc_audio::NullSink::new().0));
+        }
         let data_dir = data_dir.ok_or_else(|| {
             StartError::Key(io::Error::new(
                 io::ErrorKind::InvalidInput,

@@ -83,3 +83,31 @@ jar {
 	from(rootProject.file('../LICENSE-MIT'))
 	from(rootProject.file('../LICENSE-APACHE'))
 }
+
+// The gametest client has no sound card. Dev test audio stands in for the devices, so the engine reports no
+// device errors and push-to-talk produces real voice frames.
+def gametestConfig = layout.buildDirectory.file('run/clientGameTest/config/yakvc/client.toml').get().asFile
+tasks.named('runClientGameTest') {
+	doFirst {
+		gametestConfig.parentFile.mkdirs()
+		gametestConfig.text = 'dev_mode = true\n[dev]\ntone_hz = 440.0\nnull_output = true\n'
+	}
+}
+
+// scripts/two-clients.sh runs a server and two clients at once, which one Gradle build can't. This writes the java
+// command line of runClient and runServer, one argument per line, so the script can start them directly.
+tasks.register('writeDevLaunchArgs') {
+	dependsOn 'classes', 'configureLaunch', 'configureClientLaunch'
+	notCompatibleWithConfigurationCache('reads the Loom run tasks')
+	def outDir = layout.buildDirectory.dir('devlaunch')
+	doLast {
+		[client: tasks.runClient, server: tasks.runServer].each { name, run ->
+			// Loom passes the classpath in an @file it writes when the run starts, so pass it directly instead.
+			def jvmArgs = run.allJvmArgs.findAll { !it.startsWith('@') }
+			def args = jvmArgs + ['-cp', run.classpath.asPath, run.mainClass.get()] + run.args
+			def file = outDir.get().file("${name}.args").asFile
+			file.parentFile.mkdirs()
+			file.text = args.join('\n') + '\n'
+		}
+	}
+}
