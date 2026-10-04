@@ -4580,9 +4580,13 @@ name = "yakvc-client"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "iroh",
+ "rand",
  "serde",
  "thiserror 2.0.21",
+ "tokio",
  "toml 1.1.6+spec-1.1.0",
+ "tracing",
  "yakvc-audio",
  "yakvc-shared",
 ]
