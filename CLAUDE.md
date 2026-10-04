@@ -20,4 +20,6 @@ Run inside `nix develop` (this machine has no system Rust or Java).
 
 ## Git
 
-Git has no identity configured here. Commit with `git -c user.name="Ben Whitley" -c user.email="337744892+desocketed@users.noreply.github.com" commit ...`. `docs/DESIGN.html` is the user's own Org export; leave it untracked.
+Git has no identity configured here. Commit with `git -c user.name="Ben Whitley" -c user.email="337744892+desocketed@users.noreply.github.com" commit ...`. `docs/DESIGN.html` is the user's own Org export, tracked at their request; don't edit it.
+
+The GitHub repo is `github.com/desocketed/yakvc` (private). `.git/config` is read-only here, so there is no `origin` remote: push with `GIT_TERMINAL_PROMPT=0 git -c credential.helper= -c "credential.helper=!$HOME/.config/yakvc-bot/token.sh credential" push https://github.com/desocketed/yakvc.git <branch>` (a GitHub App token; the key never enters the repo). Push and open PRs only when asked.
