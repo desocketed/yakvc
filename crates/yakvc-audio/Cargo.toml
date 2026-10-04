@@ -8,6 +8,12 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+cpal.workspace = true
+hound.workspace = true
+nnnoiseless.workspace = true
+opus.workspace = true
+rtrb.workspace = true
+rubato.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 
