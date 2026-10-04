@@ -153,6 +153,7 @@ Each of the seven crates is needed: `yakvc-ffi` must be its own cdylib, `yakvc-t
 - `yakvc-shared` depends on `iroh-base` (key and EndpointId types) rather than full `iroh`. The Mojang `hasJoined` client lives in `yakvc-server`, its only user.
 - Binaries contain no logic beyond argument parsing and wiring; anything worth testing lives in a lib.
 - Inside `yakvc-client`, `net` knows nothing about audio. It provides verified peers (EndpointId ↔ UUID), per-peer connections, and a `Protocol` trait that receives a peer's control stream and datagrams for one protocol ID. `voice` is the only `Protocol` in v1 and uses `net` only through that trait. This keeps groups/radio, and a possible generic API for other mods (see milestones), as new protocols rather than changes to `net`. `net` could later move into its own crate without touching `voice`.
+- `iroh` is declared without its default `portmapper` feature (UPnP/NAT-PMP), whose `attohttpc` dependency is MPL-2.0. `deny.toml` checks only the shipped targets (iroh's wasm-only dependencies are Unlicense), allows CDLA-Permissive-2.0 for `webpki-roots`, and ignores RUSTSEC-2024-0436 (`paste`, an unmaintained build-time macro deep under iroh's `netwatch`).
 - `iroh` is pinned at 1.3 (current stable as of 2026-09-28; 1.0 shipped June 2026). The design relies on these 1.x APIs, checked against its docs: `Connection::send_datagram` / `read_datagram` / `max_datagram_size`, `remote_id()`, `paths()` for path reporting, `Builder::clear_ip_transports()` for relay-only, and `Builder::empty()` / `clear_address_lookup()` to drop n0's default address lookup. The `iroh-relay` 1.3 server (feature `server`) was checked against its source on 2026-10-04: `Server::spawn(ServerConfig)` embeds it as a library; `QuicConfig` serves QUIC address discovery; `CertConfig::LetsEncrypt` provides ACME (or `Manual` for certificate files); `RelayConfig::access` takes an async `AccessControl` with `on_connect` / `on_disconnect`; `Limits::client_rx` rate-limits bytes read from each client; and `relay_service().clients().disconnect(endpoint_id, None)` drops a client. Clients retry a refused relay connection with exponential backoff capped at 16 s.
 - All third-party versions are declared once in root `[workspace.dependencies]`; crates use `dep = { workspace = true }`. Edition, license (`MIT OR Apache-2.0`) and `[workspace.lints]` (`unsafe_code = "deny"` everywhere except `yakvc-ffi`) are inherited the same way.
 - Nothing is published to crates.io: `[workspace.package] publish = false`, inherited by every crate. The crates are internal support code for the shipped artifacts (mod jar, server image, CLI binary), so their APIs can change freely between commits.
@@ -207,9 +208,9 @@ Two clients are on the same server if each one's UUID is in the other's tab list
 **Peer handshake (ALPN `yakvc/peer/1`)**
 
 1. The peer with the lower EndpointId dials; the other dials only if nothing has arrived after 3 s. Duplicate connections are resolved by keeping the one dialled by the lower EndpointId.
-2. Both open a control bi-stream and send `PeerHello { ticket, protocols: [(id, version)] }`.
+2. The dialer opens one peer control bi-stream, and both sides send `PeerHello { ticket, protocols: [(id, version)] }` on it.
 3. Each side accepts only if: the signature verifies against a key in `trusted_issuers`; `ticket.endpoint_id` equals the connection's remote EndpointId; the ticket is unexpired; `ticket.uuid` is in the local tab list and is not our own UUID.
-4. On success the connection is shared by every application protocol both sides list (v1 has one: `voice`, version 1). Each protocol gets its own control stream, opened with its protocol ID, and its datagrams start with a one-byte protocol ID. The peer control stream itself carries only `Hello` and `TicketUpdate`; QUIC handles keepalive and RTT, and closes use QUIC application close codes (`peer::CloseCode`). On any failure, close with an error code and do not retry for 60 s.
+4. On success the connection is shared by every application protocol both sides list (v1 has one: `voice`, version 1). Each protocol gets its own control stream, opened by the dialer and starting with its protocol ID byte, and its datagrams start with a one-byte protocol ID. The peer control stream itself carries only `Hello` and `TicketUpdate`; QUIC handles keepalive and RTT, and closes use QUIC application close codes (`peer::CloseCode`). On any failure, close with an error code and do not retry for 60 s.
 5. When a client renews its ticket it sends `TicketUpdate { ticket }` to every open peer, which re-runs the step 3 checks. A peer whose ticket expires without an update is closed.
 
 One connection per peer, multiplexed by protocol ID, means one handshake and one hole-punch per peer however many protocols are added later.
@@ -230,19 +231,19 @@ Voice is 48 kHz mono Opus in 20 ms frames, sent as unreliable QUIC datagrams on 
 | Frame | 20 ms (960 samples) |
 | Codec | Opus, `VOIP` application, 24 kbps (16–64), in-band FEC on, DTX on |
 | Voice range | 48 blocks; full volume within 4 blocks. Per player; between two players the shorter range applies |
-| Jitter buffer | adaptive, target 40 ms, bounds 20–200 ms |
+| Jitter buffer | adaptive, target 40 ms (a floor), bounds 20–200 ms. Delay is the 95th-percentile jitter over the last 100 packets plus 20 ms; it grows at once and shrinks only between talk spurts. Clock drift is corrected by stretching or skipping one frame |
 | Activation | push-to-talk (default) or VAD with 300 ms hangover |
 
 **Send path** (`yakvc-audio` → `yakvc-client`)
 
 1. `cpal` input callback writes samples into a lock-free SPSC ring (`rtrb`). The callback never allocates or locks.
-2. A dedicated audio thread resamples to 48 kHz if needed (`rubato`), applies optional noise suppression (`nnnoiseless`), gain and VAD, then encodes 20 ms frames.
-3. If activation is on and the player is not muted, the engine picks recipients: verified peers that have a tracked entity within `range + 8` blocks of the local player, that have not sent `ReceiveState { wants_audio: false }` (deafened or muted us), capped at the 32 nearest.
+2. A dedicated audio thread resamples to 48 kHz if needed (`rubato`), applies optional noise suppression (`nnnoiseless`, RNNoise: strong on room and low-frequency noise, weak on broadband hiss, adds 10 ms), gain and VAD, then encodes 20 ms frames.
+3. If activation is on and the player is not muted, the engine picks recipients: verified peers that have a tracked entity within the local voice range, that have not sent `ReceiveState { wants_audio: false }` (deafened or muted us), capped at the 32 nearest.
 4. Each frame is sent with `Connection::send_datagram`. Header: `proto: u8 (voice) | flags: u8 (end_of_talk) | seq: u32 | ts: u32` then the Opus payload (60 B at the default 24 kbps, up to 160 B at 64 kbps; well under `Connection::max_datagram_size()`). The first byte is the peer layer's protocol ID; the voice version is agreed in `PeerHello`, so there is no per-packet version byte. The last frame of a talk spurt sets `end_of_talk`. Opus in-band FEC travels inside the payload, so it needs no flag.
 
 **Receive path**
 
-1. Datagrams from unverified connections are dropped. Verified ones go into a per-peer jitter buffer ordered by `seq`.
+1. Datagrams from unverified connections are dropped. Verified ones go into a per-peer jitter buffer. Playout is timed by `ts`, which advances 960 per captured frame; `seq` advances only per packet sent, so a `seq` gap means loss and a `ts`-only gap means DTX silence.
 2. A mixer thread pulls one frame per peer every 20 ms: decode, use Opus FEC if the next packet is present, else PLC, and reset the stream after `end_of_talk`.
 3. **Spatialization:** Java pushes the listener pose (position, yaw, pitch) and positions of tracked players by UUID every tick (20 Hz), and the mixer interpolates between snapshots. Players whose tab-list game mode is spectator are left out of this set. Entity tracking alone can't be used for this, because vanilla does send spectator player entities to other clients and only hides them client-side (unless the spectator is viewing through another entity). Filtering by game mode means the "no tracked entity" rule below covers them in both directions. While the local player is a spectator, the engine neither sends nor plays audio. Gain = 1 within 4 blocks, linear to 0 at the voice range. Equal-power stereo pan from azimuth relative to listener yaw, with mild attenuation for sources behind the listener.
 4. **Range is enforced by the receiver:** if the speaker has no tracked entity (out of tracking range, other backend, vanished) or is beyond range, the frame is discarded. The sender-side filter only saves bandwidth. Range is a per-player setting, and the sender filters by its own range while the receiver filters by its own, so between two players the shorter range applies. A listener can never hear further than the speaker allows. The settings screen says so next to the range slider.
@@ -253,14 +254,15 @@ Voice is 48 kHz mono Opus in 20 ms frames, sent as unreliable QUIC datagrams on 
 - On `PeerAvailable` the engine connects eagerly, tracked peers nearest first, then untracked ones, up to 64 open peer connections. Hole-punching takes up to a few seconds, so connecting only on approach would clip the first words. This matters because Spigot/Paper default to a 48-block player tracking range, so a peer often becomes tracked only at the edge of voice range.
 - Idle connections cost only QUIC keepalives, so matched peers stay connected whether or not they are tracked; closing untracked peers would undo the eager connect. Connections close on `PeerGone`. When the cap is reached, the peer that has been untracked longest (or is farthest) is evicted, and it is reconnected when it becomes tracked again.
 - Iroh picks the path (direct UDP vs relay) and migrates transparently (multipath since 1.0). The engine reports the selected path per peer from `Connection::paths()` for the UI and the CLI.
-- Relayed sends share a per-client budget of 512 kbps (estimated wire cost, relay framing included). Recipients on a relay-only path are served nearest-first. If they don't all fit at 24 kbps (about 8 peers), the encoder steps down to 16 kbps (about 11 peers), using the same step-down as above 16 recipients. Because there is one encoder, direct peers get the lower bitrate too. Relayed recipients that still don't fit get no datagrams and show as `relay_full` until budget frees up or a direct path appears. Direct peers never count against the budget. This keeps `relay_only` users and players behind strict NATs usable in a crowd while keeping relay cost per user bounded.
-- The endpoint is built with `Builder::empty()` plus our own `RelayMode::Custom` relay map. Iroh's default n0 DNS/pkarr address lookup and n0 relays are not used, because peer addresses come from the rendezvous and publishing them to a third party would leak IPs. `relay_only` uses `Builder::clear_ip_transports()`.
+- Relayed sends share a per-client budget of 512 kbps (estimated wire cost, relay framing included). Recipients on a relay-only path are served nearest-first. If they don't all fit at 24 kbps (9 peers, modelling 76 B of overhead per packet), the encoder steps down to 16 kbps (11 peers), using the same step-down as above 16 recipients. Because there is one encoder, direct peers get the lower bitrate too. Relayed recipients that still don't fit get no datagrams and show as `relay_full` until budget frees up or a direct path appears. Direct peers never count against the budget. This keeps `relay_only` users and players behind strict NATs usable in a crowd while keeping relay cost per user bounded.
+- The endpoint is built from `presets::Minimal` plus our own `RelayMode::Custom` relay map. Iroh's default n0 DNS/pkarr address lookup and n0 relays are not used, because peer addresses come from the rendezvous and publishing them to a third party would leak IPs. `relay_only` uses `Builder::clear_ip_transports()`.
 
 **Threads**
 
 - A Tokio runtime (2 worker threads) for Iroh, rendezvous and control streams.
 - Two `cpal` real-time callbacks (input, output): ring-buffer I/O only.
 - One audio worker thread for resample, encode, decode and mix, talking to Tokio through bounded channels.
+- A missing or failing audio device is reported as an `Error` event and never fails `Engine::start`, so networking and the game keep working without a microphone or speakers.
 
 **Budgets**
 
@@ -288,29 +290,30 @@ Voice is 48 kHz mono Opus in 20 ms frames, sent as unreliable QUIC datagrams on 
 | `rdv` | Per-connection protocol handler for `yakvc/rdv/1` (state machine: Hello → Challenge → Joined → Registered) |
 | `mojang` | `SessionServer::has_joined`; the base URL is configurable so tests can use a fake session server |
 | `auth` | Runs the challenge with `mojang`, signs tickets with the issuer key |
-| `matcher` | `HashMap<EndpointId, Session>` + `HashMap<PairToken, SmallVec<[EndpointId; 2]>>`; O(changed tokens) per update |
-| `relay` | Starts the `iroh-relay` server when enabled. Its `AccessControl` admits an EndpointId that has a live session. It also admits one without a session for a 30 s grace period, because a client's relay connection can arrive before its rendezvous session, and a `relay_only` client can only reach the rendezvous through the relay. If no session is registered within the grace period, or when a session ends, the server disconnects that EndpointId from the relay. Grace admissions are rate-limited per EndpointId (and per source IP if `iroh-relay` exposes it, checked at M3). |
+| `matcher` | `HashMap<EndpointId, Session>` + `HashMap<PairToken, Vec<EndpointId>>`; O(changed tokens) per update |
+| `relay` | Starts the `iroh-relay` server when enabled. Its `AccessControl` admits an EndpointId that has a live session. It also admits one without a session for a 30 s grace period, because a client's relay connection can arrive before its rendezvous session, and a `relay_only` client can only reach the rendezvous through the relay. If no session is registered within the grace period, or when a session ends, the server disconnects that EndpointId from the relay. Grace admissions are rate-limited per EndpointId, 3 per 10 minutes. Per source IP is impossible: checked at M3, `iroh-relay`'s `ClientRequest` does not expose the client address. When the server itself uses a relay, `spawn()` waits (up to 10 s) until it is connected to that relay, so early relay-only clients don't outlast their grace. A newer session for the same EndpointId replaces and closes the older one. |
 | `limits` | Token-bucket rate limits per EndpointId and per source IP |
 | `metrics` | Prometheus endpoint: sessions, auth ok/fail, matches, Mojang latency, relay bytes |
 
 **Limits (defaults)**
 
-- 5 auth attempts per EndpointId per minute; 30 per source IP per minute.
+- 5 auth attempts per EndpointId per minute; 30 per source IP per minute. Only challenges count (cached-ticket hellos don't), and connections arriving through the relay have no source IP, so they get only the per-EndpointId limit.
 - At most 2,048 pair tokens per session and 10 pair updates per second.
-- 5 s timeout on Mojang calls with one retry; auth fails closed on Mojang outage (cached tickets keep working).
+- 5 s timeout on Mojang calls with one retry; auth fails closed on Mojang outage, answered with `RetryAfter { secs: 10 }`. Cached tickets keep working, and while Mojang rate-limits us a cached ticket with under 2 h left is still accepted.
 - On a Mojang HTTP 429 the server stops calling `hasJoined` until Mojang's `Retry-After` (or 10 s) has passed and answers pending auths with `RetryAfter { secs }`. Clients back off exponentially (10 s doubling to 10 min, with jitter) and keep using any unexpired cached ticket meanwhile.
-- Relay: each client keeps its relayed sends within a 512 kbps budget (see connection lifecycle). The server backs this with `iroh-relay`'s per-client receive limit (`Limits::client_rx`, which caps what each client sends into the relay) of 80 KB/s (640 kbps, leaving headroom for control traffic and bursts). The server also tracks monthly relay transfer against a configured budget and exposes it as a metric.
+- Relay: each client keeps its relayed sends within a 512 kbps budget (see connection lifecycle). The server backs this with `iroh-relay`'s per-client receive limit (`Limits::client_rx`, which caps what each client sends into the relay) of 80 KB/s (640 kbps, leaving headroom for control traffic and bursts). The server exports relayed bytes as metrics (`yakvc_relay_bytes_{recv,sent}_total`); comparing them to a monthly budget is left to the metrics system.
 
 **Dev mode**
 
-`--insecure-dev-auth` skips Mojang and accepts the claimed UUID. Tickets are marked `dev: true`, and clients reject them unless their own config sets `dev_mode = true`. This is what the CLI, testkit and local mod runs use.
+`--insecure-dev-auth` skips Mojang and accepts the claimed UUID: the server answers `Hello` with `Registered` directly, with no `Challenge`. Tickets are marked `dev: true`, and clients reject them unless their own config sets `dev_mode = true`. This is what the CLI, testkit and local mod runs use.
 
 **Deployment**
 
 - Linux only. Linux-specific choices are welcome where they make the server simpler to run or safer: for example a static musl binary in a `scratch` image, systemd `Type=notify` readiness and watchdog, keys passed as systemd credentials (`LoadCredential=`), and a hardened unit (`DynamicUser=`, `AmbientCapabilities=CAP_NET_BIND_SERVICE` for ports 80/443, `ProtectSystem=strict`). Keep such code in `main.rs` and `deploy/`, so the library that `yakvc-testkit` runs in-process stays portable.
 - Docker image + example `config.toml` + systemd unit in `deploy/`. For v1 the project maintainer hosts the default rendezvous and relay on a single small VPS with a public IP in US East, which gives the best average latency to both North American and European players.
 - Relay bandwidth is the main cost: about 55–60 kbps in and the same out per relayed voice stream while talking. v1 is planned around the 1–5 TB/month included with a typical VPS. 1 TB/month of outbound transfer covers about 500 relayed streams around the clock if each talks 10% of the time. Metrics track the relayed share and the monthly total so capacity can be planned. The per-client relay budget (see limits) keeps any one user's cost bounded.
-- Clients ship with the default server's EndpointId and relay URL. Self-hosters change two config values and add their issuer key to `trusted_issuers`.
+- Clients ship with the default server's EndpointId and relay URL. Self-hosters change two config values and add their issuer key to `trusted_issuers`. The client verifies its own ticket from the rendezvous against that list too, so a missing issuer fails at registration.
+- Key files hold the 32 raw secret-key bytes. `keygen` writes them with mode 0600 and never overwrites an existing file. `run` stops cleanly on SIGTERM.
 - Single instance in v1. If needed later, add regions or shards that share the issuer key, with a shared pub/sub for cross-instance matches.
 
 ## yakvc-cli
@@ -389,8 +392,9 @@ size_t   yakvc_last_error(uint8_t *buf, size_t cap);         // message for this
 
 - **Header:** `cbindgen` generates `crates/yakvc-ffi/include/yakvc.h`, which is checked in. `cargo xtask header --check` fails CI when it is stale, so changes to the ABI show up in review. Java bindings are hand-written (14 functions) rather than generated with `jextract`, which is not part of the JDK.
 - **ABI check:** Java calls `yakvc_abi_version()` before anything else and refuses to continue on a mismatch; `yakvc_create` checks again.
+- **Argument checks:** every call rejects with `YAKVC_ERR_INVALID_ARGUMENT` rather than guessing: null or misaligned pointers with a non-zero length, invalid UTF-8, non-finite coordinates, unknown input flag bits, game volume outside 0..=1, negative or non-finite peer volume, and an event buffer too small for even one record (nothing is lost; poll again with a bigger buffer).
 - **Memory:** each wrapper call uses a confined `Arena` for strings and small buffers, freed on return. `yakvc_push_world` and `yakvc_poll_events` run every tick, so their handles use `Linker.Option.critical(true)`, and Java passes `MemorySegment.ofArray(...)` heap arrays with no copy. Native code never keeps a pointer after the call returns.
-- **Events** are little-endian TLV records `u16 type | u16 len | payload` written into a reusable buffer: `JoinRequest{id, server_id}`, `RendezvousState`, `PeerState{uuid, connecting|direct|relayed|relay_full|failed}`, `Talking{uuid, bool}`, `MicLevel{f32}`, `Error{code, msg}`. Records are never split; if the buffer fills, the rest stay queued for the next poll.
+- **Events** are little-endian TLV records `u16 type | u16 len | payload` written into a reusable buffer: `JoinRequest{id, server_id}`, `RendezvousState`, `PeerState{uuid, connecting|direct|relayed|relay_full|failed}`, `Talking{uuid, bool}`, `MicLevel{f32}`, `Error{msg}`. Records are never split; if the buffer fills, the rest stay queued for the next poll.
 - **Threads:** `YakVcEngine` is `Send + Sync`. Every function except `yakvc_destroy` may be called from any thread: the client thread feeds the world on each tick, and `SessionJoiner`'s worker calls `complete_join`. Java makes `yakvc_destroy` the last call with a closed flag.
 - **Rust side (`yakvc-ffi`):** the handle is `Box<Bridge>` passed as an opaque pointer. Every export is `#[unsafe(no_mangle)] pub extern "C"` and runs inside an `ffi_guard` that does `catch_unwind` (a panic crossing `extern "C"` would abort the game) and maps errors and panics to codes plus the thread-local `last_error` message. After a panic the engine is marked poisoned, later calls return `YAKVC_ERR_POISONED`, and the mod disables voice with a toast. This is the only crate with `unsafe` allowed.
 - **`yakvc-client` API** is FFI-agnostic: `Engine::builder(config).data_dir(dir).start() -> (Engine, Events)`, where `Engine` has the same operations as above with typed arguments and `Events` has `try_next()` for the game loop and async `next()` for the CLI. The CLI uses it directly; `yakvc-ffi` is only marshalling. `yakvc-ffi` has its own Rust tests that call the `extern "C"` functions directly, so the ABI is tested without a JVM.
@@ -415,7 +419,7 @@ size_t   yakvc_last_error(uint8_t *buf, size_t cap);         // message for this
 | `x86_64-pc-windows-msvc` | Windows runner | WASAPI via `cpal` |
 | `x86_64-apple-darwin` + `aarch64-apple-darwin` | macOS runner | Merged with `lipo` into one universal `.dylib` |
 
-libopus is built from source and linked statically (needs `cmake` in CI), so the jar has no system dependency besides the OS audio stack.
+libopus is built from source by the `opus` crate (via `opusic-sys`, feature `bundled`) and linked statically (needs `cmake` in CI), so the jar has no system dependency besides the OS audio stack.
 
 **xtask commands**
 
@@ -464,7 +468,7 @@ The design rule is **you only send voice to, and only play voice from, players y
 | Peers learn your IP address | Inherent to direct P2P. Because matched peers connect eagerly, every Yak VC user on the same server (or network, with a global tab list) learns your IP, not just nearby players. The README and settings screen say so plainly. A `relay_only` setting (opt-in, off by default) removes Iroh's IP transports (`Builder::clear_ip_transports()`), so no direct addresses are advertised and all traffic goes through the relay. Under the relay budget, that means up to about 11 nearby listeners at once. |
 | Rendezvous learns who plays with whom | Only co-located mod users and their IPs; other tab-list entries stay hashed. No logs of pairs are kept; documented in a privacy note. |
 | Harassment | Per-player mute and volume persisted by UUID; players blocked in vanilla Social Interactions are muted both ways (`mute_blocked_players`, default on); "only hear friends" mode (a UUID allow-list in the client config); deafen. Mutes also tell the speaker to stop sending (`ReceiveState`). |
-| Flooding a peer | Per-peer cap of 100 datagrams/s and 400 B/frame; overflow drops packets, and sustained abuse closes the connection with a 10-minute ban |
+| Flooding a peer | Per-peer cap of 100 datagrams/s and 400 B/frame; overflow drops packets, and 5 consecutive seconds over the cap closes the connection with a 10-minute ban |
 | Rendezvous abuse | Rate limits per EndpointId and IP, pair-set caps, dev tickets rejected by production clients |
 | Relay used by unrelated Iroh apps | Relay access restricted to EndpointIds with a live rendezvous session, apart from a rate-limited 30 s grace period that lets clients register |
 | Restricted (e.g. child) accounts | Voice is disabled when the Microsoft profile or launcher disables chat (`respect_chat_restrictions`, default on) |
