@@ -5,9 +5,14 @@ import io.github.desocketed.yakvc.GameStateFeeder;
 import io.github.desocketed.yakvc.YakVcClient;
 import io.github.desocketed.yakvc.config.ClientConfig;
 import io.github.desocketed.yakvc.config.PlayerVolumes;
+import io.github.desocketed.yakvc.natives.EngineEvent;
 import io.github.desocketed.yakvc.natives.NativeBridge;
 import io.github.desocketed.yakvc.ui.VoiceMenuScreen;
 import io.github.desocketed.yakvc.ui.VoiceSettingsScreen;
+import io.github.desocketed.yakvc.ui.VoiceToasts;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
+import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
@@ -15,16 +20,20 @@ import java.nio.file.Path;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.UUID;
+import javax.imageio.ImageIO;
 import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
 import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
 import net.fabricmc.fabric.api.client.gametest.v1.context.TestSingleplayerContext;
+import net.fabricmc.fabric.api.client.gametest.v1.screenshot.TestScreenshotOptions;
 import net.fabricmc.fabric.api.entity.FakePlayer;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.CameraType;
 import net.minecraft.client.KeyMapping;
+import net.minecraft.client.gui.components.AbstractScrollArea;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.events.ContainerEventHandler;
 import net.minecraft.client.gui.components.events.GuiEventListener;
+import net.minecraft.client.gui.screens.options.controls.KeyBindsScreen;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.network.chat.Component;
 import org.jspecify.annotations.Nullable;
@@ -35,12 +44,19 @@ import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket.Act
 import net.minecraft.world.level.GameType;
 
 /**
- * Starts the real client with the native engine and dev test audio (see {@code runClientGameTest} in build.gradle),
- * opens a singleplayer world, and checks what the engine is fed: push-to-talk, and spectators excluded both ways.
+ * Starts the real client with the native engine, dev test audio and a dev rendezvous ({@link DevRendezvous}), opens a
+ * singleplayer world, and checks what the engine is fed: push-to-talk, and spectators excluded both ways.
+ *
+ * <p>On the way it takes the screenshots in {@code docs/USER_GUIDE.md}, of every HUD state and screen. They keep
+ * their names (no counter prefix), and {@code scripts/UpdateGuideScreenshots.java} copies them into {@code
+ * docs/guide/} when they change. The world, time, camera and cursor are fixed, so unchanged UI gives the same images.
  */
 @SuppressWarnings("UnstableApiUsage")
 public class YakVcClientGameTest implements FabricClientGameTest {
 	private static final UUID REMOTE = UUID.fromString("00000000-0000-4000-8000-00000000beef");
+	/** The HUD's corner of the 854×480 test window, at its GUI scale of 2. */
+	private static final int HUD_WIDTH = 76;
+	private static final int HUD_HEIGHT = 26;
 
 	@Override
 	public void runTest(ClientGameTestContext context) {
@@ -51,30 +67,63 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		if (feeder == null) {
 			throw new AssertionError("yakvc native engine did not start");
 		}
-		context.takeScreenshot("yakvc-title-screen");
 
+		// Both change with timing: the vignette fades with the light, and opening a menu in singleplayer saves the
+		// world, which shows "Saving world" for a moment.
+		context.runOnClient(mc -> {
+			mc.options.vignette().set(false);
+			mc.options.showAutosaveIndicator().set(false);
+		});
 		try (TestSingleplayerContext singleplayer = context.worldBuilder().create()) {
+			// The world builder already fixes the seed and weather and stops time; this fixes the time and view.
+			singleplayer.getServer().runCommand("time set noon");
+			singleplayer.getServer().runCommand("tp @a 0.5 -60 0.5 0 0");
 			singleplayer.getConnection().waitForChunksRender();
 			context.waitFor(mc -> feeder.session() != null && feeder.session().active());
+			context.waitFor(mc -> feeder.rendezvous() == EngineEvent.RendezvousState.REGISTERED);
 			UUID me = context.computeOnClient(mc -> mc.player.getUUID());
+			hudScreenshot(context, "hud-ready");
 
 			// Push-to-talk sends the test tone, so the engine reports the local player talking.
 			KeyMapping pushToTalk = KeyMapping.get("key.yakvc.push_to_talk");
 			context.getInput().holdKey(pushToTalk);
 			context.waitFor(mc -> feeder.talking().contains(me));
-			context.takeScreenshot("yakvc-talking");
-			// In third person the speaker shows over the player's own head.
-			context.runOnClient(mc -> mc.options.setCameraType(CameraType.THIRD_PERSON_FRONT));
+			hudScreenshot(context, "hud-talking");
+			// In third person the speaker shows over the player's own head. Looking up puts the camera above,
+			// looking down at grass only: how far the terrain reaches depends on how many chunks have loaded.
+			context.runOnClient(mc -> {
+				mc.player.setXRot(-45);
+				mc.options.setCameraType(CameraType.THIRD_PERSON_FRONT);
+			});
 			context.waitTicks(2);
-			context.takeScreenshot("yakvc-talking-indicator");
-			context.runOnClient(mc -> mc.options.setCameraType(CameraType.FIRST_PERSON));
+			// The arms sway with the player's age in ticks.
+			context.runOnClient(mc -> mc.player.tickCount = 0);
+			context.takeScreenshot(TestScreenshotOptions.of("talking-indicator").disableCounterPrefix());
+			context.runOnClient(mc -> {
+				mc.player.setXRot(0);
+				mc.options.setCameraType(CameraType.FIRST_PERSON);
+			});
 			context.getInput().releaseKey(pushToTalk);
 			context.waitFor(mc -> !feeder.talking().contains(me));
+
+			context.runOnClient(mc -> feeder.keys().setMuted(true));
+			context.waitTicks(2);
+			hudScreenshot(context, "hud-muted");
+			context.runOnClient(mc -> {
+				feeder.keys().setMuted(false);
+				feeder.keys().setDeafened(true);
+			});
+			context.waitTicks(2);
+			hudScreenshot(context, "hud-deafened");
+			context.runOnClient(mc -> feeder.keys().setDeafened(false));
+
+			toastScreenshot(context);
 
 			// A remote player is tracked until the tab list says it is a spectator.
 			FakePlayer remote = addRemotePlayer(context, singleplayer);
 			context.waitFor(mc -> feeder.tracked().contains(REMOTE));
 			checkVoiceMenu(context, feeder);
+			keyBindsScreenshot(context);
 			singleplayer.getServer().runOnServer(server -> {
 				remote.setGameMode(GameType.SPECTATOR);
 				server.getPlayerList().broadcastAll(new ClientboundPlayerInfoUpdatePacket(Action.UPDATE_GAME_MODE, remote));
@@ -107,18 +156,16 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		Path configFile = YakVcClient.configDir().resolve(ClientConfig.FILE_NAME);
 		String configBefore = read(configFile);
 		context.setScreen(() -> new VoiceMenuScreen(null, feeder));
+		screenshotScreen(context, "voice-menu");
 		pressNestedButton(context, "yakvc.menu.mute");
 		context.waitFor(mc -> feeder.volumes().get(REMOTE).muted());
-		context.takeScreenshot("yakvc-voice-menu");
 
 		context.clickScreenButton("yakvc.menu.settings");
 		context.waitForScreen(VoiceSettingsScreen.class);
-		context.takeScreenshot("yakvc-voice-settings");
+		screenshotScreen(context, "voice-settings");
 		// The privacy settings are below the fold at the test's small window size.
-		context.getInput().setCursorPos(context.computeOnClient(mc -> mc.getWindow().getScreenWidth() / 2.0),
-				context.computeOnClient(mc -> mc.getWindow().getScreenHeight() / 2.0));
-		context.getInput().scroll(-10);
-		context.takeScreenshot("yakvc-voice-settings-privacy");
+		scrollDown(context);
+		screenshotScreen(context, "voice-settings-privacy");
 		context.clickScreenButton("gui.done");
 		context.waitForScreen(VoiceMenuScreen.class);
 		context.clickScreenButton("gui.done");
@@ -134,6 +181,70 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		context.runOnClient(mc -> feeder.volumes().set(REMOTE, PlayerVolumes.DEFAULT));
 		try {
 			feeder.volumes().save();
+		} catch (IOException e) {
+			throw new UncheckedIOException(e);
+		}
+	}
+
+	/** The game's own key binds screen, scrolled to the Yak VC keys at the end. */
+	private static void keyBindsScreenshot(ClientGameTestContext context) {
+		context.setScreen(() -> new KeyBindsScreen(null, context.computeOnClient(mc -> mc.options)));
+		scrollDown(context);
+		screenshotScreen(context, "key-binds");
+		context.setScreen(() -> null);
+	}
+
+	/** An example failure toast, in the top-right corner. */
+	private static void toastScreenshot(ClientGameTestContext context) {
+		context.runOnClient(mc -> VoiceToasts.show(Component.translatable("yakvc.toast.crashed")));
+		// Toasts slide in by the clock from their first frame, not by ticks.
+		context.waitTicks(2);
+		try {
+			Thread.sleep(1000);
+		} catch (InterruptedException e) {
+			throw new AssertionError(e);
+		}
+		context.waitTicks(2);
+		Path path = context.takeScreenshot(TestScreenshotOptions.of("toast").disableCounterPrefix());
+		cropTop(path, true, 470, 90, 1);
+		context.runOnClient(mc -> mc.gui.toastManager().clear());
+	}
+
+	/** Scrolls the open screen's list to the end. */
+	private static void scrollDown(ClientGameTestContext context) {
+		context.runOnClient(mc -> {
+			for (GuiEventListener widget : mc.gui.screen().children()) {
+				if (widget instanceof AbstractScrollArea list) list.setScrollAmount(list.maxScrollAmount());
+			}
+		});
+	}
+
+	/**
+	 * A screenshot of the open screen for the user guide, with the cursor in the corner so nothing shows as hovered.
+	 */
+	private static void screenshotScreen(ClientGameTestContext context, String name) {
+		context.getInput().setCursorPos(0, 0);
+		context.waitTicks(2);
+		context.takeScreenshot(TestScreenshotOptions.of(name).disableCounterPrefix());
+	}
+
+	/** The HUD's icons in the top-left corner, for the user guide, enlarged so the small icons are easy to see. */
+	private static void hudScreenshot(ClientGameTestContext context, String name) {
+		Path path = context.takeScreenshot(TestScreenshotOptions.of(name).disableCounterPrefix());
+		cropTop(path, false, HUD_WIDTH, HUD_HEIGHT, 3);
+	}
+
+	/** Keeps only the top-left or top-right corner of a screenshot, enlarged {@code scale} times with sharp pixels. */
+	private static void cropTop(Path png, boolean right, int width, int height, int scale) {
+		try {
+			BufferedImage image = ImageIO.read(png.toFile());
+			int x = right ? image.getWidth() - width : 0;
+			BufferedImage out = new BufferedImage(width * scale, height * scale, BufferedImage.TYPE_INT_RGB);
+			Graphics2D graphics = out.createGraphics();
+			graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+			graphics.drawImage(image.getSubimage(x, 0, width, height), 0, 0, width * scale, height * scale, null);
+			graphics.dispose();
+			ImageIO.write(out, "png", png.toFile());
 		} catch (IOException e) {
 			throw new UncheckedIOException(e);
 		}
