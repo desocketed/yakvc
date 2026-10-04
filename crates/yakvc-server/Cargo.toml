@@ -10,10 +10,19 @@ publish.workspace = true
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+iroh.workspace = true
+iroh-relay.workspace = true
+reqwest.workspace = true
+rustls.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 toml.workspace = true
 yakvc-shared.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "test-util", "time"] }
 
 [lints]
 workspace = true
