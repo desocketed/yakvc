@@ -17,7 +17,8 @@ struct Args {
 enum Cmd {
     /// Build yakvc-ffi in release mode and stage it for the mod.
     Natives {
-        /// `host`, `all`, or a Rust target triple.
+        /// `host` (a quick dev build), `all` (every release target this
+        /// host's OS builds), or a Rust target triple.
         #[arg(long, default_value = "host")]
         target: String,
         /// Staging directory; gets `<os>-<arch>/` subdirectories and a
@@ -32,7 +33,13 @@ enum Cmd {
         check: bool,
     },
     /// Build the release jar into dist/.
-    Dist,
+    Dist {
+        /// Natives staged by `natives --out` on each OS (CI artifacts,
+        /// merged into one directory). Without it, builds them for this
+        /// host only.
+        #[arg(long)]
+        from: Option<PathBuf>,
+    },
     /// Build the yakvc-server Docker image.
     ServerImage,
     /// Start a dev-mode server and print client config.
@@ -46,8 +53,8 @@ fn main() -> Result<()> {
             &out.unwrap_or_else(|| root().join("mod/build/natives")),
         ),
         Cmd::Header { check } => header(check),
-        Cmd::Dist => bail!("`dist` is not implemented yet (M6)"),
-        Cmd::ServerImage => bail!("`server-image` is not implemented yet (M6)"),
+        Cmd::Dist { from } => dist(from.as_deref()),
+        Cmd::ServerImage => server_image(),
         Cmd::Dev => bail!("`dev` is not implemented yet (M3)"),
     }
 }
@@ -59,45 +66,96 @@ fn root() -> PathBuf {
         .to_path_buf()
 }
 
+/// The workspace version, which the mod shares.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// The oldest glibc the Linux natives run on.
+const GLIBC: &str = "2.17";
+
 fn natives(target: &str, out: &Path) -> Result<()> {
-    let target = match target {
-        "all" => bail!("`--target all` is not implemented yet (M6); use CI's per-platform builds"),
-        "host" => None,
-        triple => Some(triple),
-    };
-
-    let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-    let mut cmd = Command::new(cargo);
-    cmd.current_dir(root())
-        .args(["build", "--release", "--package", "yakvc-ffi"]);
-    if let Some(triple) = target {
-        cmd.args(["--target", triple]);
+    match target {
+        "host" => {
+            let lib = build_ffi(None)?;
+            let platform = format!("{}-{}", env::consts::OS, env::consts::ARCH);
+            stage(&lib, &out.join(platform))?;
+        }
+        // Each OS builds its own release targets: CI runs this once per OS
+        // and merges the outputs.
+        "all" => match env::consts::OS {
+            "linux" => {
+                for triple in ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"] {
+                    natives(triple, out)?;
+                }
+            }
+            "macos" => {
+                let x86 = build_ffi(Some("x86_64-apple-darwin"))?;
+                let arm = build_ffi(Some("aarch64-apple-darwin"))?;
+                let dir = out.join("macos-universal");
+                fs::create_dir_all(&dir)?;
+                let universal = dir.join(x86.file_name().unwrap());
+                run(Command::new("lipo")
+                    .arg("-create")
+                    .arg(&x86)
+                    .arg(&arm)
+                    .arg("-output")
+                    .arg(&universal))?;
+                println!("staged {}", universal.display());
+            }
+            "windows" => natives("x86_64-pc-windows-msvc", out)?,
+            other => bail!("no release targets for {other}"),
+        },
+        triple => {
+            let (os, arch) = parse_triple(triple)?;
+            let lib = build_ffi(Some(triple))?;
+            stage(&lib, &out.join(format!("{os}-{arch}")))?;
+        }
     }
-    ensure!(cmd.status()?.success(), "cargo build failed");
+    write_manifest(out)
+}
 
-    let (os, arch) = match target {
-        None => (env::consts::OS, env::consts::ARCH),
-        Some(triple) => parse_triple(triple)?,
-    };
-    let (prefix, ext) = match os {
-        "linux" => ("lib", "so"),
-        "macos" => ("lib", "dylib"),
-        "windows" => ("", "dll"),
-        other => bail!("unsupported OS {other}"),
-    };
-    let file = format!("{prefix}yakvc_ffi.{ext}");
+/// Builds yakvc-ffi in release mode for `target` (or the host) and returns
+/// the library's path. Linux targets are built with cargo-zigbuild, so the
+/// library runs on any glibc since 2.17.
+fn build_ffi(target: Option<&str>) -> Result<PathBuf> {
+    let mut cmd = cargo();
+    cmd.args(["build", "--release", "--package", "yakvc-ffi"]);
     let mut built = root().join("target");
-    if let Some(triple) = target {
-        built.push(triple);
-    }
+    let os = match target {
+        None => env::consts::OS,
+        Some(triple) => {
+            let (os, _) = parse_triple(triple)?;
+            if os == "linux" {
+                // alsa-sys finds the target's libasound with pkg-config,
+                // which refuses cross builds unless allowed. Its search path
+                // comes from PKG_CONFIG_PATH_<triple> (see flake.nix and the
+                // CI workflow).
+                cmd = cargo();
+                cmd.args(["zigbuild", "--release", "--package", "yakvc-ffi"])
+                    .arg(format!("--target={triple}.{GLIBC}"))
+                    .env("PKG_CONFIG_ALLOW_CROSS", "1");
+            } else {
+                cmd.arg(format!("--target={triple}"));
+            }
+            built.push(triple);
+            os
+        }
+    };
+    run(&mut cmd)?;
     built.push("release");
-    built.push(&file);
+    built.push(match os {
+        "linux" => "libyakvc_ffi.so",
+        "macos" => "libyakvc_ffi.dylib",
+        "windows" => "yakvc_ffi.dll",
+        other => bail!("unsupported OS {other}"),
+    });
+    Ok(built)
+}
 
-    let dir = out.join(format!("{os}-{arch}"));
-    fs::create_dir_all(&dir)?;
-    fs::copy(&built, dir.join(&file)).with_context(|| format!("copying {}", built.display()))?;
-    write_manifest(out)?;
-    println!("staged {}", dir.join(&file).display());
+fn stage(lib: &Path, dir: &Path) -> Result<()> {
+    fs::create_dir_all(dir)?;
+    let to = dir.join(lib.file_name().unwrap());
+    fs::copy(lib, &to).with_context(|| format!("copying {}", lib.display()))?;
+    println!("staged {}", to.display());
     Ok(())
 }
 
@@ -117,6 +175,20 @@ fn parse_triple(triple: &str) -> Result<(&'static str, &'static str)> {
         bail!("unsupported OS in {triple}")
     };
     Ok((os, arch))
+}
+
+fn cargo() -> Command {
+    let mut cmd = Command::new(env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
+    cmd.current_dir(root());
+    cmd
+}
+
+fn run(cmd: &mut Command) -> Result<()> {
+    let status = cmd
+        .status()
+        .with_context(|| format!("running {:?}", cmd.get_program()))?;
+    ensure!(status.success(), "{cmd:?} failed");
+    Ok(())
 }
 
 /// Writes `natives.sha256` covering every staged library, in `sha256sum`
@@ -149,6 +221,98 @@ fn write_manifest(out: &Path) -> Result<()> {
     }
     fs::write(out.join("natives.sha256"), manifest)?;
     Ok(())
+}
+
+/// Packages the release jar from the staged natives and THIRD_PARTY_LICENSES
+/// with the Gradle build, which also runs the mod's unit tests.
+fn dist(from: Option<&Path>) -> Result<()> {
+    let work = root().join("target/dist");
+    let natives_dir = work.join("natives");
+    if natives_dir.exists() {
+        fs::remove_dir_all(&natives_dir)?;
+    }
+    match from {
+        // Every CI artifact brings its own manifest, so copy only the
+        // platform directories and write the manifest anew.
+        Some(from) => {
+            let platforms =
+                fs::read_dir(from).with_context(|| format!("reading {}", from.display()))?;
+            for platform in platforms {
+                let platform = platform?;
+                if !platform.file_type()?.is_dir() {
+                    continue;
+                }
+                for lib in fs::read_dir(platform.path())? {
+                    stage(&lib?.path(), &natives_dir.join(platform.file_name()))?;
+                }
+            }
+            write_manifest(&natives_dir)?;
+        }
+        None => natives("host", &natives_dir)?,
+    }
+
+    let licenses = work.join("THIRD_PARTY_LICENSES");
+    third_party_licenses("yakvc-ffi", &licenses)?;
+
+    let gradlew = if cfg!(windows) {
+        "gradlew.bat"
+    } else {
+        "gradlew"
+    };
+    run(Command::new(root().join("mod").join(gradlew))
+        .current_dir(root().join("mod"))
+        .arg("build")
+        .arg(format!("-Pyakvc.prebuiltNatives={}", natives_dir.display()))
+        .arg(format!("-Pyakvc.thirdPartyLicenses={}", licenses.display())))?;
+
+    let jar = format!("yakvc-{VERSION}.jar");
+    let dist = root().join("dist");
+    fs::create_dir_all(&dist)?;
+    fs::copy(root().join("mod/build/libs").join(&jar), dist.join(&jar))?;
+    println!("wrote {}", dist.join(&jar).display());
+    Ok(())
+}
+
+/// Builds a static yakvc-server and the Docker image around it, tagged
+/// `yakvc-server:<version>` and `yakvc-server:latest`.
+fn server_image() -> Result<()> {
+    let triple = "x86_64-unknown-linux-musl";
+    run(cargo()
+        .args(["zigbuild", "--release", "--package", "yakvc-server"])
+        .arg(format!("--target={triple}")))?;
+
+    let context = root().join("target/server-image");
+    if context.exists() {
+        fs::remove_dir_all(&context)?;
+    }
+    fs::create_dir_all(context.join("state"))?;
+    let binary = root()
+        .join("target")
+        .join(triple)
+        .join("release/yakvc-server");
+    fs::copy(&binary, context.join("yakvc-server"))?;
+    fs::copy(root().join("deploy/Dockerfile"), context.join("Dockerfile"))?;
+    third_party_licenses("yakvc-server", &context.join("THIRD_PARTY_LICENSES"))?;
+
+    let tag = format!("yakvc-server:{VERSION}");
+    run(Command::new("docker")
+        .args(["build", "--tag", &tag, "--tag", "yakvc-server:latest"])
+        .arg(&context))?;
+    println!("built image {tag} (also yakvc-server:latest)");
+    Ok(())
+}
+
+/// Writes the licence notices of everything `package` links, which the MIT,
+/// Apache and BSD licences (libopus's among them) require to ship with it.
+fn third_party_licenses(package: &str, out: &Path) -> Result<()> {
+    fs::create_dir_all(out.parent().unwrap())?;
+    run(cargo()
+        .args(["about", "generate", "--fail", "--config", "about.toml"])
+        .arg("--manifest-path")
+        .arg(format!("crates/{package}/Cargo.toml"))
+        .arg("--output-file")
+        .arg(out)
+        .arg("xtask/third-party-licenses.hbs"))
 }
 
 fn header(check: bool) -> Result<()> {

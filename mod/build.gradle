@@ -79,9 +79,20 @@ test {
 	jvmArgs '--enable-native-access=ALL-UNNAMED'
 }
 
+// `cargo xtask dist` passes the notices of the Rust dependencies linked into the natives.
+def thirdPartyLicenses = providers.gradleProperty('yakvc.thirdPartyLicenses')
+
 jar {
 	from(rootProject.file('../LICENSE-MIT'))
 	from(rootProject.file('../LICENSE-APACHE'))
+	if (thirdPartyLicenses.isPresent()) {
+		from(thirdPartyLicenses.map { file(it) })
+	}
+	// JEP 472: lets FFM load the natives without a warning where the jar is the launched application. Minecraft
+	// launchers don't launch mod jars, so players still need --enable-native-access=ALL-UNNAMED (see README).
+	manifest {
+		attributes 'Enable-Native-Access': 'ALL-UNNAMED'
+	}
 }
 
 // The gametest client has no sound card. Dev test audio stands in for the devices, so the engine reports no

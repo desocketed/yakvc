@@ -1,0 +1,36 @@
+# cargo-about, which `cargo xtask dist` and `cargo xtask server-image` run to
+# write THIRD_PARTY_LICENSES. The licence list matches deny.toml.
+accepted = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Zlib",
+]
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-unknown-linux-musl",
+]
+# Only code that ships in the jar or the server binary.
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+# Our own crates are `publish = false`; this lists only third-party code.
+private = { ignore = true }
+
+# opusic-sys bundles libopus, whose BSD notice is in LICENSE; without this
+# cargo-about picks the notice of one source file instead.
+[opusic-sys.clarify]
+license = "BSD-3-Clause"
+[[opusic-sys.clarify.files]]
+path = "LICENSE"
+license = "BSD-3-Clause"
+checksum = "01e1167d54a096d123cf6dfbbeb19587278845c6481d2d66d545669846079551"

@@ -184,6 +184,15 @@ mod tests {
     }
 
     #[test]
+    fn deploy_example_is_valid() {
+        let config: Config = toml::from_str(include_str!("../../../deploy/config.toml")).unwrap();
+        assert!(!config.insecure_dev_auth);
+        let options = config.relay.unwrap().into_options().unwrap();
+        assert!(!options.open);
+        assert!(matches!(options.tls, Some(RelayTls::LetsEncrypt { .. })));
+    }
+
+    #[test]
     fn rejects_unknown_keys() {
         let toml = "endpoint_key = \"a\"\nissuer_key = \"b\"\nbind = \"0.0.0.0:1\"\nfoo = 1";
         assert!(toml::from_str::<Config>(toml).is_err());

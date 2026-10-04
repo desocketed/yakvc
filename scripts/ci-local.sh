@@ -3,7 +3,10 @@
 # stopping at the first failure. Use it before pushing to main.
 #
 #   scripts/ci-local.sh            everything, including the Minecraft gametest
-#   scripts/ci-local.sh --fast     skip the mod build and gametest
+#   scripts/ci-local.sh --fast     skip the release builds, mod build and gametest
+#
+# Windows and macOS natives build only on their own CI runners, and the
+# server image only where Docker is installed.
 set -euo pipefail
 
 if [ -z "${IN_NIX_SHELL:-}" ]; then
@@ -31,12 +34,20 @@ step "deny"
 cargo deny check
 
 if [ "${1:-}" = --fast ]; then
-	step "skipped the mod build and gametest (--fast)"
+	step "skipped the release builds, mod build and gametest (--fast)"
 	exit 0
 fi
 
-step "mod: build"
-(cd mod && ./gradlew build)
+step "natives: Linux release targets"
+cargo xtask natives --target all --out target/ci-natives
+step "server: image"
+if command -v docker >/dev/null; then
+	cargo xtask server-image
+else
+	echo "no docker here; skipped"
+fi
+step "mod: build (cargo xtask dist, host natives)"
+cargo xtask dist
 step "mod: client gametest"
 scripts/gametest-headless.sh
 
