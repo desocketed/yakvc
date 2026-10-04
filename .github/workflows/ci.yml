@@ -194,6 +194,15 @@ jobs:
           name: server
           path: server/
 
+  # The flake's server package (with its tests) and NixOS module. Runners
+  # build in Nix's sandbox, unlike the dev container.
+  nix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+      - run: nix flake check --print-build-logs
+
   # On a version tag: the GitHub release (jar, yakvc-cli, static
   # yakvc-server), the image on GHCR, and the jar on Modrinth and
   # CurseForge. Each mod site is skipped until its secret and project
