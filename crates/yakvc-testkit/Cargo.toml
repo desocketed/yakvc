@@ -9,10 +9,14 @@ publish.workspace = true
 
 [dependencies]
 thiserror.workspace = true
+tokio = { workspace = true, features = ["time"] }
 yakvc-audio.workspace = true
 yakvc-client = { workspace = true, features = ["sim"] }
 yakvc-server.workspace = true
 yakvc-shared.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 
 [lints]
 workspace = true
