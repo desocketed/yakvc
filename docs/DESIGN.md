@@ -430,7 +430,7 @@ size_t   yakvc_last_error(uint8_t *buf, size_t cap);         // message for this
 | Target | Built on | Notes |
 | --- | --- | --- |
 | `x86_64-unknown-linux-gnu` | Linux runner, `cargo-zigbuild` targeting glibc 2.17 | ALSA linked dynamically; PipeWire/Pulse provide ALSA compatibility |
-| `aarch64-unknown-linux-gnu` | Linux runner, `cargo-zigbuild` | Raspberry Pi / ARM Linux. `alsa-sys` needs arm64 `libasound` headers in a sysroot (or build on an ARM runner). |
+| `aarch64-unknown-linux-gnu` | Linux runner, `cargo-zigbuild` | Raspberry Pi / ARM Linux. `alsa-sys` finds arm64 `libasound` through pkg-config's per-target `PKG_CONFIG_PATH_aarch64_unknown_linux_gnu`: Ubuntu's multiarch `libasound2-dev:arm64` in CI, nixpkgs' aarch64 `alsa-lib` in the dev shell |
 | `x86_64-pc-windows-msvc` | Windows runner | WASAPI via `cpal` |
 | `x86_64-apple-darwin` + `aarch64-apple-darwin` | macOS runner | Merged with `lipo` into one universal `.dylib` |
 
@@ -438,10 +438,10 @@ libopus is built from source by the `opus` crate (via `opusic-sys`, feature `bun
 
 **xtask commands**
 
-- `cargo xtask natives [--target host|all|<triple>]` builds `yakvc-ffi` in release and copies it to `mod/build/natives/<os>-<arch>/` (or `--out <dir>`), with a `natives.sha256` manifest. Gradle adds that directory to the jar under `natives/`.
+- `cargo xtask natives [--target host|all|<triple>]` (`all` means every release target the host OS can build, so CI runs it once per OS and merges the results) builds `yakvc-ffi` in release and copies it to `mod/build/natives/<os>-<arch>/` (or `--out <dir>`), with a `natives.sha256` manifest. Gradle adds that directory to the jar under `natives/`.
 - `cargo xtask header [--check]` regenerates `yakvc.h` with `cbindgen`, or fails if the checked-in copy is stale.
 - `cargo xtask dist` stages natives from `--from <dir>` (CI artifacts) or builds them, runs `./gradlew build`, generates `THIRD_PARTY_LICENSES` (see licensing) into the jar and the server image, and writes the jar to `dist/`.
-- `cargo xtask server-image` builds the `yakvc-server` Docker image.
+- `cargo xtask server-image` builds a static musl `yakvc-server` and the Docker image from `deploy/Dockerfile`, on `gcr.io/distroless/static-debian13:nonroot` (not `scratch`: Mojang's HTTPS needs CA certificates). `deploy/` also holds an example production config, a compose file and a systemd unit; the server reports readiness through `NOTIFY_SOCKET`.
 - `cargo xtask dev` starts a dev-mode server and prints the config snippet for `runClient`.
 
 **Gradle integration**
@@ -456,7 +456,7 @@ libopus is built from source by the `opus` crate (via `opusic-sys`, feature `bun
 1. `rust`: `cargo fmt --check`, `cargo clippy --workspace --all-targets -D warnings`, `cargo xtask header --check`, `cargo deny check`, `cargo test --workspace` (includes `yakvc-testkit` integration tests with dev auth and null audio).
 2. `natives` (matrix: ubuntu, windows, macos): `cargo xtask natives --target <list>`, upload artifacts.
 3. `mod`: download natives, `cargo xtask dist --from artifacts/`, run Fabric client gametests (load mod, create engine, destroy). Loom runs them under Xvfb on Linux when `CI` is set.
-4. `release` (on tag): publish the jar to Modrinth/CurseForge, the server image to GHCR, and `yakvc-cli` binaries (for `net report` in bug reports) as GitHub release assets.
+4. `release` (on a `v<version>` tag): a GitHub release (prerelease when the version has a `-`) with the jar, the `yakvc-cli` binaries (for `net report` in bug reports, built in the `natives` jobs) and the static server binary; the server image to GHCR; the jar to Modrinth and CurseForge with `mc-publish`, each skipped until its token secret and project ID variable exist.
 
 **Licensing**
 
