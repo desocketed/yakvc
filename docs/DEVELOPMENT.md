@@ -8,7 +8,8 @@ How the implementation is built: milestones from [DESIGN.md](DESIGN.md), worked 
 | --- | --- |
 | M0 Skeleton | Done. Workspace, crate stubs, xtask (`header`, `natives`), CI, plus a minimal Fabric mod that loads `yakvc-ffi` through FFM (verified in `runClient` on 26.3). A Fabric client gametest (`scripts/gametest-headless.sh`, also in CI) checks that the mod and native engine load and a singleplayer world renders; it passed from a fresh clone 2026-10-04. |
 | Relay feature check (from M2) | Done 2026-10-04. All needed `iroh-relay` 1.3 server features exist; details in DESIGN.md dependency rules. Found and fixed a gap: `relay_only` clients could not reach the rendezvous, so the relay now gives new clients a 30 s grace admission. |
-| Contract pass | Drafted 2026-10-04 (public APIs as compiling `todo!()` stubs in every crate); awaiting user review before fan-out. |
+| Contract pass | Done. Drafted and approved by the user 2026-10-04 (public APIs as compiling `todo!()` stubs in every crate). |
+| Round 1 | Started 2026-10-04: four agents (protocol, audio, engine, harness) implementing against the contract in worktrees. |
 | M1–M3 | Planned as one parallel push (see below). |
 
 **Decisions settled 2026-10-04:** wire encoding (see DESIGN.md wire format); Java package `io.github.desocketed.yakvc` under the maintainer's domain `desocketed.github.io`; `yakvc-server` is Linux-only for good (the mod still targets every Minecraft Java platform).
