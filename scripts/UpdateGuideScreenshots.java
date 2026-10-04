@@ -1,6 +1,6 @@
 // Copies the client gametest's screenshots into docs/guide/ for docs/USER_GUIDE.md, but only the ones that look
-// different, so the small rendering differences between machines don't change the repository on every run. CI runs
-// it after the gametest on main and commits what changed; locally, run it after scripts/gametest-headless.sh.
+// different, so small rendering differences (another machine, another Mesa) don't change the repository on every
+// run. scripts/gametest-headless.sh, and so scripts/ci-local.sh, runs it after a passing gametest; commit what changed.
 //
 // Usage (from the repo root): java scripts/UpdateGuideScreenshots.java [screenshots dir] [guide dir]
 //
