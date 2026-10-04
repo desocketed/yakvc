@@ -453,6 +453,8 @@ libopus is built from source by the `opus` crate (via `opusic-sys`, feature `bun
 
 **CI (GitHub Actions)**
 
+While the repository is private, Actions minutes are limited, so CI runs on version tags, pull requests and manual dispatch, not on every push to `main`; `scripts/ci-local.sh` runs the Linux checks before each push instead. A `nix` job runs `nix flake check`.
+
 1. `rust`: `cargo fmt --check`, `cargo clippy --workspace --all-targets -D warnings`, `cargo xtask header --check`, `cargo deny check`, `cargo test --workspace` (includes `yakvc-testkit` integration tests with dev auth and null audio).
 2. `natives` (matrix: ubuntu, windows, macos): `cargo xtask natives --target <list>`, upload artifacts.
 3. `mod`: download natives, `cargo xtask dist --from artifacts/`, run Fabric client gametests (load mod, create engine, destroy). Loom runs them under Xvfb on Linux when `CI` is set.
@@ -468,7 +470,7 @@ libopus is built from source by the `opus` crate (via `opusic-sys`, feature `bun
 
 - Connection protocols (`rdv/1`, `peer/1`) are versioned in the ALPN; incompatible changes bump the ALPN, and the server serves old and new side by side during rollouts. Application protocols on a peer connection (`voice` v1) are versioned in `PeerHello`, and peers use the highest version both support.
 - `ABI_VERSION` ties the Java and native halves of one mod build together; a mismatch fails at `yakvc_abi_version()` before the engine starts.
-- Mod version and Rust workspace version stay in lockstep: one release = one version number.
+- Mod version and Rust workspace version stay in lockstep: one release = one version number. Beta releases are `0.1.0-beta.1`, `0.1.0-beta.2`, … and `0.1.0` ends the beta (maintainer decision, 2026-10-04); a version with a `-` is published as a prerelease.
 
 ## Security, privacy and abuse
 
@@ -518,7 +520,7 @@ Build order runs Rust-first: every networking and audio milestone is provable wi
    - Exit: two real accounts on a public online-mode server, no dev flags.
 7. **M6 Beta.** All-platform natives, settings and peer UI, talking indicators, relay-only mode, MOTD opt-out, production server deployed. Check the CurseForge project name is free, and check the default keybinds against popular modpacks. During the beta, resize the VPS from relayed-share and monthly-transfer metrics.
    - Exit: the same jar works on Windows, macOS and Linux; public beta on Modrinth.
-8. **Post-v1.** Serverless discovery, OpenAL/HRTF output, groups, NeoForge port.
+8. **Post-v1.** Group and radio channels first (maintainer priority, 2026-10-04), then serverless discovery, OpenAL/HRTF output and a NeoForge port.
    - **Read-only Java API for other mods:** talking and peer-state events, plus per-player mute and volume, so HUD and social mods can integrate without data channels.
    - **Generic P2P channels for other mods**, only if mod authors ask for it. This would extract `net` into a separate library mod that other mods register protocols with. It must first solve: per-protocol consent (a mod can't send to peers that haven't installed it), relay quotas per protocol, the fact that every peer learns your IP, a server opt-out covering all protocols, and a stable Java API. Generic position-sharing channels make PvP radar cheats easy, so server-owner opt-out matters more here than for voice.
 
