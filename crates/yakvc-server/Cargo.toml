@@ -10,7 +10,10 @@ publish.workspace = true
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
-yakvc-shared = { workspace = true, features = ["mojang"] }
+serde.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+yakvc-shared.workspace = true
 
 [lints]
 workspace = true

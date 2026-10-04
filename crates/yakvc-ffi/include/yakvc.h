@@ -13,9 +13,220 @@
  */
 #define YAKVC_ABI_VERSION 1
 
+#define YAKVC_OK 0
+
+/**
+ * A null pointer, bad UUID, invalid UTF-8 or out-of-range value.
+ */
+#define YAKVC_ERR_INVALID_ARGUMENT -1
+
+/**
+ * `yakvc_create` was passed a different ABI version.
+ */
+#define YAKVC_ERR_ABI_MISMATCH -2
+
+/**
+ * The config TOML did not parse or validate.
+ */
+#define YAKVC_ERR_CONFIG -3
+
+/**
+ * The engine failed to start (key file, network).
+ */
+#define YAKVC_ERR_START -4
+
+#define YAKVC_ERR_AUDIO -5
+
+/**
+ * This call panicked. The engine is now poisoned.
+ */
+#define YAKVC_ERR_PANIC -6
+
+/**
+ * An earlier call panicked; only `yakvc_destroy` is still allowed.
+ */
+#define YAKVC_ERR_POISONED -7
+
+/**
+ * Not implemented yet. Removed before release.
+ */
+#define YAKVC_ERR_UNIMPLEMENTED -99
+
+#define YAKVC_INPUT_PUSH_TO_TALK (1 << 0)
+
+#define YAKVC_INPUT_MUTED (1 << 1)
+
+#define YAKVC_INPUT_DEAFENED (1 << 2)
+
+#define YAKVC_INPUT_SPECTATOR (1 << 3)
+
+#define YAKVC_EVENT_JOIN_REQUEST 1
+
+#define YAKVC_EVENT_RENDEZVOUS_STATE 2
+
+#define YAKVC_EVENT_PEER_STATE 3
+
+#define YAKVC_EVENT_TALKING 4
+
+#define YAKVC_EVENT_MIC_LEVEL 5
+
+#define YAKVC_EVENT_ERROR 6
+
+#define YAKVC_RDV_CONNECTING 0
+
+#define YAKVC_RDV_AUTHENTICATING 1
+
+#define YAKVC_RDV_REGISTERED 2
+
+#define YAKVC_RDV_RETRYING 3
+
+#define YAKVC_RDV_DISCONNECTED 4
+
+#define YAKVC_PEER_CONNECTING 0
+
+#define YAKVC_PEER_DIRECT 1
+
+#define YAKVC_PEER_RELAYED 2
+
+#define YAKVC_PEER_RELAY_FULL 3
+
+#define YAKVC_PEER_FAILED 4
+
+#define YAKVC_PEER_GONE 5
+
+/**
+ * Opaque engine handle.
+ */
+typedef struct YakVcEngine YakVcEngine;
+
 /**
  * Returns [`YAKVC_ABI_VERSION`]. Safe to call before anything else.
  */
 uint32_t yakvc_abi_version(void);
+
+/**
+ * Starts an engine. `config_dir` holds the client key and ticket cache;
+ * `config_toml` is the contents of `client.toml`.
+ *
+ * # Safety
+ * The `(ptr, len)` pairs must be readable; `out` must be writable.
+ */
+int32_t yakvc_create(const uint8_t *config_dir,
+                     size_t dir_len,
+                     const uint8_t *config_toml,
+                     size_t toml_len,
+                     uint32_t abi_version,
+                     struct YakVcEngine **out);
+
+/**
+ * Shuts down gracefully (at most 500 ms) and frees the handle. Must be the
+ * last call on `engine`. Null is ignored.
+ *
+ * # Safety
+ * `engine` must come from `yakvc_create` and not be used afterwards.
+ */
+void yakvc_destroy(struct YakVcEngine *engine);
+
+/**
+ * # Safety
+ * `engine` must be live; `uuid` must point to 16 bytes; `name` must be readable.
+ */
+int32_t yakvc_set_identity(struct YakVcEngine *engine,
+                           const uint8_t *uuid,
+                           const uint8_t *name,
+                           size_t name_len);
+
+/**
+ * Replaces the tab list with `count` UUIDs. Call only when it changes.
+ *
+ * # Safety
+ * `engine` must be live; `uuids` must point to `16 * count` bytes.
+ */
+int32_t yakvc_set_tab_list(struct YakVcEngine *engine, const uint8_t *uuids, size_t count);
+
+/**
+ * Pushes one tick's world: `listener` is `x, y, z, yaw, pitch`; then `count`
+ * tracked players as UUIDs and `x, y, z` triples.
+ *
+ * # Safety
+ * `engine` must be live; `listener` must point to 5 doubles, `uuids` to
+ * `16 * count` bytes and `xyz` to `3 * count` doubles.
+ */
+int32_t yakvc_push_world(struct YakVcEngine *engine,
+                         const double *listener,
+                         const uint8_t *uuids,
+                         const double *xyz,
+                         size_t count);
+
+/**
+ * `flags` is a combination of `YAKVC_INPUT_*`.
+ *
+ * # Safety
+ * `engine` must be live.
+ */
+int32_t yakvc_set_input(struct YakVcEngine *engine, uint32_t flags);
+
+/**
+ * The game's Voice/Speech slider, `0..1`.
+ *
+ * # Safety
+ * `engine` must be live.
+ */
+int32_t yakvc_set_game_volume(struct YakVcEngine *engine, float volume);
+
+/**
+ * # Safety
+ * `engine` must be live; `uuid` must point to 16 bytes.
+ */
+int32_t yakvc_set_peer_volume(struct YakVcEngine *engine,
+                              const uint8_t *uuid,
+                              float volume,
+                              bool muted);
+
+/**
+ * Reports the result of `joinServer` for a `YAKVC_EVENT_JOIN_REQUEST`.
+ *
+ * # Safety
+ * `engine` must be live.
+ */
+int32_t yakvc_complete_join(struct YakVcEngine *engine, uint32_t request_id, bool ok);
+
+/**
+ * Writes whole queued event records into `buf`; `*written` is the bytes
+ * used. Records that don't fit stay queued for the next call.
+ *
+ * # Safety
+ * `engine` must be live; `buf` must be writable for `cap` bytes; `written`
+ * must be writable.
+ */
+int32_t yakvc_poll_events(struct YakVcEngine *engine, uint8_t *buf, size_t cap, size_t *written);
+
+/**
+ * Applies a new `client.toml`.
+ *
+ * # Safety
+ * `engine` must be live; `toml` must be readable.
+ */
+int32_t yakvc_update_config(struct YakVcEngine *engine, const uint8_t *toml, size_t len);
+
+/**
+ * Writes the audio device list as JSON. `*needed` is the full length; if it
+ * exceeds `cap`, nothing is written and the caller retries with a larger
+ * buffer.
+ *
+ * # Safety
+ * `engine` must be live; `buf` must be writable for `cap` bytes; `needed`
+ * must be writable.
+ */
+int32_t yakvc_list_devices(struct YakVcEngine *engine, uint8_t *buf, size_t cap, size_t *needed);
+
+/**
+ * Copies this thread's last error message into `buf` (truncated to `cap`)
+ * and returns its full length, or 0 if there is none.
+ *
+ * # Safety
+ * `buf` must be writable for `cap` bytes.
+ */
+size_t yakvc_last_error(uint8_t *buf, size_t cap);
 
 #endif  /* YAKVC_H */

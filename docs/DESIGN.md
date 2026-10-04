@@ -115,13 +115,13 @@ minecraft-p2p-vc/
 
 | Crate | Kind | Depends on (internal) | Owns |
 | --- | --- | --- | --- |
-| `yakvc-shared` | lib | none | Wire messages + versioning, ALPN constants, datagram header, `Ticket` (sign/verify), pair-token derivation, Mojang session-server client (`hasJoined`), common error types |
-| `yakvc-audio` | lib | none | `cpal` devices, Opus encode/decode, resampling to 48 kHz, jitter buffer, per-source gain/pan mixer, VAD. No networking. |
-| `yakvc-client` | lib | shared, audio | `Engine`, in two layers: `net` (Iroh endpoint, rendezvous session, peer manager, protocol routing) and `voice` (send/receive loop, recipient selection, spatial input). Also the world model (positions, tab list), command/event API, `sim` module (feature-gated) |
+| `yakvc-shared` | lib | none | Wire messages + versioning, ALPN constants, datagram header, `SignedTicket` signing and `TicketVerifier`, pair-token derivation, the auth challenge digest, control-stream framing |
+| `yakvc-audio` | lib | none | `cpal` devices, Opus encode/decode, resampling to 48 kHz, jitter buffer, per-source gain/pan mixer, VAD. No networking. Also hardware-free I/O for tests: WAV and tone sources, and a recording null sink. |
+| `yakvc-client` | lib | shared, audio | `Engine`, in two layers: `net` (Iroh endpoint, rendezvous session, peer manager, protocol routing) and `voice` (send/receive loop, recipient selection, spatial input). Also the world model (positions, tab list), command/event API, and a `sim` feature for network impairment |
 | `yakvc-ffi` | cdylib | client | `extern "C"` exports + `cbindgen` header, handle management, panic barrier, error codes, event queue encoding |
-| `yakvc-cli` | bin | client, shared | Dev and diagnostics commands (see yakvc-cli section) |
+| `yakvc-cli` | bin | client, shared, audio | Dev and diagnostics commands (see yakvc-cli section) |
 | `yakvc-server` | bin + lib | shared | Rendezvous protocol, Mojang verification, ticket signing, matcher, embedded `iroh-relay`, metrics |
-| `yakvc-testkit` | lib (dev) | server, client | Spawns a server and simulated clients in one process for integration tests, with optional per-peer network impairment |
+| `yakvc-testkit` | lib (dev) | server, client, audio | Spawns a server and simulated clients in one process for integration tests, with optional per-peer network impairment |
 | `xtask` | bin (root) | none | `cargo xtask natives`, `header`, `dist`, `server-image`, `dev`: cross-builds `yakvc-ffi`, regenerates its C header, stages libraries into the mod, runs Gradle |
 
 Each of the seven crates is needed: `yakvc-ffi` must be its own cdylib, `yakvc-testkit` depends on both `server` and `client` so it can't live in either, and a separate `yakvc-audio` crate lets the compiler enforce that networking code never touches audio, at little cost.
@@ -143,13 +143,13 @@ Each of the seven crates is needed: `yakvc-ffi` must be its own cdylib, `yakvc-t
                              yakvc-shared ◄───────────────────────────┘
 ```
 
-`yakvc-shared` and `yakvc-audio` are the leaves; `xtask` sits outside the graph and only builds `yakvc-ffi` for packaging.
+`yakvc-shared` and `yakvc-audio` are the leaves; `xtask` sits outside the graph and only builds `yakvc-ffi` for packaging. Not drawn: `yakvc-cli` and `yakvc-testkit` also depend on `yakvc-audio` directly, for its devices and test I/O.
 
 **Dependency rules**
 
 - The graph is a strict DAG: `shared` and `audio` are leaves; `client` is the only crate that combines them.
 - `yakvc-server` never depends on `audio` or `client`, so the server build pulls in no ALSA/CoreAudio or Opus.
-- `yakvc-shared` depends on `iroh-base` (key and EndpointId types) rather than full `iroh`, and gates the Mojang HTTP client behind a `mojang` feature.
+- `yakvc-shared` depends on `iroh-base` (key and EndpointId types) rather than full `iroh`. The Mojang `hasJoined` client lives in `yakvc-server`, its only user.
 - Binaries contain no logic beyond argument parsing and wiring; anything worth testing lives in a lib.
 - Inside `yakvc-client`, `net` knows nothing about audio. It provides verified peers (EndpointId ↔ UUID), per-peer connections, and a `Protocol` trait that receives a peer's control stream and datagrams for one protocol ID. `voice` is the only `Protocol` in v1 and uses `net` only through that trait. This keeps groups/radio, and a possible generic API for other mods (see milestones), as new protocols rather than changes to `net`. `net` could later move into its own crate without touching `voice`.
 - `iroh` is pinned at 1.3 (current stable as of 2026-09-28; 1.0 shipped June 2026). The design relies on these 1.x APIs, checked against its docs: `Connection::send_datagram` / `read_datagram` / `max_datagram_size`, `remote_id()`, `paths()` for path reporting, `Builder::clear_ip_transports()` for relay-only, and `Builder::empty()` / `clear_address_lookup()` to drop n0's default address lookup. The `iroh-relay` 1.3 server (feature `server`) was checked against its source on 2026-10-04: `Server::spawn(ServerConfig)` embeds it as a library; `QuicConfig` serves QUIC address discovery; `CertConfig::LetsEncrypt` provides ACME (or `Manual` for certificate files); `RelayConfig::access` takes an async `AccessControl` with `on_connect` / `on_disconnect`; `Limits::client_rx` rate-limits bytes read from each client; and `relay_service().clients().disconnect(endpoint_id, None)` drops a client. Clients retry a refused relay connection with exponential backoff capped at 16 s.
@@ -181,7 +181,7 @@ A client proves its UUID to the rendezvous once with a Mojang session challenge 
 **Authentication (client → rendezvous, ALPN `yakvc/rdv/1`)**
 
 1. Client dials the rendezvous EndpointId. QUIC/TLS gives the server the client's EndpointId cryptographically.
-2. Client sends `Hello { proto, mod_version, uuid, name, endpoint_addr, cached_ticket: Option<Ticket> }`.
+2. Client sends `Hello { mod_version, uuid, name, addr, cached_ticket: Option<SignedTicket> }`. The protocol version is the ALPN's, so messages carry none.
 3. If `cached_ticket` was signed by the issuer key this server holds, names this EndpointId and UUID, and has more than 2 h left, the server registers the session and skips to step 8, returning the same ticket. Otherwise it continues with step 4.
 4. Server sends `Challenge { nonce: [u8; 32] }`.
 5. Client derives `server_id = mc_hex_digest(SHA-1("yakvc-auth-v1" ‖ nonce ‖ client_endpoint_id ‖ rendezvous_endpoint_id))` and asks Java to call `MinecraftSessionService.joinServer(uuid, token, server_id)`.
@@ -206,9 +206,9 @@ Two clients are on the same server if each one's UUID is in the other's tab list
 **Peer handshake (ALPN `yakvc/peer/1`)**
 
 1. The peer with the lower EndpointId dials; the other dials only if nothing has arrived after 3 s. Duplicate connections are resolved by keeping the one dialled by the lower EndpointId.
-2. Both open a control bi-stream and send `PeerHello { proto, ticket, protocols: [(id, version)] }`.
+2. Both open a control bi-stream and send `PeerHello { ticket, protocols: [(id, version)] }`.
 3. Each side accepts only if: the signature verifies against a key in `trusted_issuers`; `ticket.endpoint_id` equals the connection's remote EndpointId; the ticket is unexpired; `ticket.uuid` is in the local tab list and is not our own UUID.
-4. On success the connection is shared by every application protocol both sides list (v1 has one: `voice`, version 1). Each protocol gets its own control stream, opened with its protocol ID, and its datagrams start with a one-byte protocol ID. The peer control stream itself carries only `Ping`, `TicketUpdate` and `Close`. On any failure, close with an error code and do not retry for 60 s.
+4. On success the connection is shared by every application protocol both sides list (v1 has one: `voice`, version 1). Each protocol gets its own control stream, opened with its protocol ID, and its datagrams start with a one-byte protocol ID. The peer control stream itself carries only `Hello` and `TicketUpdate`; QUIC handles keepalive and RTT, and closes use QUIC application close codes (`peer::CloseCode`). On any failure, close with an error code and do not retry for 60 s.
 5. When a client renews its ticket it sends `TicketUpdate { ticket }` to every open peer, which re-runs the step 3 checks. A peer whose ticket expires without an update is closed.
 
 One connection per peer, multiplexed by protocol ID, means one handshake and one hole-punch per peer however many protocols are added later.
@@ -285,7 +285,8 @@ Voice is 48 kHz mono Opus in 20 ms frames, sent as unreliable QUIC datagrams on 
 | `lib.rs` | `Server::builder(config).spawn()` so `yakvc-testkit` can run it in-process |
 | `config` | TOML config: endpoint and issuer key paths, bind addresses, relay hostname + TLS (ACME or files), ticket lifetime, limits, metrics bind |
 | `rdv` | Per-connection protocol handler for `yakvc/rdv/1` (state machine: Hello → Challenge → Joined → Registered) |
-| `auth` | Uses `yakvc_shared::mojang` to call `hasJoined`, signs tickets with the server key |
+| `mojang` | `SessionServer::has_joined`; the base URL is configurable so tests can use a fake session server |
+| `auth` | Runs the challenge with `mojang`, signs tickets with the issuer key |
 | `matcher` | `HashMap<EndpointId, Session>` + `HashMap<PairToken, SmallVec<[EndpointId; 2]>>`; O(changed tokens) per update |
 | `relay` | Starts the `iroh-relay` server when enabled. Its `AccessControl` admits an EndpointId that has a live session. It also admits one without a session for a 30 s grace period, because a client's relay connection can arrive before its rendezvous session, and a `relay_only` client can only reach the rendezvous through the relay. If no session is registered within the grace period, or when a session ends, the server disconnects that EndpointId from the relay. Grace admissions are rate-limited per EndpointId (and per source IP if `iroh-relay` exposes it, checked at M3). |
 | `limits` | Token-bucket rate limits per EndpointId and per source IP |
@@ -327,8 +328,8 @@ Voice is 48 kHz mono Opus in 20 ms frames, sent as unreliable QUIC datagrams on 
 
 - `join` reads stdin commands (`pos 10 64 -3`, `ptt on`, `mute <uuid>`) so a test script can move fake players around.
 - Output is human-readable by default, with `--json` for scripted assertions in CI.
-- `bot` uses `yakvc-client`'s `sim` module (behind a `sim` feature: fake game inputs, WAV source, null sink, network impairment).
-- **Network impairment:** in-process tests run over perfect loopback, which would never exercise the jitter buffer, FEC or PLC. The `sim` module can wrap a peer's datagram path with seeded, deterministic loss (uniform or bursty), added delay with jitter, reordering and duplication. These are applied to voice datagrams after receipt, before the jitter buffer, so they need no hook into Iroh's transport. `join` and `bot` expose them as `--loss`, `--delay`, `--jitter` and `--reorder`, and testkit tests set them per peer. The null sink records the decoded output, so tests can assert on concealed-frame counts and on playout delay staying within the jitter-buffer bounds. `yakvc-testkit` builds on the same module, so load tests and integration tests can't drift apart, and the CLI never depends on the server crate.
+- `bot` drives engines with `yakvc-audio`'s WAV source and null sink and `yakvc-client`'s `sim` feature (network impairment).
+- **Network impairment:** in-process tests run over perfect loopback, which would never exercise the jitter buffer, FEC or PLC. The `sim` feature can wrap a peer's datagram path with seeded, deterministic loss (uniform or bursty), added delay, jitter (which reorders packets once it exceeds the frame interval) and duplication. These are applied to voice datagrams after receipt, before the jitter buffer, so they need no hook into Iroh's transport. `join` and `bot` expose them as `--loss`, `--delay` and `--jitter`, and testkit tests set them per client. The null sink records the decoded output, so tests can assert on concealed-frame counts and on playout delay staying within the jitter-buffer bounds. `yakvc-testkit` builds on the same module, so load tests and integration tests can't drift apart, and the CLI never depends on the server crate.
 
 ## Fabric mod and FFM bridge
 
@@ -396,7 +397,7 @@ size_t   yakvc_last_error(uint8_t *buf, size_t cap);         // message for this
 - **Events** are little-endian TLV records `u16 type | u16 len | payload` written into a reusable buffer: `JoinRequest{id, server_id}`, `RendezvousState`, `PeerState{uuid, connecting|direct|relayed|relay_full|failed}`, `Talking{uuid, bool}`, `MicLevel{f32}`, `Error{code, msg}`. Records are never split; if the buffer fills, the rest stay queued for the next poll.
 - **Threads:** `YakVcEngine` is `Send + Sync`. Every function except `yakvc_destroy` may be called from any thread: the client thread feeds the world on each tick, and `SessionJoiner`'s worker calls `complete_join`. Java makes `yakvc_destroy` the last call with a closed flag.
 - **Rust side (`yakvc-ffi`):** the handle is `Box<Bridge>` passed as an opaque pointer. Every export is `#[unsafe(no_mangle)] pub extern "C"` and runs inside an `ffi_guard` that does `catch_unwind` (a panic crossing `extern "C"` would abort the game) and maps errors and panics to codes plus the thread-local `last_error` message. After a panic the engine is marked poisoned, later calls return `YAKVC_ERR_POISONED`, and the mod disables voice with a toast. This is the only crate with `unsafe` allowed.
-- **`yakvc-client` API** is FFI-agnostic: `Engine::start(Config) -> (EngineHandle, EventReceiver)`, where `EngineHandle` has the same operations as above with typed arguments. The CLI uses it directly; `yakvc-ffi` is only marshalling. `yakvc-ffi` has its own Rust tests that call the `extern "C"` functions directly, so the ABI is tested without a JVM.
+- **`yakvc-client` API** is FFI-agnostic: `Engine::builder(config).data_dir(dir).start() -> (Engine, Events)`, where `Engine` has the same operations as above with typed arguments and `Events` has `try_next()` for the game loop and async `next()` for the CLI. The CLI uses it directly; `yakvc-ffi` is only marshalling. `yakvc-ffi` has its own Rust tests that call the `extern "C"` functions directly, so the ABI is tested without a JVM.
 
 **Lifecycle**
 

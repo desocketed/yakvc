@@ -10,7 +10,8 @@ publish.workspace = true
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
-yakvc-client.workspace = true
+yakvc-audio.workspace = true
+yakvc-client = { workspace = true, features = ["sim"] }
 yakvc-shared.workspace = true
 
 [lints]
