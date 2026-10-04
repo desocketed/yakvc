@@ -1,0 +1,15 @@
+{
+	"schemaVersion": 1,
+	"id": "yakvc-gametest",
+	"version": "0.0.0",
+	"name": "Yak VC game tests",
+	"environment": "client",
+	"entrypoints": {
+		"fabric-client-gametest": [
+			"io.github.desocketed.yakvc.gametest.YakVcClientGameTest"
+		]
+	},
+	"depends": {
+		"yakvc": "*"
+	}
+}

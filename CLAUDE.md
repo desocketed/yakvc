@@ -12,7 +12,7 @@ Run inside `nix develop` (this machine has no system Rust or Java).
 - `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo deny check`
 - `cargo xtask header`: regenerate `crates/yakvc-ffi/include/yakvc.h` after any ABI change (CI runs `--check`)
 - `cd mod && ./gradlew build`: builds host natives via `cargo xtask natives` and runs the JUnit FFM test
-- No display here; `runClient` needs `xvfb-run` plus X11/GL libs on `LD_LIBRARY_PATH`. The game stops at renderer creation (no GLX), but mod init runs first.
+- `scripts/gametest-headless.sh`: runs the Fabric client gametest (real client, singleplayer world, screenshots in `mod/build/run/clientGameTest/screenshots/`) with no display or GPU, via Xvfb and Mesa lavapipe. Minecraft 26.3 finds no sRGB GLX config on Xvfb and falls back to Vulkan.
 
 ## Git
 
