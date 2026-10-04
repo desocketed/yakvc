@@ -176,43 +176,6 @@ jobs:
           name: gametest-screenshots
           path: mod/build/run/clientGameTest/screenshots/
 
-  # On main: the gametest's screenshots replace those in docs/guide/ (the
-  # user guide's) that look different, and are committed back to main.
-  guide-screenshots:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: mod
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
-        with:
-          distribution: temurin
-          java-version: 25
-      - uses: actions/download-artifact@v8
-        with:
-          name: gametest-screenshots
-          path: screenshots
-      - run: java scripts/UpdateGuideScreenshots.java screenshots docs/guide
-      - name: Commit changed screenshots
-        run: |
-          git add docs/guide
-          if git diff --cached --quiet; then
-            echo "The user guide's screenshots are up to date."
-            exit 0
-          fi
-          # If main has moved on, its own run updates them instead.
-          git fetch --quiet origin main
-          if [ "$(git rev-parse FETCH_HEAD)" != "$GITHUB_SHA" ]; then
-            echo "main moved on; leaving the screenshots to the newer run."
-            exit 0
-          fi
-          git -c user.name="github-actions[bot]" \
-            -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
-            commit --quiet -m "Update user guide screenshots [skip ci]"
-          git push origin HEAD:main
-
   server:
     runs-on: ubuntu-latest
     steps:

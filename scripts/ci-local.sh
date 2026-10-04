@@ -49,10 +49,7 @@ else
 fi
 step "mod: build (cargo xtask dist, host natives)"
 cargo xtask dist
-step "mod: client gametest"
+step "mod: client gametest, and the user guide's screenshots"
 scripts/gametest-headless.sh
-# CI commits these on main; here they are left in the working tree to commit or discard.
-step "docs: user guide screenshots"
-java scripts/UpdateGuideScreenshots.java
 
 step "all checks passed"

@@ -2,7 +2,7 @@
 
 Yak VC is proximity voice chat for Minecraft. You hear players near you, from the direction they are standing, and quieter the further away they are. It is a client-only Fabric mod: servers need no plugin, but everyone who wants to talk needs the mod.
 
-The screenshots below are taken by the mod's automated test, so they always show the current version.
+The screenshots below are taken by the mod's automated test and refreshed whenever the mod's screens change.
 
 ## Installing
 
