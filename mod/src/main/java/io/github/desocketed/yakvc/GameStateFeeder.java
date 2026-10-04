@@ -8,10 +8,12 @@ import io.github.desocketed.yakvc.natives.YakVcException;
 import java.lang.foreign.MemorySegment;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientPacketListener;
@@ -35,12 +37,20 @@ public final class GameStateFeeder {
 	private final MemorySegment engine;
 	private final ClientConfig config;
 	private final VoiceKeys keys;
+	private final SessionJoiner joiner;
 	private final byte[] eventBuffer = new byte[EVENT_BUFFER_BYTES];
 
 	/** Volatile because Fabric may fire DISCONNECT off the client thread. */
 	private volatile @Nullable VoiceSession session;
 	/** The engine was destroyed, or crashed and can only be destroyed. */
 	private boolean closed;
+	/**
+	 * {@code joinServer} calls not yet answered. They are answered from {@link #tick} rather than the worker, so no
+	 * native call can race {@link #close}.
+	 */
+	private final List<PendingJoin> pendingJoins = new ArrayList<>();
+
+	private record PendingJoin(int id, CompletableFuture<Boolean> ok) {}
 
 	// What the engine was last told, so unchanged values aren't sent again.
 	private Set<UUID> tabList = Set.of();
@@ -56,11 +66,13 @@ public final class GameStateFeeder {
 	private final Set<UUID> talking = new LinkedHashSet<>();
 	private int errorEvents;
 
-	public GameStateFeeder(NativeBridge bridge, MemorySegment engine, ClientConfig config, VoiceKeys keys) {
+	public GameStateFeeder(NativeBridge bridge, MemorySegment engine, ClientConfig config, VoiceKeys keys,
+			SessionJoiner joiner) {
 		this.bridge = bridge;
 		this.engine = engine;
 		this.config = config;
 		this.keys = keys;
+		this.joiner = joiner;
 	}
 
 	/** The local Minecraft identity. Starts rendezvous authentication. */
@@ -105,6 +117,7 @@ public final class GameStateFeeder {
 			feedVolume(minecraft.options.getFinalSoundSourceVolume(SoundSource.VOICE));
 			feedDevice(minecraft.options.soundDevice().get());
 			drainEvents();
+			answerJoins();
 		} catch (YakVcException e) {
 			fail(e);
 		}
@@ -192,11 +205,8 @@ public final class GameStateFeeder {
 
 	private void handle(EngineEvent event) {
 		switch (event) {
-			case EngineEvent.JoinRequest(int id, String serverId) -> {
-				// Real Mojang authentication (SessionJoiner) comes with M5; a dev rendezvous never asks.
-				YakVcClient.LOGGER.warn("Refusing rendezvous join request {}: Mojang authentication is not built yet", id);
-				bridge.completeJoin(engine, id, false);
-			}
+			case EngineEvent.JoinRequest(int id, String serverId) ->
+					pendingJoins.add(new PendingJoin(id, joiner.joinAsync(serverId)));
 			case EngineEvent.Rendezvous(EngineEvent.RendezvousState state, long value) -> {
 				rendezvous = state;
 				YakVcClient.LOGGER.info("Rendezvous {} ({})", state, value);
@@ -215,6 +225,16 @@ public final class GameStateFeeder {
 				errorEvents++;
 				YakVcClient.LOGGER.warn("Engine: {}", message);
 			}
+		}
+	}
+
+	private void answerJoins() {
+		Iterator<PendingJoin> joins = pendingJoins.iterator();
+		while (joins.hasNext()) {
+			PendingJoin join = joins.next();
+			if (!join.ok().isDone()) continue;
+			joins.remove();
+			bridge.completeJoin(engine, join.id(), join.ok().join());
 		}
 	}
 
