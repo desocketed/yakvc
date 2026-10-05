@@ -72,6 +72,14 @@ public final class YakVcClient implements ClientModInitializer {
 			return;
 		}
 		LOGGER.info("Started native engine (ABI version {})", abi);
+		// The dev test audio is easy to leave behind in a copied config, and it looks exactly like a silent
+		// microphone and silent speakers otherwise.
+		if (config.value("dev", "tone_hz") != null) {
+			LOGGER.warn("[dev] tone_hz is set in client.toml: a test tone replaces the microphone");
+		}
+		if ("true".equals(config.value("dev", "null_output"))) {
+			LOGGER.warn("[dev] null_output is set in client.toml: nothing is played");
+		}
 
 		SessionJoiner joiner = new SessionJoiner(serverId -> {
 			Minecraft minecraft = Minecraft.getInstance();
