@@ -4,7 +4,7 @@
 
 Files here:
 
-- `config.toml`: example production config. Replace `relay.example.com` and the contact address.
+- `config.toml`: the production config, for `relay01.purplg.com`. Set the contact address; self-hosters replace the domain too.
 - `yakvc-server-docker.service`: the recommended setup. systemd manages the service and Docker isolates it.
 - `yakvc-server.service`: the static binary as a hardened systemd service, for hosts without Docker.
 - `Dockerfile`: used by `cargo xtask server-image`, which builds the image locally.
