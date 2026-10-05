@@ -177,6 +177,7 @@ A client proves its UUID to the rendezvous once with a Mojang session challenge 
 
 - **Client key:** one Iroh `SecretKey` per installation, stored in the mod config directory (`config/yakvc/node.key`, mode 0600). Its public half is the EndpointId.
 - **Rendezvous endpoint key:** the server's Iroh `SecretKey`, used only as its dial address (EndpointId). Clients ship with the default rendezvous EndpointId and accept others in config.
+- **IPv6:** the production config binds `[::]`. The relay's HTTP, HTTPS and QUIC listeners are dual-stack there, but iroh makes its IPv6 sockets IPv6-only, so the rendezvous endpoint binds `0.0.0.0` on the same port as well when given `[::]`.
 - **Issuer key:** a separate ed25519 key that signs tickets. Clients trust tickets from any key in `trusted_issuers`. Keeping it apart from the endpoint key lets several rendezvous instances (regions, shards) share one issuer, and lets either key rotate without changing the other.
 - **Minecraft identity:** UUID + name, proven via Mojang's session server. The Mojang access token never leaves Java (authlib makes the call).
 
