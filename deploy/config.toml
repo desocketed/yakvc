@@ -2,11 +2,10 @@
 # relay, with a Let's Encrypt certificate. Replace relay.example.com and the
 # contact address. See deploy/README.md.
 
-# Key files, written by `yakvc-server keygen`. Relative paths are resolved
-# against the working directory: /etc/yakvc in the Docker image, and the
-# systemd credentials directory under deploy/yakvc-server.service.
-endpoint_key = "endpoint.key"
-issuer_key = "issuer.key"
+# Key files, created on first start next to the certificate cache. Back them
+# up: clients are configured with the ids they produce.
+endpoint_key = "/var/lib/yakvc/endpoint.key"
+issuer_key = "/var/lib/yakvc/issuer.key"
 
 # The rendezvous endpoint (UDP).
 bind = "0.0.0.0:7843"

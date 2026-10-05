@@ -1,6 +1,6 @@
 # yakvc-server in Docker, managed by systemd: systemd starts, restarts and
-# logs it, and the container isolates it. Put config.toml and the two key
-# files in /etc/yakvc first (see README.md).
+# logs it, and the container isolates it. Put config.toml in /etc/yakvc
+# first (see README.md); the server creates its keys in the yakvc-state volume.
 [Unit]
 Description=Yak VC rendezvous server and relay (Docker)
 Requires=docker.service

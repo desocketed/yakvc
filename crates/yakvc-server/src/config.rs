@@ -10,7 +10,7 @@ use crate::server::{RelayOptions, RelayTls, Server, ServerBuilder};
 /// The server's `config.toml`.
 ///
 /// Key files hold the 32 raw secret-key bytes, as written by
-/// `yakvc-server keygen`.
+/// `yakvc-server run` on first start or by `yakvc-server keygen`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
