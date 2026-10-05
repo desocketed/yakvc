@@ -12,6 +12,7 @@ Peer-to-peer proximity voice chat for Minecraft, as a client-only Fabric mod. Wo
 ```sh
 cargo test --workspace          # Rust crates
 cargo xtask header              # regenerate crates/yakvc-ffi/include/yakvc.h after changing the C ABI
+cargo xtask dev                 # a local dev-mode yakvc-server; prints its client.toml (--write-client-config puts it in mod/run/)
 cd mod && ./gradlew runClient   # builds the native library for this machine and starts the game
 cargo xtask dist                # the mod jar in dist/, with this machine's native library only
 ```

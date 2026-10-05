@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{env, fs};
 
+mod dev;
+
 use anyhow::{Context, Result, bail, ensure};
 use clap::{Parser, Subcommand};
 use sha2::{Digest, Sha256};
@@ -42,8 +44,19 @@ enum Cmd {
     },
     /// Build the yakvc-server Docker image.
     ServerImage,
-    /// Start a dev-mode server and print client config.
-    Dev,
+    /// Start a dev-mode yakvc-server and print the client config for it.
+    Dev {
+        /// Port on 127.0.0.1.
+        #[arg(long, default_value_t = 7843)]
+        port: u16,
+        /// Keys, server config and client.toml (default target/dev-server).
+        #[arg(long)]
+        dir: Option<PathBuf>,
+        /// Also write the client config into runClient's game directory
+        /// (mod/run/config/yakvc/client.toml).
+        #[arg(long)]
+        write_client_config: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -55,7 +68,11 @@ fn main() -> Result<()> {
         Cmd::Header { check } => header(check),
         Cmd::Dist { from } => dist(from.as_deref()),
         Cmd::ServerImage => server_image(),
-        Cmd::Dev => bail!("`dev` is not implemented yet (M3)"),
+        Cmd::Dev {
+            port,
+            dir,
+            write_client_config,
+        } => dev::dev(port, dir, write_client_config),
     }
 }
 
