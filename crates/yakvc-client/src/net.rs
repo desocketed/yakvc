@@ -193,6 +193,8 @@ struct Inner {
     joins: Mutex<Joins>,
     /// The rendezvous session task, stopped by direct-call mode.
     rendezvous: Mutex<Option<AbortHandle>>,
+    /// Most open peer connections: [`MAX_PEERS`], or fewer in tests.
+    max_peers: usize,
 }
 
 /// Peers that flooded us, and until when they are refused.
@@ -257,10 +259,12 @@ struct StatusFlags {
     relayed: bool,
     relay_full: bool,
     reported: Option<PeerState>,
+    /// The close code of the last connection the peer closed, for tests.
+    closed_by_peer: Option<u64>,
 }
 
 /// Most open peer connections, see "Connection lifecycle" in DESIGN.md.
-const MAX_PEERS: usize = 64;
+pub(crate) const MAX_PEERS: usize = 64;
 
 /// How long to wait for the first net report. Iroh gives up on a report
 /// after 5 s, and the first one starts once the endpoint is bound.
@@ -277,6 +281,7 @@ impl Net {
         protocols: Vec<Arc<dyn Protocol>>,
         trust: Trust,
         events: EventSender,
+        max_peers: usize,
     ) -> Net {
         let inner = Arc::new(Inner {
             endpoint,
@@ -291,6 +296,7 @@ impl Net {
             banned: Bans::default(),
             joins: Mutex::new(Joins::default()),
             rendezvous: Mutex::new(None),
+            max_peers,
         });
         tokio::spawn(peer::accept_loop(inner.clone()));
         tokio::spawn(close_hidden_peers(inner.clone()));
@@ -381,6 +387,14 @@ impl Net {
                     .send(Event::Error(format!("call failed: {err}")));
             }
         });
+    }
+
+    /// The close code of the last connection `uuid` closed on us.
+    #[cfg(feature = "sim")]
+    pub(crate) fn closed_by_peer(&self, uuid: Uuid) -> Option<u64> {
+        let peers = self.inner.peers.lock().unwrap();
+        let entry = peers.values().find(|entry| entry.uuid == uuid)?;
+        entry.status.flags.lock().unwrap().closed_by_peer
     }
 
     pub(crate) fn peers(&self) -> Vec<PeerSummary> {
@@ -521,10 +535,13 @@ impl Inner {
         by_rank(ranks)
     }
 
-    /// Whether `remote` ranks among the [`MAX_PEERS`] best peers, so it
+    /// Whether `remote` ranks among the `max_peers` best peers, so it
     /// deserves a connection even at the cap.
     fn wants(&self, remote: EndpointId) -> bool {
-        self.ranked().iter().take(MAX_PEERS).any(|&id| id == remote)
+        self.ranked()
+            .iter()
+            .take(self.max_peers)
+            .any(|&id| id == remote)
     }
 
     fn is_banned(&self, remote: EndpointId) -> bool {
@@ -589,7 +606,7 @@ async fn evict_over_cap(inner: Arc<Inner>) {
             .filter(|&id| peers.get(id).is_some_and(|e| e.open_conn().is_some()))
             .copied()
             .collect();
-        for id in evictions(&ranked, &open, MAX_PEERS) {
+        for id in evictions(&ranked, &open, inner.max_peers) {
             if let Some(conn) = peers.get(&id).and_then(PeerEntry::open_conn) {
                 tracing::debug!(remote = %id.fmt_short(), "too many peers, evicting");
                 close(conn, CloseCode::TooManyPeers);
@@ -823,6 +840,7 @@ mod tests {
                 relayed,
                 relay_full,
                 reported: None,
+                closed_by_peer: None,
             }
             .state()
         };
