@@ -20,8 +20,8 @@ use yakvc_shared::peer::{ALPN, CloseCode, PeerHello, PeerMsg};
 use yakvc_shared::{SignedTicket, Ticket, Uuid, wire};
 
 use super::{
-    Bans, ControlRecv, ControlSend, Inner, Link, MAX_PEERS, Peer, PeerEntry, PeerLink, PeerStatus,
-    Protocol, RETRY_AFTER_FAILURE, close, is_relayed,
+    Bans, ControlRecv, ControlSend, Inner, Link, Peer, PeerEntry, PeerLink, PeerStatus, Protocol,
+    RETRY_AFTER_FAILURE, close, is_relayed,
 };
 
 /// The higher EndpointId waits this long for the lower one to dial first.
@@ -69,7 +69,7 @@ pub(super) async fn accept_loop(inner: Arc<Inner>) {
             // At the cap, only a peer that outranks an open one gets in (and
             // the worst one is then evicted). Refusing others also stops a
             // peer we evicted from coming straight back.
-            if connected_count(&inner) >= MAX_PEERS && !inner.wants(remote) {
+            if connected_count(&inner) >= inner.max_peers && !inner.wants(remote) {
                 close(&conn, CloseCode::TooManyPeers);
                 return;
             }
@@ -108,7 +108,7 @@ pub(super) async fn keep_connected(inner: Arc<Inner>, remote: EndpointId) {
             tokio::time::sleep_until(when).await;
             continue;
         }
-        // Only dial players we can see that rank among the best MAX_PEERS,
+        // Only dial players we can see that rank among the best `max_peers`,
         // so nearer players get connections first. A peer evicted at the cap
         // is dialed again once it ranks high enough, e.g. when tracked again.
         if !inner.wants(remote) {
@@ -165,6 +165,7 @@ async fn setup(inner: &Arc<Inner>, conn: &Connection, dialed: bool) -> Result<He
     };
     if let Err(err) = &result {
         tracing::debug!(remote = %conn.remote_id().fmt_short(), %err, "peer handshake failed");
+        record_peer_close(inner, conn);
         let code = match err {
             SetupError::Rejected(code) => *code,
             SetupError::Connection(_) | SetupError::TimedOut => CloseCode::ProtocolError,
@@ -249,6 +250,7 @@ async fn serve(inner: Arc<Inner>, conn: Connection, dialed: bool, hello: Hello) 
     tasks.spawn(watch_paths(conn.clone(), status));
 
     peer_control(&inner, &conn, hello).await;
+    record_peer_close(&inner, &conn);
     // Protocols end on their own once routing stops and their datagram
     // channel closes; aborting covers any that don't.
     tasks.shutdown().await;
@@ -462,6 +464,17 @@ async fn watch_paths(conn: Connection, status: Arc<PeerStatus>) {
     }
 }
 
+/// Remembers why the peer closed `conn`, so tests can check the close code
+/// (e.g. that the cap refuses with `TooManyPeers`).
+fn record_peer_close(inner: &Arc<Inner>, conn: &Connection) {
+    if let Some(ConnectionError::ApplicationClosed(close)) = conn.close_reason() {
+        let code = close.error_code.into_inner();
+        set_status(inner, conn.remote_id(), |flags| {
+            flags.closed_by_peer = Some(code);
+        });
+    }
+}
+
 fn mark_failed(inner: &Arc<Inner>, remote: EndpointId) {
     set_status(inner, remote, |flags| flags.failed = true);
     if let Some(entry) = inner.peers.lock().unwrap().get_mut(&remote) {
@@ -577,7 +590,7 @@ mod tests {
     };
     use super::*;
     use crate::event::{self, Event, Events, PeerState};
-    use crate::net::{Identity, Net, Trust};
+    use crate::net::{Identity, MAX_PEERS, Net, Trust};
 
     fn status(uuid: Uuid) -> (Arc<PeerStatus>, Events) {
         let (events, rx) = event::channel();
@@ -653,7 +666,13 @@ mod tests {
             verifier: TicketVerifier::new([]),
             direct_calls: false,
         };
-        let net = Net::new(loopback_endpoint().await, vec![], trust, events_tx);
+        let net = Net::new(
+            loopback_endpoint().await,
+            vec![],
+            trust,
+            events_tx,
+            MAX_PEERS,
+        );
         (net, events)
     }
 
@@ -750,7 +769,7 @@ mod tests {
             verifier: TicketVerifier::new([trusted.id()]),
             direct_calls: false,
         };
-        let net = Net::new(endpoint.clone(), vec![probe], trust, events_tx);
+        let net = Net::new(endpoint.clone(), vec![probe], trust, events_tx, MAX_PEERS);
         net.set_identity(Identity {
             uuid: uuid(n),
             name: format!("player{n}"),
