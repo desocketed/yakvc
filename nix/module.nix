@@ -10,9 +10,9 @@ let
   # certificate. Clients then connect directly or not at all.
   relay = lib.optionalAttrs (cfg.domain != null) {
     relay = {
-      http_bind = "0.0.0.0:80";
-      https_bind = "0.0.0.0:443";
-      quic_bind = "0.0.0.0:7842";
+      http_bind = "[::]:80";
+      https_bind = "[::]:443";
+      quic_bind = "[::]:7842";
       domain = cfg.domain;
       acme_contact = cfg.acmeContact;
       acme_cache_dir = "/var/lib/yakvc/acme";
@@ -22,7 +22,7 @@ let
   settings = lib.recursiveUpdate ({
     endpoint_key = "/var/lib/yakvc/endpoint.key";
     issuer_key = "/var/lib/yakvc/issuer.key";
-    bind = "0.0.0.0:7843";
+    bind = "[::]:7843";
     metrics_bind = "127.0.0.1:9100";
   } // relay) cfg.settings;
 
