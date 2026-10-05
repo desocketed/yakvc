@@ -606,3 +606,46 @@ async fn shutdown_closes_sessions() {
     server.shutdown().await;
     assert_eq!(alice.close_code().await, code(CloseCode::ShuttingDown));
 }
+
+/// A `[::]` bind serves IPv4 too, for the rendezvous (where iroh needs a
+/// second socket) and the relay's listener (dual-stack on its own).
+#[tokio::test]
+async fn wildcard_ipv6_binds_serve_both_families() {
+    let port = std::net::UdpSocket::bind("[::]:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let server = Server::builder(SecretKey::generate(), IssuerKey::generate())
+        .bind(format!("[::]:{port}").parse().unwrap())
+        .insecure_dev_auth()
+        .relay(RelayOptions {
+            http_bind: "[::]:0".parse().unwrap(),
+            ..relay_options()
+        })
+        .spawn()
+        .await
+        .unwrap();
+
+    for (client_bind, server_ip) in [("127.0.0.1:0", "127.0.0.1"), ("[::1]:0", "::1")] {
+        let endpoint = Endpoint::builder(presets::Minimal)
+            .clear_ip_transports()
+            .bind_addr(client_bind)
+            .unwrap()
+            .bind()
+            .await
+            .unwrap();
+        let server_addr = std::net::SocketAddr::new(server_ip.parse().unwrap(), port);
+        let addr = EndpointAddr::new(server.endpoint_id()).with_ip_addr(server_addr);
+        let mut client = Client::connect_with(endpoint, addr, server_ip).await;
+        client.register().await;
+    }
+
+    // The relay URL dials the `[::]` listener over 127.0.0.1.
+    let mut relayed = Client::connect_via_relay(&server, "relayed").await;
+    relayed.register().await;
+    let relay_port = server.relay_url().unwrap().port().unwrap();
+    tokio::net::TcpStream::connect(("::1", relay_port))
+        .await
+        .expect("relay listens on IPv6");
+}
