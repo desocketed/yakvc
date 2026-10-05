@@ -1,4 +1,4 @@
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -180,7 +180,8 @@ impl Server {
 }
 
 impl ServerBuilder {
-    /// Rendezvous QUIC address. Defaults to `0.0.0.0:0`.
+    /// Rendezvous QUIC address. Defaults to `0.0.0.0:0`. `[::]` also serves
+    /// IPv4.
     pub fn bind(mut self, addr: SocketAddr) -> Self {
         self.bind = addr;
         self
@@ -321,17 +322,23 @@ async fn bind_endpoint(
         None => RelayMode::Disabled,
     };
     // `Minimal` only picks the crypto provider: no n0 relays or address
-    // lookup, and only the one socket we were asked to bind.
-    Endpoint::builder(presets::Minimal)
+    // lookup, and only the sockets we were asked to bind.
+    let mut builder = Endpoint::builder(presets::Minimal)
         .secret_key(key)
         .alpns(vec![rdv::ALPN.to_vec()])
         .relay_mode(relay_mode)
         .clear_ip_transports()
         .bind_addr(addr)
-        .map_err(|e| bind_error(&e))?
-        .bind()
-        .await
-        .map_err(|e| bind_error(&e))
+        .map_err(|e| bind_error(&e))?;
+    // iroh makes its IPv6 sockets IPv6-only, unlike the relay's listeners,
+    // so `[::]` gets a second IPv4 socket on the same port to serve both
+    // families like every other listener.
+    if addr.ip() == Ipv6Addr::UNSPECIFIED {
+        builder = builder
+            .bind_addr(SocketAddr::from((Ipv4Addr::UNSPECIFIED, addr.port())))
+            .map_err(|e| bind_error(&e))?;
+    }
+    builder.bind().await.map_err(|e| bind_error(&e))
 }
 
 async fn accept_loop(endpoint: Endpoint, shared: Arc<Shared>) {
