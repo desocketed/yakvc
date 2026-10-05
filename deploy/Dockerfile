@@ -11,12 +11,11 @@ LABEL org.opencontainers.image.licenses="MIT OR Apache-2.0"
 
 COPY yakvc-server /usr/local/bin/yakvc-server
 COPY THIRD_PARTY_LICENSES /usr/share/doc/yakvc-server/THIRD_PARTY_LICENSES
-# The ACME certificate cache. Created here so that a fresh volume mounted on it
-# is writable by the server's user.
+# The keys and the ACME certificate cache. Created here so that a fresh volume
+# mounted on it is writable by the server's user.
 COPY --chown=nonroot:nonroot state/ /var/lib/yakvc/
 
-# Mount config.toml and the key files here. The example config names the keys
-# relative to this directory.
+# Mount config.toml here.
 WORKDIR /etc/yakvc
 # Relay HTTP (and ACME), relay HTTPS, QUIC address discovery, rendezvous.
 EXPOSE 80/tcp 443/tcp 7842/udp 7843/udp

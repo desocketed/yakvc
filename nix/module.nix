@@ -1,15 +1,14 @@
 # NixOS module: `services.yakvc-server.enable = true;` runs the rendezvous and
 # relay as a hardened systemd service, like deploy/yakvc-server.service.
-# The keys are generated on first start in /var/lib/yakvc; back them up.
+# The server creates its keys on first start in /var/lib/yakvc; back them up.
 self:
 { config, lib, pkgs, ... }:
 let
   cfg = config.services.yakvc-server;
 
   settings = lib.recursiveUpdate {
-    # Relative to the working directory, /var/lib/yakvc.
-    endpoint_key = "endpoint.key";
-    issuer_key = "issuer.key";
+    endpoint_key = "/var/lib/yakvc/endpoint.key";
+    issuer_key = "/var/lib/yakvc/issuer.key";
     bind = "0.0.0.0:7843";
     metrics_bind = "127.0.0.1:9100";
     relay = {
@@ -75,11 +74,6 @@ in
       serviceConfig = {
         # The server reports READY=1 once it is listening.
         Type = "notify";
-        # keygen refuses to overwrite, so only missing keys are generated.
-        ExecStartPre = pkgs.writeShellScript "yakvc-server-keys" ''
-          [ -e endpoint.key ] || ${server} keygen --out endpoint.key
-          [ -e issuer.key ] || ${server} keygen --issuer --out issuer.key
-        '';
         ExecStart = "${server} run --config ${configFile}";
         Restart = "on-failure";
 
@@ -88,7 +82,6 @@ in
         DynamicUser = true;
         StateDirectory = "yakvc";
         StateDirectoryMode = "0700";
-        WorkingDirectory = "/var/lib/yakvc";
         AmbientCapabilities = [ "CAP_NET_BIND_SERVICE" ];
         CapabilityBoundingSet = [ "CAP_NET_BIND_SERVICE" ];
         NoNewPrivileges = true;

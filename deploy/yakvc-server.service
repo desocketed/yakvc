@@ -1,6 +1,6 @@
 # yakvc-server as a hardened systemd service, without Docker. Install the
-# binary to /usr/local/bin and config.toml plus the two key files to
-# /etc/yakvc (see README.md).
+# binary to /usr/local/bin and config.toml to /etc/yakvc (see README.md).
+# The server creates its keys in /var/lib/yakvc on first start.
 [Unit]
 Description=Yak VC rendezvous server and relay
 Wants=network-online.target
@@ -12,17 +12,11 @@ Type=notify
 ExecStart=/usr/local/bin/yakvc-server run --config /etc/yakvc/config.toml
 Restart=on-failure
 
-# The keys stay readable by root only: systemd hands copies to the service in
-# its credentials directory (%d), which is also the working directory the
-# config's relative key paths resolve against.
-LoadCredential=endpoint.key:/etc/yakvc/endpoint.key
-LoadCredential=issuer.key:/etc/yakvc/issuer.key
-WorkingDirectory=%d
-
 # A throwaway user, which may bind ports 80 and 443 and write only
-# /var/lib/yakvc (the ACME cache).
+# /var/lib/yakvc (the keys and the ACME cache), readable by it alone.
 DynamicUser=yes
 StateDirectory=yakvc
+StateDirectoryMode=0700
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 NoNewPrivileges=yes

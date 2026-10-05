@@ -26,15 +26,11 @@ The image is `ghcr.io/desocketed/yakvc-server`, published by the release workflo
    sudo apt update && sudo apt install -y docker.io
    ```
 
-5. **Add the config and keys:**
+5. **Add the config:**
 
    ```sh
-   IMAGE=ghcr.io/desocketed/yakvc-server:0.1.0
-   sudo install -d -m 700 /etc/yakvc
+   sudo install -d -m 755 /etc/yakvc
    sudo install -m 644 config.toml /etc/yakvc/   # then edit the hostname and contact
-   sudo docker run --rm --user 0:0 -v /etc/yakvc:/etc/yakvc $IMAGE keygen --out endpoint.key
-   sudo docker run --rm --user 0:0 -v /etc/yakvc:/etc/yakvc $IMAGE keygen --issuer --out issuer.key
-   sudo chmod 600 /etc/yakvc/*.key
    ```
 
 6. **Start it:**
@@ -45,8 +41,10 @@ The image is `ghcr.io/desocketed/yakvc-server`, published by the release workflo
    journalctl -u yakvc-server   # prints the endpoint id, issuer id and relay URL
    ```
 
+   On first start the server creates its two keys in the `yakvc-state` volume and says so.
+
 7. **Check it:** `curl -I https://<relay hostname>/` answers over HTTPS once the certificate is issued, and `curl -s 127.0.0.1:9100/metrics` on the Linode shows the metrics.
-8. **Back up `/etc/yakvc/*.key`** somewhere off the server (see below).
+8. **Back up the keys** (`/var/lib/docker/volumes/yakvc-state/_data/*.key`) somewhere off the server (see below).
 
 To upgrade, change the image tag in `/etc/systemd/system/yakvc-server.service`, then `sudo systemctl daemon-reload && sudo systemctl restart yakvc-server`.
 
@@ -54,7 +52,7 @@ The container uses the host's network so that the relay and address discovery se
 
 ## On NixOS
 
-Add the flake as an input and enable the module. It runs the server as a hardened systemd service, like `yakvc-server.service`, and generates the two keys on first start in `/var/lib/yakvc`; back them up.
+Add the flake as an input and enable the module. It runs the server as a hardened systemd service, like `yakvc-server.service`, and the server creates its two keys on first start in `/var/lib/yakvc`; back them up.
 
 ```nix
 {
@@ -91,14 +89,12 @@ Download the static `yakvc-server` binary from the GitHub release, then:
 sudo install -m 755 yakvc-server /usr/local/bin/
 sudo install -d -m 755 /etc/yakvc
 sudo install -m 644 config.toml /etc/yakvc/   # then edit it
-sudo yakvc-server keygen --out /etc/yakvc/endpoint.key
-sudo yakvc-server keygen --issuer --out /etc/yakvc/issuer.key
 sudo install -m 644 yakvc-server.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now yakvc-server
 journalctl -u yakvc-server   # prints the endpoint id, issuer id and relay URL
 ```
 
-The keys stay readable by root only; systemd passes them to the service as credentials.
+On first start the server creates its two keys in `/var/lib/yakvc` (really `/var/lib/private/yakvc`, readable only by the service and root); back them up.
 
 ## Pointing clients at the server
 

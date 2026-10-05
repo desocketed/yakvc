@@ -18,12 +18,13 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Run the server.
+    /// Run the server. Creates the key files on first start.
     Run {
         #[arg(long)]
         config: PathBuf,
     },
-    /// Generate an endpoint key, or an issuer key with --issuer.
+    /// Generate an endpoint key, or an issuer key with --issuer. Optional:
+    /// `run` creates missing keys itself.
     Keygen {
         #[arg(long)]
         issuer: bool,
@@ -60,7 +61,14 @@ fn main() -> anyhow::Result<()> {
 
 #[tokio::main]
 async fn run(config: &Path) -> anyhow::Result<()> {
-    let builder = Config::load(config)?.into_builder()?;
+    let config = Config::load(config)?;
+    create_missing_key(&config.endpoint_key, "endpoint", || {
+        SecretKey::generate().to_bytes()
+    })?;
+    create_missing_key(&config.issuer_key, "issuer", || {
+        IssuerKey::generate().to_bytes()
+    })?;
+    let builder = config.into_builder()?;
     let server = builder.spawn().await?;
     println!("endpoint id: {}", server.endpoint_id());
     println!("issuer id:   {}", server.issuer_id());
@@ -92,6 +100,27 @@ fn notify_systemd_ready() {
     }
 }
 
+/// Creates a key file that doesn't exist yet, so a new server needs no setup.
+/// Clients are configured with the ids these keys produce, so a key file lost
+/// later would quietly become a new identity: say loudly that one was made.
+fn create_missing_key(
+    path: &Path,
+    kind: &str,
+    generate: impl FnOnce() -> [u8; 32],
+) -> anyhow::Result<()> {
+    let exists = path
+        .try_exists()
+        .with_context(|| format!("check {}", path.display()))?;
+    if !exists {
+        write_key(path, &generate())?;
+        eprintln!(
+            "created a new {kind} key at {}; back it up, because clients are configured with its id",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
 /// Writes a new key file readable only by its owner. Never overwrites, so a
 /// typo can't destroy a key in use.
 fn write_key(path: &Path, key: &[u8; 32]) -> anyhow::Result<()> {
@@ -110,4 +139,23 @@ fn read_key(path: &Path) -> anyhow::Result<[u8; 32]> {
     bytes
         .try_into()
         .map_err(|_| anyhow::anyhow!("{}: a key file holds 32 bytes", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn creates_a_missing_key_once() {
+        let dir = std::env::temp_dir().join(format!("yakvc-key-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("issuer.key");
+        let _ = std::fs::remove_file(&path);
+
+        create_missing_key(&path, "issuer", || [1; 32]).unwrap();
+        create_missing_key(&path, "issuer", || [2; 32]).unwrap();
+
+        assert_eq!(read_key(&path).unwrap(), [1; 32]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }
