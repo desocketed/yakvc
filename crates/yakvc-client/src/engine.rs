@@ -32,6 +32,7 @@ pub struct EngineBuilder {
     config: Config,
     data_dir: Option<PathBuf>,
     io: AudioIo,
+    max_peers: usize,
 }
 
 /// Per-player playback settings, persisted by the Java side.
@@ -163,6 +164,7 @@ impl Engine {
                 #[cfg(feature = "sim")]
                 impairment: None,
             },
+            max_peers: crate::net::MAX_PEERS,
         }
     }
 
@@ -236,6 +238,13 @@ impl Engine {
         // take effect on the next start.
         self.voice.update_config(&config);
         self.net.set_trust(verifier(&config));
+    }
+
+    /// The QUIC close code of the last connection the peer `uuid` closed,
+    /// e.g. `peer::CloseCode::TooManyPeers` when it was at its cap.
+    #[cfg(feature = "sim")]
+    pub fn closed_by_peer(&self, uuid: Uuid) -> Option<u64> {
+        self.net.closed_by_peer(uuid)
     }
 
     pub fn peers(&self) -> Vec<PeerInfo> {
@@ -334,11 +343,19 @@ impl EngineBuilder {
         self
     }
 
+    /// Lowers the connection cap, so tests can reach it with a few clients.
+    #[cfg(feature = "sim")]
+    pub fn max_peers(mut self, max_peers: usize) -> Self {
+        self.max_peers = max_peers;
+        self
+    }
+
     pub fn start(self) -> Result<(Engine, Events), StartError> {
         let EngineBuilder {
             config,
             data_dir,
             mut io,
+            max_peers,
         } = self;
         // Dev test audio, unless the caller supplied its own.
         if let (None, Some(hz)) = (&io.source, config.dev.tone_hz) {
@@ -370,7 +387,7 @@ impl EngineBuilder {
         };
         let net = block_on(&runtime, async {
             let endpoint = bind_endpoint(key, &config).await?;
-            let net = Net::new(endpoint, protocols, trust, events_tx.clone());
+            let net = Net::new(endpoint, protocols, trust, events_tx.clone(), max_peers);
             match config.rendezvous.clone() {
                 Some(rendezvous) => net.start_rendezvous(rendezvous, data_dir.join(TICKET_FILE)),
                 // There is no built-in default rendezvous yet.

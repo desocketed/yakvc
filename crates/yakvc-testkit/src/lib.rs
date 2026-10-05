@@ -63,6 +63,7 @@ pub struct ClientBuilder<'a> {
     name: Option<String>,
     voice: Voice,
     impairment: Impairment,
+    max_peers: Option<usize>,
     config: Config,
 }
 
@@ -164,6 +165,7 @@ impl TestNet {
             name: None,
             voice: Voice::Silence,
             impairment: Impairment::default(),
+            max_peers: None,
             config: self.config.clone(),
         }
     }
@@ -251,6 +253,12 @@ impl<'a> ClientBuilder<'a> {
         self
     }
 
+    /// Lowers the connection cap (64), so a few clients can reach it.
+    pub fn max_peers(mut self, max_peers: usize) -> Self {
+        self.max_peers = Some(max_peers);
+        self
+    }
+
     pub fn relay_only(mut self) -> Self {
         self.config.relay_only = true;
         self
@@ -278,11 +286,15 @@ impl<'a> ClientBuilder<'a> {
             ),
         };
         let (sink, recording) = NullSink::new();
-        let (engine, events) = Engine::builder(self.config)
+        let mut builder = Engine::builder(self.config)
             .data_dir(self.net.dir.join(&name))
             .audio_source(source)
             .audio_sink(sink)
-            .impairment(self.impairment)
+            .impairment(self.impairment);
+        if let Some(max_peers) = self.max_peers {
+            builder = builder.max_peers(max_peers);
+        }
+        let (engine, events) = builder
             .start()
             .unwrap_or_else(|e| panic!("start {name}: {e}"));
         engine.set_identity(uuid, &name);
