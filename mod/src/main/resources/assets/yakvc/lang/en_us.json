@@ -56,6 +56,7 @@
 	"yakvc.toast.unsupported": "Voice chat doesn't support this system yet.",
 	"yakvc.toast.load_failed": "Voice chat couldn't load its engine. See the game log.",
 	"yakvc.toast.start_failed": "Voice chat couldn't start: %s",
+	"yakvc.settings.unavailable": "Voice chat is off for this game, so its settings can't be changed. The game log says why.",
 	"yakvc.toast.crashed": "Voice chat crashed and is off until you restart the game.",
 	"yakvc.toast.settings_rejected": "Settings not applied: %s",
 	"yakvc.toast.settings_not_saved": "Settings applied but not saved. See the game log."

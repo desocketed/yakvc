@@ -31,9 +31,9 @@ The keys are in Options → Controls → Key Binds, under **Yak VC**.
 | Push to Talk | V | Hold to talk. |
 | Toggle Mute | not bound | Turns your microphone off and on. |
 | Toggle Deafen | not bound | Stops you hearing anyone. Your microphone still works unless you mute it too. |
-| Open Voice Menu | not bound | Opens the [voice menu](#the-voice-menu), the only way to the settings. |
+| Open Voice Menu | not bound | Opens the [voice menu](#the-voice-menu), and from there the settings. |
 
-Mute, deafen and the voice menu are unbound so they don't clash with other mods. Bind **Open Voice Menu** to get to the settings.
+Mute, deafen and the voice menu are unbound so they don't clash with other mods. Bind **Open Voice Menu** to get to the settings, or open them from [Mod Menu](https://modrinth.com/mod/modmenu) if you have it installed.
 
 ## The HUD
 
@@ -87,7 +87,7 @@ The game's own Voice/Speech slider (Options → Music & Sounds) sets the volume 
 
 ## Settings
 
-**Settings…** in the voice menu opens the settings. Changes apply and are saved when you leave the screen.
+**Settings…** in the voice menu opens the settings. With Mod Menu installed, the config button on Yak VC's entry in the mods list opens them too. Changes apply and are saved when you leave the screen.
 
 ![The voice settings](guide/voice-settings.png)
 
