@@ -1,6 +1,7 @@
-# Example production config for yakvc-server: rendezvous plus the embedded
-# relay, with a Let's Encrypt certificate. Replace relay.example.com and the
-# contact address. See deploy/README.md.
+# Production config for yakvc-server: rendezvous plus the embedded relay at
+# relay01.purplg.com, with a Let's Encrypt certificate. Set the contact
+# address before the first start. Self-hosters replace the domain too; see
+# deploy/README.md.
 
 # Key files, created on first start next to the certificate cache. Back them
 # up: clients are configured with the ids they produce.
@@ -19,7 +20,7 @@ http_bind = "0.0.0.0:80"
 https_bind = "0.0.0.0:443"
 # QUIC address discovery (UDP), which tells clients their public address.
 quic_bind = "0.0.0.0:7842"
-domain = "relay.example.com"
+domain = "relay01.purplg.com"
 acme_contact = "admin@example.com"
 acme_cache_dir = "/var/lib/yakvc/acme"
 # Never set `open = true` on a public server: it relays for anyone.
