@@ -6,11 +6,9 @@ self:
 let
   cfg = config.services.yakvc-server;
 
-  settings = lib.recursiveUpdate {
-    endpoint_key = "/var/lib/yakvc/endpoint.key";
-    issuer_key = "/var/lib/yakvc/issuer.key";
-    bind = "0.0.0.0:7843";
-    metrics_bind = "127.0.0.1:9100";
+  # Without a domain there is no relay: rendezvous only, which needs no
+  # certificate. Clients then connect directly or not at all.
+  relay = lib.optionalAttrs (cfg.domain != null) {
     relay = {
       http_bind = "0.0.0.0:80";
       https_bind = "0.0.0.0:443";
@@ -19,7 +17,14 @@ let
       acme_contact = cfg.acmeContact;
       acme_cache_dir = "/var/lib/yakvc/acme";
     };
-  } cfg.settings;
+  };
+
+  settings = lib.recursiveUpdate ({
+    endpoint_key = "/var/lib/yakvc/endpoint.key";
+    issuer_key = "/var/lib/yakvc/issuer.key";
+    bind = "0.0.0.0:7843";
+    metrics_bind = "127.0.0.1:9100";
+  } // relay) cfg.settings;
 
   configFile = (pkgs.formats.toml { }).generate "yakvc-server.toml" settings;
   server = lib.getExe cfg.package;
@@ -35,21 +40,23 @@ in
     };
 
     domain = lib.mkOption {
-      type = lib.types.str;
+      type = lib.types.nullOr lib.types.str;
+      default = null;
       example = "relay.example.com";
-      description = "Public hostname of the relay. Let's Encrypt issues its certificate, so DNS must point here.";
+      description = "Public hostname of the relay. Let's Encrypt issues its certificate, so DNS must point here. Null runs the rendezvous without a relay.";
     };
 
     acmeContact = lib.mkOption {
-      type = lib.types.str;
+      type = lib.types.nullOr lib.types.str;
+      default = null;
       example = "admin@example.com";
-      description = "Contact address for the Let's Encrypt account.";
+      description = "Contact address for the Let's Encrypt account. Required with a domain.";
     };
 
     openFirewall = lib.mkOption {
       type = lib.types.bool;
       default = false;
-      description = "Open TCP 80 and 443 and UDP 7842 and 7843.";
+      description = "Open UDP 7843 (rendezvous), and with a relay TCP 80 and 443 and UDP 7842.";
     };
 
     settings = lib.mkOption {
@@ -60,9 +67,16 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = cfg.domain == null || cfg.acmeContact != null;
+        message = "services.yakvc-server.acmeContact is required with a domain.";
+      }
+    ];
+
     networking.firewall = lib.mkIf cfg.openFirewall {
-      allowedTCPPorts = [ 80 443 ];
-      allowedUDPPorts = [ 7842 7843 ];
+      allowedTCPPorts = lib.optionals (cfg.domain != null) [ 80 443 ];
+      allowedUDPPorts = [ 7843 ] ++ lib.optionals (cfg.domain != null) [ 7842 ];
     };
 
     systemd.services.yakvc-server = {
