@@ -41,9 +41,8 @@ rdv_port=$((20000 + RANDOM % 10000))
 mc_port=$((30000 + RANDOM % 10000))
 step() { printf '\n==> %s\n' "$*"; }
 
-step "build yakvc-server and the mod's launch arguments"
-cargo build --quiet -p yakvc-server
-server_bin=$root/target/debug/yakvc-server
+step "build xtask and the mod's launch arguments"
+cargo build --quiet -p xtask
 (cd mod && ./gradlew writeDevLaunchArgs --console=plain --quiet)
 mapfile -t server_args < mod/build/devlaunch/server.args
 mapfile -t client_args < mod/build/devlaunch/client.args
@@ -60,17 +59,8 @@ rm -rf "$work"
 mkdir -p "$work/rdv" "$work/server"
 
 step "start the dev rendezvous on 127.0.0.1:$rdv_port"
-"$server_bin" keygen --out "$work/rdv/endpoint.key"
-"$server_bin" keygen --issuer --out "$work/rdv/issuer.key"
-endpoint_id=$("$server_bin" endpoint-id "$work/rdv/endpoint.key")
-issuer_id=$("$server_bin" issuer-id "$work/rdv/issuer.key")
-cat >"$work/rdv/config.toml" <<EOF
-endpoint_key = "$work/rdv/endpoint.key"
-issuer_key = "$work/rdv/issuer.key"
-bind = "127.0.0.1:$rdv_port"
-insecure_dev_auth = true
-EOF
-"$server_bin" run --config "$work/rdv/config.toml" >"$work/rdv.log" 2>&1 &
+# xtask replaces itself with the server, so this pid is the server's.
+"$root/target/debug/xtask" dev --port "$rdv_port" --dir "$work/rdv" >"$work/rdv.log" 2>&1 &
 pids+=($!)
 
 step "start the Minecraft server on 127.0.0.1:$mc_port"
@@ -111,18 +101,14 @@ wait_for() {
 logged() { tail -n +$(($2 + 1)) "$1" | grep -qE "$3"; }
 lines() { wc -l <"$1"; }
 
+wait_for 120 "the dev rendezvous" logged "$work/rdv.log" 0 'Dev yakvc-server'
 wait_for 180 "the Minecraft server" logged "$work/server.log" 0 'Done \('
 
 for name in Alice Bob; do
 	dir=$work/$name
 	mkdir -p "$dir/config/yakvc"
-	cat >"$dir/config/yakvc/client.toml" <<EOF
-dev_mode = true
-trusted_issuers = ["$issuer_id"]
-
-[rendezvous]
-endpoint_id = "$endpoint_id"
-addrs = ["127.0.0.1:$rdv_port"]
+	# The dev rendezvous's client config plus dev test audio.
+	cat "$work/rdv/client.toml" - >"$dir/config/yakvc/client.toml" <<EOF
 
 [dev]
 tone_hz = 440.0
