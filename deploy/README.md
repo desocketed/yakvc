@@ -52,34 +52,64 @@ The container uses the host's network so that the relay and address discovery se
 
 ## On NixOS
 
-Add the flake as an input and enable the module. It runs the server as a hardened systemd service, like `yakvc-server.service`, and the server creates its two keys on first start in `/var/lib/yakvc`; back them up.
+The flake has a NixOS module. It runs the server as a hardened systemd service, like `yakvc-server.service`, and the server creates its two keys on first start in `/var/lib/yakvc`; back them up. Your system needs flakes enabled (`nix.settings.experimental-features = [ "nix-command" "flakes" ];`).
+
+**1. Add the flake** to your system's `flake.nix` and import the module:
 
 ```nix
 {
   inputs.yakvc.url = "github:desocketed/yakvc";
 
   outputs = { nixpkgs, yakvc, ... }: {
-    nixosConfigurations.relay = nixpkgs.lib.nixosSystem {
+    nixosConfigurations.<hostname> = nixpkgs.lib.nixosSystem {
       system = "x86_64-linux";
       modules = [
+        ./configuration.nix
         yakvc.nixosModules.default
-        {
-          services.yakvc-server = {
-            enable = true;
-            domain = "relay.example.com";
-            acmeContact = "admin@example.com";
-            openFirewall = true;
-            # Anything else from config.toml, merged over the defaults:
-            # settings.ticket_lifetime_hours = 24;
-          };
-        }
       ];
     };
   };
 }
 ```
 
-`journalctl -u yakvc-server` prints the endpoint id, issuer id and relay URL. The repository is private for now, so fetching the flake needs GitHub access (`git+ssh://git@github.com/desocketed/yakvc` works with a deploy key).
+If the system has no `flake.nix` yet, add the module to `configuration.nix` directly instead:
+
+```nix
+imports = [ (builtins.getFlake "github:desocketed/yakvc").nixosModules.default ];
+```
+
+Nothing pins this reference, so pin a commit (`github:desocketed/yakvc/<commit>`) to upgrade deliberately.
+
+**2. Enable it** in `configuration.nix`. Without a relay (a private test: no domain or certificate needed, opens UDP 7843):
+
+```nix
+services.yakvc-server = {
+  enable = true;
+  openFirewall = true;
+};
+```
+
+With the relay (production: DNS for the domain must point at this machine; opens TCP 80 and 443 and UDP 7842 and 7843):
+
+```nix
+services.yakvc-server = {
+  enable = true;
+  domain = "relay.example.com";
+  acmeContact = "admin@example.com";
+  openFirewall = true;
+  # Anything else from config.toml, merged over the defaults:
+  # settings.ticket_lifetime_hours = 24;
+};
+```
+
+**3. Rebuild** (`sudo nixos-rebuild switch`), then `journalctl -u yakvc-server` prints the endpoint id, issuer id and (with a relay) the relay URL, for clients' `client.toml` (see "Pointing clients at the server" below).
+
+**While the repository is private**, Nix needs credentials to fetch it, and `nixos-rebuild` fetches as root. Either:
+
+- use `git+ssh://git@github.com/desocketed/yakvc` as the URL, with root's SSH public key (`sudo cat /root/.ssh/id_ed25519.pub`, create it with `sudo ssh-keygen -t ed25519` if missing) added as a read-only deploy key under the repository's Settings → Deploy keys; or
+- add a GitHub token with read access to the repository to `/etc/nix/nix.conf` as `access-tokens = github.com=<token>`.
+
+Once the repository is public, the plain `github:desocketed/yakvc` URL works with no setup.
 
 ## Without Docker
 
