@@ -17,7 +17,7 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Cmd {
-    /// Build yakvc-ffi in release mode and stage it for the mod.
+    /// Build yakvc-ffi with the `dist` profile and stage it for the mod.
     Natives {
         /// `host` (a quick dev build), `all` (every release target this
         /// host's OS builds), or a Rust target triple.
@@ -130,12 +130,12 @@ fn natives(target: &str, out: &Path) -> Result<()> {
     write_manifest(out)
 }
 
-/// Builds yakvc-ffi in release mode for `target` (or the host) and returns
-/// the library's path. Linux targets are built with cargo-zigbuild, so the
-/// library runs on any glibc since 2.17.
+/// Builds yakvc-ffi with the size-focused `dist` profile for `target` (or
+/// the host) and returns the library's path. Linux targets are built with
+/// cargo-zigbuild, so the library runs on any glibc since 2.17.
 fn build_ffi(target: Option<&str>) -> Result<PathBuf> {
     let mut cmd = cargo();
-    cmd.args(["build", "--release", "--package", "yakvc-ffi"]);
+    cmd.args(["build", "--profile", "dist", "--package", "yakvc-ffi"]);
     let mut built = root().join("target");
     let os = match target {
         None => env::consts::OS,
@@ -147,7 +147,7 @@ fn build_ffi(target: Option<&str>) -> Result<PathBuf> {
                 // comes from PKG_CONFIG_PATH_<triple> (see flake.nix and the
                 // CI workflow).
                 cmd = cargo();
-                cmd.args(["zigbuild", "--release", "--package", "yakvc-ffi"])
+                cmd.args(["zigbuild", "--profile", "dist", "--package", "yakvc-ffi"])
                     .arg(format!("--target={triple}.{GLIBC}"))
                     .env("PKG_CONFIG_ALLOW_CROSS", "1");
             } else {
@@ -158,7 +158,7 @@ fn build_ffi(target: Option<&str>) -> Result<PathBuf> {
         }
     };
     run(&mut cmd)?;
-    built.push("release");
+    built.push("dist");
     built.push(match os {
         "linux" => "libyakvc_ffi.so",
         "macos" => "libyakvc_ffi.dylib",
