@@ -15,11 +15,11 @@ Files here:
 The image is `ghcr.io/desocketed/yakvc-server`, published by the release workflow. Until the first release, build it with `cargo xtask server-image` and copy it over with `docker save` and `docker load`.
 
 1. **Create the Linode.** Debian 13 in a US East region (Newark), starting with the smallest shared plan; resize later from the relay metrics.
-2. **Add a Cloud Firewall** (Linodes → Firewalls) with the default inbound policy set to drop, and these inbound rules:
+2. **Add a Cloud Firewall** (Linodes → Firewalls) with the default inbound policy set to drop, and these inbound rules. The server listens on IPv4 and IPv6, so give the public rules both "All IPv4" and "All IPv6" as sources:
    - TCP 22, from your own IP only (SSH)
    - TCP 80 and 443 (relay, and Let's Encrypt's certificate check)
    - UDP 7842 (QUIC address discovery) and UDP 7843 (rendezvous)
-3. **Point DNS at it.** An `A` record for the relay hostname to the Linode's IPv4 address; Let's Encrypt needs it before the first start. Leave out `AAAA` for now: the server listens on IPv4 only until #38.
+3. **Point DNS at it.** An `A` record for the relay hostname to the Linode's IPv4 address, and an `AAAA` record to its IPv6 address (the Linode's Network tab, the SLAAC address). Let's Encrypt needs them before the first start, and checks over IPv6 too once the `AAAA` record exists, so open the firewall for IPv6 first. The config binds `[::]`, which also serves IPv4 as long as `net.ipv6.bindv6only` keeps its Linux default of 0.
 4. **Install Docker:**
 
    ```sh

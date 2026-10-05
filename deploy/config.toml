@@ -8,18 +8,18 @@
 endpoint_key = "/var/lib/yakvc/endpoint.key"
 issuer_key = "/var/lib/yakvc/issuer.key"
 
-# The rendezvous endpoint (UDP).
-bind = "0.0.0.0:7843"
+# The rendezvous endpoint (UDP). Every `[::]` bind serves IPv4 and IPv6.
+bind = "[::]:7843"
 
 # Scrape from the same host only: the endpoint has no authentication.
 metrics_bind = "127.0.0.1:9100"
 
 [relay]
 # Plain HTTP; also answers Let's Encrypt.
-http_bind = "0.0.0.0:80"
-https_bind = "0.0.0.0:443"
+http_bind = "[::]:80"
+https_bind = "[::]:443"
 # QUIC address discovery (UDP), which tells clients their public address.
-quic_bind = "0.0.0.0:7842"
+quic_bind = "[::]:7842"
 domain = "relay01.purplg.com"
 acme_contact = "admin@example.com"
 acme_cache_dir = "/var/lib/yakvc/acme"
