@@ -82,6 +82,7 @@ public final class GameStateFeeder {
 	private final Map<UUID, EngineEvent.PeerState> peers = new HashMap<>();
 	private final Set<UUID> talking = new LinkedHashSet<>();
 	private int errorEvents;
+	private boolean micHeard;
 
 	public GameStateFeeder(NativeBridge bridge, MemorySegment engine, ClientConfig config, VoiceKeys keys,
 			SessionJoiner joiner, PlayerVolumes volumes) {
@@ -309,7 +310,14 @@ public final class GameStateFeeder {
 				else talking.remove(uuid);
 				YakVcClient.LOGGER.info("Talking {} {} {}", uuid, name(uuid), isTalking);
 			}
-			case EngineEvent.MicLevel(float db) -> {}
+			case EngineEvent.MicLevel(float db) -> {
+				// Levels only arrive while the microphone (or the dev test tone) delivers audio, so the first one
+				// shows in the log that capture is working.
+				if (!micHeard) {
+					micHeard = true;
+					YakVcClient.LOGGER.info("Microphone is delivering audio ({} dBFS)", db);
+				}
+			}
 			case EngineEvent.Error(String message) -> {
 				errorEvents++;
 				YakVcClient.LOGGER.warn("Engine: {}", message);
