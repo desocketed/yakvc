@@ -1,9 +1,28 @@
 # Yak VC
 
-Peer-to-peer proximity voice chat for Minecraft, as a client-only Fabric mod. Works on online-mode servers without any server-side mod.
+Proximity voice chat for Minecraft that needs nothing on the server. You hear players near you, from the direction they stand, and quieter the further away they are. Yak VC is a client-only Fabric mod: voice goes straight from player to player, so it works on any online-mode server, including vanilla, Paper and server networks, without a plugin.
 
-- Players: the [user guide](docs/USER_GUIDE.md) covers installing, keys, settings and privacy.
-- Developers: see [docs/DESIGN.md](docs/DESIGN.md).
+Yak VC is in development and has no release yet.
+
+## For players
+
+- **Requirements:** Minecraft 26.3 with Fabric Loader and Fabric API, on Windows, macOS or Linux. Everyone who wants to talk needs the mod.
+- **Installing:** put the jar in your `mods` folder and add `--enable-native-access=ALL-UNNAMED` to your launcher's JVM arguments.
+- **Using it:** hold `V` to talk. Settings are in the voice menu, or in Mod Menu if you have it.
+- **Privacy:** other Yak VC players on the same server learn your IP address, because voice is peer to peer. The **Relay Only** setting hides it by sending everything through the Yak VC relay. Voice is encrypted from player to player.
+
+The [user guide](docs/USER_GUIDE.md) covers all of this with screenshots, plus the settings, troubleshooting and the config file.
+
+## For server owners
+
+You don't need to install anything. Players who have the mod find each other through the Yak VC voice server, which checks their Minecraft accounts the same way your server does.
+
+- **Opting out:** put `[no-yakvc]` anywhere in your server's MOTD, and the mod turns itself off for everyone on your server.
+- **Running your own voice server:** `yakvc-server` is the rendezvous and relay service, available as a container image or a NixOS module. See [deploy/README.md](deploy/README.md). Players then point their config at it.
+
+## How it works
+
+The mod's voice engine is written in Rust and loaded by the Fabric mod through Java's Foreign Function & Memory API. Peers connect over QUIC with [Iroh](https://www.iroh.computer/) and fall back to the relay when a direct connection fails, and voice is encoded with Opus. [docs/DESIGN.md](docs/DESIGN.md) has the full design.
 
 ## Development
 
