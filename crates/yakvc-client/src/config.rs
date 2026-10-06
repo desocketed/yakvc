@@ -9,12 +9,13 @@ use yakvc_shared::{EndpointAddr, EndpointId, IssuerId, RelayUrl, Uuid};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
-    /// The rendezvous to register with. `None` runs without one: there is no
-    /// built-in default yet, so voice then only works in direct calls.
+    /// The rendezvous to register with. Left out of `client.toml`, it is the
+    /// built-in server ([`built_in_rendezvous`]), except in `dev_mode`, which
+    /// then runs without one (voice only in direct calls).
     pub rendezvous: Option<RendezvousConfig>,
     /// Issuers whose tickets are accepted, from peers and for our own
-    /// ticket. There is no built-in default, so a `rendezvous` needs its
-    /// issuer listed here.
+    /// ticket. A configured `rendezvous` needs its issuer listed here; the
+    /// built-in one adds its own.
     pub trusted_issuers: Vec<IssuerId>,
     /// Accept dev tickets. Only for local testing against `--insecure-dev-auth`.
     pub dev_mode: bool,
@@ -98,7 +99,14 @@ pub enum ConfigError {
 
 impl Config {
     pub fn from_toml(toml: &str) -> Result<Config, ConfigError> {
-        let config: Config = toml::from_str(toml)?;
+        let mut config: Config = toml::from_str(toml)?;
+        if config.rendezvous.is_none() && !config.dev_mode {
+            let (rendezvous, issuer) = built_in_rendezvous();
+            config.rendezvous = Some(rendezvous);
+            if !config.trusted_issuers.contains(&issuer) {
+                config.trusted_issuers.push(issuer);
+            }
+        }
         config.validate()?;
         Ok(config)
     }
@@ -131,6 +139,22 @@ impl Config {
         }
         Ok(())
     }
+}
+
+/// The server used when `client.toml` names none, and its issuer. For now a
+/// test server without a relay; the production server replaces it (#12).
+fn built_in_rendezvous() -> (RendezvousConfig, IssuerId) {
+    let rendezvous = RendezvousConfig {
+        endpoint_id: "2d829764b4378d7b20fe2f38ebe4992f0ff3d840f177d320494f78bff94bbbe4"
+            .parse()
+            .expect("valid endpoint id"),
+        addrs: vec!["172.104.24.53:7843".parse().expect("valid address")],
+        relay: None,
+    };
+    let issuer = "7cd6e747b8e51d9ea0427d327151fb39236cfa52a4f73c968fdabb17d5ac7a1f"
+        .parse()
+        .expect("valid issuer id");
+    (rendezvous, issuer)
 }
 
 /// Opus bitrates the design allows.
@@ -174,8 +198,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn empty_toml_gives_defaults() {
-        assert_eq!(Config::from_toml("").unwrap(), Config::default());
+    fn empty_toml_gives_defaults_with_the_built_in_server() {
+        let (rendezvous, issuer) = built_in_rendezvous();
+        let expected = Config {
+            rendezvous: Some(rendezvous),
+            trusted_issuers: vec![issuer],
+            ..Config::default()
+        };
+        assert_eq!(Config::from_toml("").unwrap(), expected);
+    }
+
+    #[test]
+    fn dev_mode_has_no_built_in_server() {
+        let config = Config::from_toml("dev_mode = true").unwrap();
+        assert_eq!(config.rendezvous, None);
+        assert!(config.trusted_issuers.is_empty());
     }
 
     #[test]
