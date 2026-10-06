@@ -153,7 +153,8 @@ impl Session<'_> {
             mod_version: env!("CARGO_PKG_VERSION").to_owned(),
             uuid: self.identity.uuid,
             name: self.identity.name.clone(),
-            addr: self.inner.endpoint.addr(),
+            // Trimmed, since the rendezvous rejects oversize addresses.
+            addr: yakvc_shared::rdv::fit_addr(&self.inner.endpoint.addr()),
             cached_ticket: self.cached_ticket(),
         };
         wire::write_msg(&mut send, &ClientMsg::Hello(hello)).await?;
@@ -274,6 +275,7 @@ impl Session<'_> {
                 // Before registration the rendezvous only accepts the
                 // challenge reply; the Hello already carried our address.
                 Ok(addr) = our_addr.updated(), if self.registered => {
+                    let addr = yakvc_shared::rdv::fit_addr(&addr);
                     wire::write_msg(send, &ClientMsg::UpdateAddr(addr)).await?;
                 }
                 Ok(()) = identity.changed() => return Err(Ended::IdentityChanged),
