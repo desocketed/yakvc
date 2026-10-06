@@ -775,6 +775,54 @@ async fn challenges_beyond_the_mojang_budget_are_told_to_retry() {
 }
 
 #[tokio::test]
+async fn declines_leave_the_mojang_budget_alone() {
+    let mojang = FakeMojang::start().await;
+    let limits = Limits {
+        mojang_checks_per_min: 1,
+        ..Limits::default()
+    };
+    let server = builder()
+        .session_server(SessionServer::new(&mojang.url))
+        .limits(limits)
+        .spawn()
+        .await
+        .unwrap();
+    for name in ["bob", "carol"] {
+        let mut client = Client::connect(&server, name).await.offline();
+        client.send(client.hello(None)).await;
+        client.decline_challenge().await;
+        client.expect_registered().await;
+    }
+
+    let mut alice = Client::connect(&server, "alice").await;
+    alice.send(alice.hello(None)).await;
+    alice.answer_challenge().await;
+    alice.expect_registered().await;
+
+    // An offline player who answers `Joined` does call Mojang, so the
+    // budget applies there.
+    let mut dave = Client::connect(&server, "dave").await.offline();
+    dave.send(dave.hello(None)).await;
+    dave.answer_challenge().await;
+    assert!(matches!(
+        dave.recv().await,
+        ServerMsg::RetryAfter { secs: 59 | 60 }
+    ));
+    assert_eq!(mojang.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn decline_for_another_names_offline_uuid_fails_auth() {
+    let mojang = FakeMojang::start().await;
+    let server = mojang_server(&mojang).await;
+    let mut mallory = Client::connect(&server, "mallory").await;
+    mallory.uuid = offline_uuid("alice");
+    mallory.send(mallory.hello(None)).await;
+    mallory.decline_challenge().await;
+    assert_eq!(mallory.close_code().await, code(CloseCode::AuthFailed));
+}
+
+#[tokio::test]
 async fn challenges_without_a_known_ip_share_a_budget() {
     let mojang = FakeMojang::start().await;
     let limits = Limits {
