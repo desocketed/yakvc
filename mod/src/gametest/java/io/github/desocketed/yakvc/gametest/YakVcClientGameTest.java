@@ -20,6 +20,7 @@ import java.nio.file.Path;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.Predicate;
 import javax.imageio.ImageIO;
 import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
 import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
@@ -31,7 +32,7 @@ import net.minecraft.client.CameraType;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.AbstractScrollArea;
-import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.AbstractButton;
 import net.minecraft.client.gui.components.events.ContainerEventHandler;
 import net.minecraft.client.gui.components.events.GuiEventListener;
 import net.minecraft.client.gui.screens.TitleScreen;
@@ -162,6 +163,8 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 	private static void checkSettingsWithoutWorld(ClientGameTestContext context, GameStateFeeder feeder) {
 		context.setScreen(() -> new VoiceSettingsScreen(new TitleScreen(), Minecraft.getInstance().options, feeder));
 		context.waitForScreen(VoiceSettingsScreen.class);
+		// The level meter needs the microphone (here the dev test tone) without a world or push-to-talk.
+		context.waitFor(mc -> feeder.micLevelDb() > GameStateFeeder.SILENCE_DB);
 		context.clickScreenButton("gui.done");
 		context.waitForScreen(TitleScreen.class);
 	}
@@ -181,6 +184,9 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		context.clickScreenButton("yakvc.menu.settings");
 		context.waitForScreen(VoiceSettingsScreen.class);
 		screenshotScreen(context, "voice-settings");
+		pressOptionButton(context, "yakvc.settings.input_device");
+		screenshotScreen(context, "voice-settings-microphone");
+		pressOptionButton(context, "yakvc.settings.input_device");
 		// The privacy settings are below the fold at the test's small window size.
 		scrollDown(context);
 		screenshotScreen(context, "voice-settings-privacy");
@@ -270,18 +276,30 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 
 	/** Like {@code clickScreenButton}, which only finds buttons placed directly on the screen, but also in lists. */
 	private static void pressNestedButton(ClientGameTestContext context, String translationKey) {
+		String label = Component.translatable(translationKey).getString();
+		pressNestedButton(context, translationKey, message -> message.equals(label));
+	}
+
+	/** Presses the nested button whose label starts with the caption, as option buttons show "Caption: value". */
+	private static void pressOptionButton(ClientGameTestContext context, String translationKey) {
+		String caption = Component.translatable(translationKey).getString() + ":";
+		pressNestedButton(context, translationKey, message -> message.startsWith(caption));
+	}
+
+	private static void pressNestedButton(ClientGameTestContext context, String name, Predicate<String> label) {
 		context.runOnClient(mc -> {
-			Button button = findButton(mc.gui.screen().children(), Component.translatable(translationKey).getString());
-			if (button == null) throw new AssertionError("no button " + translationKey + " in " + mc.gui.screen());
+			AbstractButton button = findButton(mc.gui.screen().children(), label);
+			if (button == null) throw new AssertionError("no button " + name + " in " + mc.gui.screen());
 			button.onPress(new KeyEvent(InputConstants.KEY_RETURN, 0, 0));
 		});
 	}
 
-	private static @Nullable Button findButton(List<? extends GuiEventListener> widgets, String label) {
+	private static @Nullable AbstractButton findButton(List<? extends GuiEventListener> widgets,
+			Predicate<String> label) {
 		for (GuiEventListener widget : widgets) {
-			if (widget instanceof Button button && button.getMessage().getString().equals(label)) return button;
+			if (widget instanceof AbstractButton button && label.test(button.getMessage().getString())) return button;
 			if (widget instanceof ContainerEventHandler container) {
-				Button found = findButton(container.children(), label);
+				AbstractButton found = findButton(container.children(), label);
 				if (found != null) return found;
 			}
 		}

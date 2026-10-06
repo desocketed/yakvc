@@ -42,6 +42,8 @@ public final class GameStateFeeder {
 	private static final int EVENT_BUFFER_BYTES = 65_540;
 	/** How often the Social Interactions block list is checked again. */
 	private static final int BLOCKED_REFRESH_TICKS = 20;
+	/** The engine's level for a silent frame. */
+	public static final float SILENCE_DB = -100;
 
 	private final NativeBridge bridge;
 	private final MemorySegment engine;
@@ -86,6 +88,9 @@ public final class GameStateFeeder {
 	private final Set<UUID> talking = new LinkedHashSet<>();
 	private int errorEvents;
 	private boolean micHeard;
+	/** The last microphone level and when it came, for the meter in the settings. */
+	private float micLevelDb = SILENCE_DB;
+	private long micLevelNanos;
 
 	public GameStateFeeder(NativeBridge bridge, MemorySegment engine, ClientConfig config, VoiceKeys keys,
 			SessionJoiner joiner, PlayerVolumes volumes) {
@@ -343,6 +348,8 @@ public final class GameStateFeeder {
 			case EngineEvent.MicLevel(float db) -> {
 				// Levels only arrive while the microphone (or the dev test tone) delivers audio, so the first one
 				// shows in the log that capture is working.
+				micLevelDb = db;
+				micLevelNanos = System.nanoTime();
 				if (!micHeard) {
 					micHeard = true;
 					YakVcClient.LOGGER.info("Microphone is delivering audio ({} dBFS)", db);
@@ -442,6 +449,15 @@ public final class GameStateFeeder {
 	}
 
 	/** Engine {@code Error} events so far. For tests. */
+	/**
+	 * The microphone's level in dBFS. The engine reports it about ten times a second whether or not we transmit, so a
+	 * level that stopped coming means no working microphone, and reads as silence.
+	 */
+	public float micLevelDb() {
+		boolean stale = System.nanoTime() - micLevelNanos > 500_000_000L;
+		return stale ? SILENCE_DB : micLevelDb;
+	}
+
 	public int errorEvents() {
 		return errorEvents;
 	}
