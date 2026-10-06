@@ -51,6 +51,12 @@
 	"yakvc.settings.respect_chat_restrictions.tooltip": "Turn voice off while your Microsoft account or launcher disables chat.",
 	"yakvc.settings.mute_blocked_players": "Mute Blocked",
 	"yakvc.settings.mute_blocked_players.tooltip": "Players you blocked in Social Interactions can't hear you and you don't hear them.",
+	"yakvc.settings.account": "Account",
+	"yakvc.settings.account.verified": "Your Minecraft account is verified: other players see a badge next to your name.",
+	"yakvc.settings.account.unverified": "You're playing without a verified Minecraft account: voice works on offline-mode servers only, and players who allow only verified players don't hear you.",
+	"yakvc.settings.account.not_connected": "Not connected to Yak VC yet.",
+	"yakvc.settings.verified_only": "Only Verified Players",
+	"yakvc.settings.verified_only.tooltip": "Only talk with players whose Minecraft account is verified (they have a badge next to their name). Players without an account, as on offline-mode servers, can't hear you and you don't hear them.",
 
 	"yakvc.toast.title": "Yak VC voice chat",
 	"yakvc.toast.unsupported": "Voice chat doesn't support this system yet.",

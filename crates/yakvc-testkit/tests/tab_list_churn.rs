@@ -43,10 +43,7 @@ async fn tab_list_churn_keeps_the_session() {
             {
                 dropped.push(*state);
             }
-            *e == Event::Peer {
-                uuid: bob.uuid(),
-                state: PeerState::Gone,
-            }
+            matches!(e, Event::Peer { uuid, state: PeerState::Gone, .. } if *uuid == bob.uuid())
         })
         .await
         .unwrap();

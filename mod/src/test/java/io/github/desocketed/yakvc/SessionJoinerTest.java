@@ -6,10 +6,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.mojang.authlib.exceptions.AuthenticationUnavailableException;
 import com.mojang.authlib.exceptions.InvalidCredentialsException;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -36,6 +38,34 @@ class SessionJoinerTest {
 		joiner.loginEnded();
 		assertTrue(joiner.join("2"));
 		assertEquals(List.of("2"), calls);
+	}
+
+	@Test
+	void withoutAnAccountMojangIsNotCalled() {
+		List<String> calls = new ArrayList<>();
+		SessionJoiner joiner = new SessionJoiner(new SessionJoiner.Mojang() {
+			@Override
+			public void joinServer(String serverId) {
+				calls.add(serverId);
+			}
+
+			@Override
+			public boolean hasAccount() {
+				return false;
+			}
+		});
+		assertFalse(joiner.join("1"));
+		assertEquals(List.of(), calls);
+	}
+
+	@Test
+	void offlineLaunchersHaveNoAccount() {
+		UUID account = UUID.fromString("069a79f4-44e9-4726-a5be-fca90e38aaf5");
+		UUID offline = UUID.nameUUIDFromBytes("OfflinePlayer:Notch".getBytes(StandardCharsets.UTF_8));
+		assertTrue(SessionJoiner.isAccount(account, "token", false));
+		assertFalse(SessionJoiner.isAccount(offline, "token", false));
+		assertFalse(SessionJoiner.isAccount(account, "", false));
+		assertFalse(SessionJoiner.isAccount(account, "token", true));
 	}
 
 	@Test

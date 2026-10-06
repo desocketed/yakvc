@@ -15,8 +15,8 @@
 //! | Type | Payload |
 //! | --- | --- |
 //! | [`YAKVC_EVENT_JOIN_REQUEST`] | `u32 id`, then the server ID as UTF-8 |
-//! | [`YAKVC_EVENT_RENDEZVOUS_STATE`] | `u8 YAKVC_RDV_*`, `u64 value`: expiry (Unix s) when registered, delay (ms) when retrying, else 0 |
-//! | [`YAKVC_EVENT_PEER_STATE`] | `uuid[16]`, `u8 YAKVC_PEER_*` |
+//! | [`YAKVC_EVENT_RENDEZVOUS_STATE`] | `u8 YAKVC_RDV_*`, `u64 value`: expiry (Unix s) when registered, delay (ms) when retrying, else 0; `u8` 1 when registered with a verified ticket, else 0 |
+//! | [`YAKVC_EVENT_PEER_STATE`] | `uuid[16]`, `u8 YAKVC_PEER_*`, `u8` 1 if the peer's ticket is verified |
 //! | [`YAKVC_EVENT_TALKING`] | `uuid[16]`, `u8` 1 talking / 0 stopped |
 //! | [`YAKVC_EVENT_MIC_LEVEL`] | `f32` dBFS |
 //! | [`YAKVC_EVENT_ERROR`] | message as UTF-8 |
@@ -40,7 +40,8 @@ use crate::guard::{
 
 /// Version of this C ABI. Java refuses to use a library whose version differs
 /// from the one it was built against. Bump on any incompatible change.
-pub const YAKVC_ABI_VERSION: u32 = 1;
+/// 2: verified flags in the rendezvous and peer state events.
+pub const YAKVC_ABI_VERSION: u32 = 2;
 
 pub const YAKVC_OK: i32 = 0;
 /// A null pointer, bad UUID, invalid UTF-8 or out-of-range value.

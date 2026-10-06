@@ -15,7 +15,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
 use yakvc_shared::auth::session_server_id;
 use yakvc_shared::rdv::{ALPN, ClientMsg, CloseCode, Hello, MAX_PAIRS, ServerMsg};
-use yakvc_shared::{PairToken, SignedTicket, Ticket, Uuid, wire};
+use yakvc_shared::{PairToken, SignedTicket, Ticket, Uuid, is_offline_player, wire};
 
 use super::{Identity, Inner};
 use crate::config::RendezvousConfig;
@@ -40,7 +40,8 @@ enum Ended {
     /// Mojang is rate-limiting the rendezvous, or the rendezvous is
     /// rate-limiting us.
     RetryAfter(Duration),
-    /// `joinServer` failed or the rendezvous refused our proof.
+    /// `joinServer` failed, the rendezvous refused our proof or sent a ticket
+    /// we can't use, or our ticket expired without a renewal.
     AuthFailed(String),
     /// Network trouble or a protocol error.
     Failed(String),
@@ -193,7 +194,11 @@ impl Session<'_> {
         let mut pairs_due: Option<Instant> = None;
         let mut next_batch = Instant::now();
         let mut pending_join: Option<oneshot::Receiver<bool>> = None;
+        // Our current ticket; `None` until registered.
+        let mut ticket: Option<Ticket> = None;
         let mut renew_at: Option<Instant> = None;
+        // A failed renewal keeps the current ticket and tries again later.
+        let mut renew_backoff = Backoff::new(Duration::from_secs(10), Duration::from_secs(600));
 
         loop {
             tokio::select! {
@@ -215,8 +220,10 @@ impl Session<'_> {
                             pending_join = Some(answer);
                         }
                         ServerMsg::Registered(signed) => {
-                            let ticket = self.accept_ticket(signed)?;
-                            renew_at = Some(renewal_time(&ticket));
+                            let accepted = self.accept_ticket(signed)?;
+                            renew_at = Some(renewal_time(&accepted));
+                            renew_backoff.reset();
+                            ticket = Some(accepted);
                             if sent_pairs.is_none() {
                                 let pairs = pair_tokens(self.identity.uuid, &tab_list.borrow_and_update());
                                 let msg = ClientMsg::SetPairs(pairs.iter().copied().collect());
@@ -227,13 +234,14 @@ impl Session<'_> {
                         }
                         ServerMsg::RetryAfter { secs } => {
                             let delay = Duration::from_secs(secs.into());
-                            if !self.registered {
+                            let Some(current) = &ticket else {
                                 // The rendezvous closes the connection next.
                                 return Err(Ended::RetryAfter(delay));
-                            }
+                            };
                             // A refused renewal: the session and the current
                             // ticket stay valid, so just renew again later.
-                            renew_at = Some(Instant::now() + delay);
+                            let delay = renew_backoff.next().max(delay);
+                            renew_at = Some(retry_renewal(current, delay));
                         }
                         ServerMsg::PeerAvailable { ticket, addr } => {
                             self.inner.peer_available(ticket, addr);
@@ -243,10 +251,30 @@ impl Session<'_> {
                 }
                 ok = wait_for_join(&mut pending_join), if pending_join.is_some() => {
                     pending_join = None;
-                    if !ok {
+                    let offline = is_offline_player(self.identity.uuid, &self.identity.name);
+                    if ok {
+                        wire::write_msg(send, &ClientMsg::Joined).await?;
+                    } else if let Some(current) = &ticket {
+                        // A failed renewal keeps the session and its ticket.
+                        // An offline UUID settles for an unverified ticket
+                        // once the current one would run out (or already is
+                        // unverified), rather than losing voice.
+                        let retry = renew_backoff.next();
+                        let running_out = current.remaining(SystemTime::now()) <= retry;
+                        if offline && (!current.verified || running_out) {
+                            wire::write_msg(send, &ClientMsg::Decline).await?;
+                        } else {
+                            // The challenge stays unanswered; `Renew`
+                            // replaces it.
+                            renew_at = Some(retry_renewal(current, retry));
+                        }
+                    } else if offline {
+                        // No account proof, but an offline-mode server's
+                        // UUID can still get an unverified ticket.
+                        wire::write_msg(send, &ClientMsg::Decline).await?;
+                    } else {
                         return Err(Ended::AuthFailed("Minecraft session check failed".into()));
                     }
-                    wire::write_msg(send, &ClientMsg::Joined).await?;
                 }
                 Ok(()) = tab_list.changed(), if sent_pairs.is_some() => {
                     // Later changes join this batch: it diffs against
@@ -270,6 +298,9 @@ impl Session<'_> {
                 }
                 () = sleep_until(renew_at), if renew_at.is_some() => {
                     renew_at = None;
+                    if ticket.as_ref().is_some_and(|t| t.remaining(SystemTime::now()).is_zero()) {
+                        return Err(Ended::AuthFailed("could not renew the voice chat ticket".into()));
+                    }
                     wire::write_msg(send, &ClientMsg::Renew).await?;
                 }
                 // Before registration the rendezvous only accepts the
@@ -283,15 +314,23 @@ impl Session<'_> {
         }
     }
 
-    /// Checks a ticket from the rendezvous, then caches and adopts it.
+    /// Checks a ticket from the rendezvous, then caches and adopts it. A
+    /// ticket we can't use (an untrusted issuer, a clock far off) is an auth
+    /// failure: retrying soon would only fetch another one.
     fn accept_ticket(&mut self, signed: SignedTicket) -> Result<Ticket, Ended> {
-        let ticket = self.verify_own(&signed).map_err(Ended::Failed)?;
+        let ticket = self.verify_own(&signed).map_err(Ended::AuthFailed)?;
         // Losing the cache only costs a fresh Mojang check next start.
         let _ = std::fs::write(self.ticket_cache, signed.to_bytes());
         self.inner.own_ticket.send_replace(Some(signed));
         self.registered = true;
         let expires_at = SystemTime::UNIX_EPOCH + Duration::from_secs(ticket.expires_at);
-        report(self.inner, RendezvousState::Registered { expires_at });
+        report(
+            self.inner,
+            RendezvousState::Registered {
+                expires_at,
+                verified: ticket.verified,
+            },
+        );
         Ok(ticket)
     }
 
@@ -346,6 +385,12 @@ fn renewal_time(ticket: &Ticket) -> Instant {
     Instant::now() + window_start + offset
 }
 
+/// When to try a failed renewal again: after `delay`, but no later than the
+/// current ticket's expiry, when the session ends if nothing worked.
+fn retry_renewal(current: &Ticket, delay: Duration) -> Instant {
+    Instant::now() + delay.min(current.remaining(SystemTime::now()))
+}
+
 async fn wait_for_join(pending: &mut Option<oneshot::Receiver<bool>>) -> bool {
     match pending {
         // A dropped sender means the engine is shutting down.
@@ -379,6 +424,10 @@ fn closed_by_rendezvous(code: iroh::endpoint::VarInt) -> Option<Ended> {
     if code == rdv_close(CloseCode::AuthFailed) {
         Some(Ended::AuthFailed(
             "the rendezvous did not accept the Minecraft session".into(),
+        ))
+    } else if code == rdv_close(CloseCode::Superseded) {
+        Some(Ended::AuthFailed(
+            "another player, signed in to the Minecraft account, is using this identity".into(),
         ))
     } else if code == rdv_close(CloseCode::RateLimited)
         || code == rdv_close(CloseCode::LimitExceeded)

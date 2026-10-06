@@ -25,30 +25,43 @@ struct Client {
     conn: Connection,
     /// Messages for the connection's writer task.
     outbox: mpsc::UnboundedSender<ServerMsg>,
+    uuid: Uuid,
+    /// Whether the current ticket is verified.
+    verified: bool,
 }
 
 impl Sessions {
-    /// Starts a session. An older session for the same EndpointId is closed,
-    /// since its connection is most likely already dead.
+    /// Starts a session, unless the ticket is unverified and a verified
+    /// session holds the same UUID (returns false). A verified session
+    /// closes every unverified session for its UUID (see
+    /// [`Inner::claim`]). An older session for the same EndpointId is
+    /// closed, since its connection is most likely already dead.
     pub fn register(
         &self,
         conn: &Connection,
         uuid: Uuid,
+        verified: bool,
         ticket: SignedTicket,
         addr: EndpointAddr,
         outbox: mpsc::UnboundedSender<ServerMsg>,
-    ) {
+    ) -> bool {
         let id = conn.remote_id();
         let mut inner = self.0.lock().unwrap();
+        if !inner.claim(id, uuid, verified) {
+            return false;
+        }
         let client = Client {
             conn: conn.clone(),
             outbox,
+            uuid,
+            verified,
         };
         if let Some(old) = inner.clients.insert(id, client) {
             close(&old.conn, CloseCode::Normal, "replaced by a newer session");
         }
         let notices = inner.matcher.register(id, uuid, ticket, addr);
         inner.deliver(notices);
+        true
     }
 
     /// Ends the session `conn` started, unless a newer session replaced it.
@@ -101,8 +114,20 @@ impl Sessions {
         inner.deliver(notices);
     }
 
-    pub fn update_ticket(&self, id: EndpointId, ticket: SignedTicket) {
-        self.0.lock().unwrap().matcher.update_ticket(id, ticket);
+    /// Records a renewed ticket, with the same priority rules as
+    /// [`register`](Self::register). Returns false, keeping the old ticket,
+    /// if the session is gone or the new ticket is refused.
+    pub fn update_ticket(&self, id: EndpointId, ticket: SignedTicket, verified: bool) -> bool {
+        let mut inner = self.0.lock().unwrap();
+        let Some(uuid) = inner.clients.get(&id).map(|client| client.uuid) else {
+            return false;
+        };
+        if !inner.claim(id, uuid, verified) {
+            return false;
+        }
+        inner.clients.get_mut(&id).expect("checked above").verified = verified;
+        inner.matcher.update_ticket(id, ticket);
+        true
     }
 
     pub fn stats(&self) -> Stats {
@@ -121,6 +146,36 @@ impl Sessions {
 }
 
 impl Inner {
+    /// Verified priority, for session `id` claiming `uuid`. An unverified
+    /// claim is refused while a verified session holds the UUID. A verified
+    /// claim ends every unverified session for it: their connections close
+    /// with `Superseded` and their matches get `PeerGone` straight away.
+    fn claim(&mut self, id: EndpointId, uuid: Uuid, verified: bool) -> bool {
+        let mut others = self
+            .clients
+            .iter()
+            .filter(|&(&other, client)| other != id && client.uuid == uuid);
+        if !verified {
+            return !others.any(|(_, client)| client.verified);
+        }
+        let superseded: Vec<EndpointId> = others
+            .filter(|(_, client)| !client.verified)
+            .map(|(&other, _)| other)
+            .collect();
+        for other in superseded {
+            // The entry stays until its connection's task unregisters it, so
+            // the relay gate hears about the session ending as usual.
+            close(
+                &self.clients[&other].conn,
+                CloseCode::Superseded,
+                "a verified player holds this identity",
+            );
+            let notices = self.matcher.unregister(other);
+            self.deliver(notices);
+        }
+        true
+    }
+
     fn deliver(&self, notices: Vec<Notice>) {
         for notice in notices {
             if let Some(client) = self.clients.get(&notice.to) {

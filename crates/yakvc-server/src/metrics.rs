@@ -16,6 +16,8 @@ pub(crate) struct Metrics {
     pub auth_ok: Counter,
     /// Sessions registered from a cached ticket.
     pub auth_cached: Counter,
+    /// Unverified tickets issued to clients that declined the challenge.
+    pub auth_unverified: Counter,
     pub auth_failed: Counter,
     /// Auths answered with `RetryAfter`.
     pub auth_retry_after: Counter,
@@ -82,6 +84,12 @@ pub(crate) fn render(shared: &Shared, relay: Option<&iroh_relay::server::Metrics
         "counter",
         "Sessions registered from a cached ticket.",
         m.auth_cached.get(),
+    );
+    metric(
+        "yakvc_auth_unverified_total",
+        "counter",
+        "Unverified tickets issued to clients without a Mojang proof.",
+        m.auth_unverified.get(),
     );
     metric(
         "yakvc_auth_failed_total",
