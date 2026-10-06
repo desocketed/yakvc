@@ -41,6 +41,7 @@
 	"yakvc.settings.bitrate.tooltip": "Higher sounds better and uses more data. 24 kbit/s is plenty for speech.",
 	"yakvc.settings.input_device": "Microphone",
 	"yakvc.settings.input_device.default": "System Default",
+	"yakvc.settings.mic_level": "Microphone Level",
 	"yakvc.settings.output_device": "Speakers",
 	"yakvc.settings.output_device.default": "Same as Game",
 	"yakvc.settings.privacy": "Privacy",

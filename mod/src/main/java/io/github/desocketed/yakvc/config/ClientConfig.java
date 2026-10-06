@@ -57,6 +57,11 @@ public record ClientConfig(String toml) {
 		return "voice".equals(string(value("audio", "activation")));
 	}
 
+	/** dBFS above which voice activation transmits; the engine's default when unset. */
+	public double vadThresholdDb() {
+		return number(value("audio", "vad_threshold_db"), -45);
+	}
+
 	/** Bits per second. */
 	public int bitrate() {
 		return (int) number(value("audio", "bitrate"), 24_000);
