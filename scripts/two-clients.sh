@@ -13,16 +13,25 @@
 #   2. after `/gamemode spectator Bob`, each stops hearing the other;
 #   3. after `/gamemode survival Bob`, each hears the other again.
 #
-# Usage: scripts/two-clients.sh --accept-eula
+# Usage: scripts/two-clients.sh --accept-eula [--pipewire]
 #   (or YAKVC_ACCEPT_MINECRAFT_EULA=1). Running the Minecraft server means
 #   accepting the Minecraft EULA (https://aka.ms/MinecraftEULA); the script
 #   writes eula=true into its throwaway server directory only when told to.
+#   --pipewire uses real devices instead of the dev test audio: a private
+#   PipeWire session per client (`cargo xtask with-pipewire`) with a test
+#   microphone playing a tone, reached through ALSA as on a desktop. It also checks that each
+#   microphone delivered audio and that no device failed to open.
 # Logs and game directories are in mod/build/two-clients/.
 set -euo pipefail
 
-if [[ "${1:-}" == --accept-eula ]]; then
-	export YAKVC_ACCEPT_MINECRAFT_EULA=1
-fi
+pipewire=
+for arg in "$@"; do
+	case $arg in
+	--accept-eula) export YAKVC_ACCEPT_MINECRAFT_EULA=1 ;;
+	--pipewire) pipewire=1 ;;
+	*) echo "unknown argument $arg" >&2; exit 2 ;;
+	esac
+done
 if [[ "${YAKVC_ACCEPT_MINECRAFT_EULA:-}" != 1 ]]; then
 	echo "This runs a Minecraft server, which needs the Minecraft EULA accepted (https://aka.ms/MinecraftEULA)." >&2
 	echo "Pass --accept-eula or set YAKVC_ACCEPT_MINECRAFT_EULA=1 to accept it." >&2
@@ -50,7 +59,8 @@ mapfile -t client_args < mod/build/devlaunch/client.args
 source scripts/headless-env.sh
 pids=()
 cleanup() {
-	kill "${pids[@]}" "$xvfb" 2>/dev/null || true
+	# A negative pid is a process group: a client with its PipeWire session.
+	kill -- "${pids[@]}" "$xvfb" 2>/dev/null || true
 	wait "${pids[@]}" 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -107,19 +117,22 @@ wait_for 180 "the Minecraft server" logged "$work/server.log" 0 'Done \('
 for name in Alice Bob; do
 	dir=$work/$name
 	mkdir -p "$dir/config/yakvc"
-	# The dev rendezvous's client config plus dev test audio.
-	cat "$work/rdv/client.toml" - >"$dir/config/yakvc/client.toml" <<EOF
-
-[dev]
-tone_hz = 440.0
-null_output = true
-EOF
+	# The dev rendezvous's client config, plus dev test audio unless real
+	# devices are under test.
+	cp "$work/rdv/client.toml" "$dir/config/yakvc/client.toml"
+	if [[ -z $pipewire ]]; then
+		printf '\n[dev]\ntone_hz = 440.0\nnull_output = true\n' >>"$dir/config/yakvc/client.toml"
+	fi
 	printf 'onboardAccessibility:false\nskipMultiplayerWarning:true\njoinedFirstServer:true\nrenderDistance:2\nmaxFps:30\n' \
 		>"$dir/options.txt"
 	step "start $name"
-	(cd "$dir" && exec java -Dyakvc.dev.holdPushToTalk=true "${client_args[@]}" \
+	# With --pipewire each client runs in its own PipeWire session, in a
+	# process group of its own so that cleanup stops the daemons too.
+	launcher=()
+	[[ -z $pipewire ]] || launcher=(setsid "$root/target/debug/xtask" with-pipewire --)
+	(cd "$dir" && exec "${launcher[@]}" java -Dyakvc.dev.holdPushToTalk=true "${client_args[@]}" \
 		--gameDir . --username "$name" --quickPlayMultiplayer "127.0.0.1:$mc_port" >"$work/$name.log" 2>&1) &
-	pids+=($!)
+	if [[ -n $pipewire ]]; then pids+=("-$!"); else pids+=($!); fi
 done
 
 alice=$work/Alice.log
@@ -154,6 +167,19 @@ console "gamemode survival Bob"
 wait_for 30 "Alice to hear Bob again" hears "$alice" "$alice_mark" Bob
 wait_for 30 "Bob to hear Alice again" hears "$bob" "$bob_mark" Alice
 echo "ok"
+
+if [[ -n $pipewire ]]; then
+	step "real devices"
+	for log in "$alice" "$bob"; do
+		grep -q "(yakvc) Microphone is delivering audio" "$log" ||
+			{ echo "FAILED: no microphone audio in $log" >&2; exit 1; }
+		if grep -E "\(yakvc\) Engine: .*(microphone|speakers)" "$log"; then
+			echo "FAILED: a device failed in $log" >&2
+			exit 1
+		fi
+	done
+	echo "ok: both microphones delivered audio through PipeWire"
+fi
 
 step "voice events"
 grep -hE '\(yakvc\) (Rendezvous|Peer|Talking)' "$alice" | sed 's/^/Alice: /'

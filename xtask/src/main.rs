@@ -4,6 +4,7 @@ use std::process::Command;
 use std::{env, fs};
 
 mod dev;
+mod pipewire;
 
 use anyhow::{Context, Result, bail, ensure};
 use clap::{Parser, Subcommand};
@@ -57,6 +58,13 @@ enum Cmd {
         #[arg(long)]
         write_client_config: bool,
     },
+    /// Run a command against real audio devices: a private PipeWire session
+    /// with a test microphone (playing a tone) and test speakers, reached
+    /// through ALSA. Linux only; needs Nix.
+    WithPipewire {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
+        command: Vec<String>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -73,6 +81,7 @@ fn main() -> Result<()> {
             dir,
             write_client_config,
         } => dev::dev(port, dir, write_client_config),
+        Cmd::WithPipewire { command } => std::process::exit(pipewire::with_pipewire(&command)?),
     }
 }
 
