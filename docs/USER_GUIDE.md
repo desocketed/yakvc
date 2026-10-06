@@ -96,8 +96,11 @@ The game's own Voice/Speech slider (Options → Music & Sounds) sets the volume 
 - **Activation**: *Push to Talk* sends your voice only while you hold the key. *Voice* sends it whenever the microphone hears you speak.
 - **Range**: how far away players can hear you and you can hear them, from 1 to 256 blocks (48 by default). Between two players, the shorter of their ranges applies.
 - **Bitrate**: the sound quality of your voice, from 16 to 64 kbit/s. Higher sounds better and uses more data; 24 kbit/s is plenty for speech.
-- **Microphone**: which microphone to use. *System Default* follows your system's setting.
-- **Speakers**: where voices play. *Same as Game* uses the game's sound device (Options → Music & Sounds → Device).
+- **Microphone**: which microphone to use. Click it for a list of your microphones and pick one; scroll the list if it is long. *System Default* follows your system's setting.
+- **Microphone Level**: shows live how loud your microphone hears you, so you can check it works without joining a world or holding the talk key. The bar turns green above the white mark, the level at which *Voice* activation starts sending (`vad_threshold_db` in the [config file](#the-config-file)). It shows the microphone in use, so after picking another one, leave and reopen the settings to see it.
+- **Speakers**: where voices play. Click it to pick from a list, like the microphone. *Same as Game* uses the game's sound device (Options → Music & Sounds → Device).
+
+![The microphone list](guide/voice-settings-microphone.png)
 
 ![The privacy settings](guide/voice-settings-privacy.png)
 
