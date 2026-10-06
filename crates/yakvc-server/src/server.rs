@@ -369,8 +369,8 @@ impl Default for Limits {
         Limits {
             auth_per_endpoint_per_min: 5,
             auth_per_ip_per_min: 30,
-            max_pairs: 2048,
-            pair_updates_per_sec: 10,
+            max_pairs: rdv::MAX_PAIRS,
+            pair_updates_per_sec: rdv::PAIR_UPDATES_PER_SEC,
             relay_client_bytes_per_sec: 80_000,
             relay_grace: Duration::from_secs(30),
         }
