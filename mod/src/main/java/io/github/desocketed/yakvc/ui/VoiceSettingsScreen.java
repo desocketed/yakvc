@@ -4,6 +4,7 @@ import com.mojang.serialization.Codec;
 import io.github.desocketed.yakvc.GameStateFeeder;
 import io.github.desocketed.yakvc.YakVcClient;
 import io.github.desocketed.yakvc.config.ClientConfig;
+import io.github.desocketed.yakvc.natives.EngineEvent;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -36,6 +37,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	private final OptionInstance<Boolean> relayOnly;
 	private final OptionInstance<Boolean> respectChatRestrictions;
 	private final OptionInstance<Boolean> muteBlockedPlayers;
+	private final OptionInstance<Boolean> verifiedOnly;
 
 	public VoiceSettingsScreen(@Nullable Screen lastScreen, Options options, GameStateFeeder feeder) {
 		super(lastScreen, options, Component.translatable("yakvc.settings.title"));
@@ -67,6 +69,9 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		muteBlockedPlayers = OptionInstance.createBoolean("yakvc.settings.mute_blocked_players",
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.mute_blocked_players.tooltip")),
 				initial.muteBlockedPlayers());
+		verifiedOnly = OptionInstance.createBoolean("yakvc.settings.verified_only",
+				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.verified_only.tooltip")),
+				initial.verifiedOnly());
 	}
 
 	/** A device picker over the listed names, plus the configured one if it is unplugged right now. */
@@ -93,6 +98,18 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 				.setMaxWidth(310).setCentered(true));
 		list.addSmall(relayOnly, respectChatRestrictions);
 		list.addSmall(muteBlockedPlayers);
+		list.addHeader(Component.translatable("yakvc.settings.account"));
+		list.addBig(new MultiLineTextWidget(accountState(), font).setMaxWidth(310).setCentered(true));
+		list.addSmall(verifiedOnly);
+	}
+
+	/** Whether the rendezvous verified our Mojang account. */
+	private Component accountState() {
+		if (feeder.rendezvous() != EngineEvent.RendezvousState.REGISTERED) {
+			return Component.translatable("yakvc.settings.account.not_connected");
+		}
+		return Component.translatable(feeder.verified() ? "yakvc.settings.account.verified"
+				: "yakvc.settings.account.unverified");
 	}
 
 	/** Called whenever the screen goes away, after slider values have been applied. */
@@ -112,6 +129,9 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		}
 		if (muteBlockedPlayers.get() != initial.muteBlockedPlayers()) {
 			changed = changed.with("", "mute_blocked_players", String.valueOf(muteBlockedPlayers.get()));
+		}
+		if (verifiedOnly.get() != initial.verifiedOnly()) {
+			changed = changed.with("", "verified_only", String.valueOf(verifiedOnly.get()));
 		}
 		if (activation.get().equals(VOICE) != initial.voiceActivation()) {
 			changed = changed.with("audio", "activation", ClientConfig.quote(activation.get()));

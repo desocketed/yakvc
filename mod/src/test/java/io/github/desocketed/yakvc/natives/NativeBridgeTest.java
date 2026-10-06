@@ -52,7 +52,7 @@ class NativeBridgeTest {
 			bridge.setInput(engine, NativeBridge.INPUT_PUSH_TO_TALK);
 
 			List<EngineEvent> events = pollUntil(bridge, engine, new EngineEvent.Talking(me, true));
-			assertTrue(events.contains(new EngineEvent.Rendezvous(EngineEvent.RendezvousState.DISCONNECTED, 0)),
+			assertTrue(events.contains(new EngineEvent.Rendezvous(EngineEvent.RendezvousState.DISCONNECTED, 0, false)),
 					events.toString());
 			assertTrue(bridge.listDevices(engine).startsWith("{"));
 			bridge.updateConfig(engine, DEV_CONFIG);
