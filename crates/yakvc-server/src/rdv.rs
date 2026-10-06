@@ -18,7 +18,7 @@ use tokio::sync::mpsc;
 use yakvc_shared::auth::Nonce;
 use yakvc_shared::rdv::{ClientMsg, CloseCode, Hello, ServerMsg, addr_fits};
 use yakvc_shared::wire::{WireError, read_msg, write_msg};
-use yakvc_shared::{EndpointId, SignedTicket, Uuid, is_offline_uuid};
+use yakvc_shared::{EndpointId, SignedTicket, Uuid, is_offline_player};
 
 use crate::auth::{JoinCheck, proves};
 use crate::limits::{Slot, TokenBucket};
@@ -246,10 +246,9 @@ impl Client {
     fn start_challenge(&mut self) -> Result<(), CloseCode> {
         // An offline UUID may decline the challenge, which needs no Mojang
         // call, so it is challenged even while Mojang is blocked.
-        let (uuid, _) = self.identity();
-        if !is_offline_uuid(uuid)
-            && let Some(secs) = self.shared.auth.retry_after()
-        {
+        let (uuid, name) = self.identity();
+        let offline = is_offline_player(uuid, &name);
+        if !offline && let Some(secs) = self.shared.auth.retry_after() {
             return self.retry_later(secs);
         }
         // The challenge is what counts against the auth limits, so a
@@ -257,7 +256,7 @@ impl Client {
         if let Err(code) = self.check_auth_rate() {
             return self.refuse(code);
         }
-        if let Some(secs) = self.check_challenge_budget() {
+        if let Some(secs) = self.check_challenge_budget(offline) {
             return self.retry_later(secs);
         }
         let nonce = Nonce::random();
@@ -269,6 +268,11 @@ impl Client {
     async fn on_joined(&mut self) -> Result<(), CloseCode> {
         let nonce = self.challenge.take().ok_or(CloseCode::ProtocolError)?;
         let (uuid, name) = self.identity();
+        if is_offline_player(uuid, &name)
+            && let Some(secs) = self.check_mojang_budget()
+        {
+            return self.retry_later(secs);
+        }
 
         let started = Instant::now();
         let check = self.shared.auth.check_join(&name, &nonce, self.id).await;
@@ -298,7 +302,7 @@ impl Client {
     fn on_decline(&mut self) -> Result<(), CloseCode> {
         self.challenge.take().ok_or(CloseCode::ProtocolError)?;
         let (uuid, name) = self.identity();
-        if !is_offline_uuid(uuid) {
+        if !is_offline_player(uuid, &name) {
             self.shared.metrics.auth_failed.inc();
             return self.refuse(CloseCode::AuthFailed);
         }
@@ -417,17 +421,28 @@ impl Client {
 
     /// Takes a challenge from the server-wide budgets, or returns the seconds
     /// to wait. Taken when the challenge is issued rather than at `Joined`,
-    /// so a refused player hasn't called `joinServer` for nothing.
-    fn check_challenge_budget(&self) -> Option<u32> {
+    /// so a refused player hasn't called `joinServer` for nothing. An offline
+    /// player may only decline, so their Mojang check is taken at `Joined`
+    /// instead: declines must not drain the budget signed-in players need.
+    fn check_challenge_budget(&self, offline: bool) -> Option<u32> {
         let now = Instant::now();
-        let shared = &self.shared;
         if self.ip.is_none() {
-            let mut bucket = shared.unknown_ip_challenges.lock().unwrap();
+            let mut bucket = self.shared.unknown_ip_challenges.lock().unwrap();
             if !bucket.take(now) {
                 return Some(bucket.secs_to_next_token(now));
             }
         }
-        let mut bucket = shared.mojang_checks.lock().unwrap();
+        if offline {
+            return None;
+        }
+        self.check_mojang_budget()
+    }
+
+    /// Takes a Mojang check from the server-wide budget, or returns the
+    /// seconds to wait.
+    fn check_mojang_budget(&self) -> Option<u32> {
+        let now = Instant::now();
+        let mut bucket = self.shared.mojang_checks.lock().unwrap();
         if bucket.take(now) {
             None
         } else {

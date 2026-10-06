@@ -15,7 +15,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
 use yakvc_shared::auth::session_server_id;
 use yakvc_shared::rdv::{ALPN, ClientMsg, CloseCode, Hello, MAX_PAIRS, ServerMsg};
-use yakvc_shared::{PairToken, SignedTicket, Ticket, Uuid, is_offline_uuid, wire};
+use yakvc_shared::{PairToken, SignedTicket, Ticket, Uuid, is_offline_player, wire};
 
 use super::{Identity, Inner};
 use crate::config::RendezvousConfig;
@@ -251,7 +251,7 @@ impl Session<'_> {
                 }
                 ok = wait_for_join(&mut pending_join), if pending_join.is_some() => {
                     pending_join = None;
-                    let offline = is_offline_uuid(self.identity.uuid);
+                    let offline = is_offline_player(self.identity.uuid, &self.identity.name);
                     if ok {
                         wire::write_msg(send, &ClientMsg::Joined).await?;
                     } else if let Some(current) = &ticket {

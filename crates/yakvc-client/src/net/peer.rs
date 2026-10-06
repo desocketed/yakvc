@@ -795,11 +795,17 @@ mod tests {
     }
 
     async fn side(n: u8, issuer: &IssuerKey, trusted: &IssuerKey) -> Side {
-        side_as(uuid(n), true, issuer, trusted).await
+        side_as(uuid(n), &format!("player{n}"), true, issuer, trusted).await
     }
 
-    /// A side claiming `uuid`, with a verified or unverified ticket.
-    async fn side_as(uuid: Uuid, verified: bool, issuer: &IssuerKey, trusted: &IssuerKey) -> Side {
+    /// A side claiming `uuid` and `name`, with a verified or unverified ticket.
+    async fn side_as(
+        uuid: Uuid,
+        name: &str,
+        verified: bool,
+        issuer: &IssuerKey,
+        trusted: &IssuerKey,
+    ) -> Side {
         let endpoint = loopback_endpoint().await;
         let (events_tx, events) = event::channel();
         let (probe, links) = probe(1, 1);
@@ -811,9 +817,9 @@ mod tests {
         let net = Net::new(endpoint.clone(), vec![probe], trust, events_tx, MAX_PEERS);
         net.set_identity(Identity {
             uuid,
-            name: format!("player{}", uuid.as_bytes()[0]),
+            name: name.into(),
         });
-        let own = signed_ticket(issuer, uuid, &endpoint, verified);
+        let own = signed_ticket(issuer, uuid, name, &endpoint, verified);
         net.inner().own_ticket.send_replace(Some(own));
         Side {
             net,
@@ -875,8 +881,8 @@ mod tests {
         let issuer = IssuerKey::generate();
         let bob = offline_uuid("bob");
         let alice = side(1, &issuer, &issuer).await;
-        let impostor = side_as(bob, false, &issuer, &issuer).await;
-        let real = side_as(bob, true, &issuer, &issuer).await;
+        let impostor = side_as(bob, "bob", false, &issuer, &issuer).await;
+        let real = side_as(bob, "bob", true, &issuer, &issuer).await;
         alice.net.set_tab_list(HashSet::from([bob]));
         impostor.sees(&[1]);
         real.sees(&[1]);
@@ -905,7 +911,7 @@ mod tests {
         let issuer = IssuerKey::generate();
         let alice = side(1, &issuer, &issuer).await;
         let bob = offline_uuid("bob");
-        let unverified = side_as(bob, false, &issuer, &issuer).await;
+        let unverified = side_as(bob, "bob", false, &issuer, &issuer).await;
         alice.net.set_tab_list(HashSet::from([bob]));
         unverified.sees(&[1]);
 
