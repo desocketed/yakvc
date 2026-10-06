@@ -73,6 +73,8 @@
             # container restarts.
             gh
             jq
+            # git pushes over SSH with the key in $HOME/.claude/ssh.
+            openssh
           ] ++ lib.optionals stdenv.hostPlatform.isLinux [ alsa-lib ];
           JAVA_HOME = pkgs.jdk25.home;
           # pkg-config's per-target search path, read by alsa-sys when
