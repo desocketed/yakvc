@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Prints what is new on GitHub for Claude since the last check: issues and
-# comments from the maintainer (anything without the <!-- claude --> marker)
+# comments from anyone but Claude's own account (desocketed)
 # and failed CI runs on main. Prints nothing when there is nothing to do,
 # so a periodic check costs one short command.
 #
@@ -26,7 +26,8 @@ if [ "${1:-}" = "--done" ]; then
 fi
 
 since=$(jq -r .last_check "$state")
-human='select(.body // "" | contains("<!-- claude -->") | not)'
+# Judged by author, not by the <!-- claude --> marker, which anyone can paste.
+human='select(.user.login != "desocketed")'
 
 # `since` matches any update, including Claude's own comments, so keep only
 # issues created since; maintainer comments on older ones are listed below.

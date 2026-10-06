@@ -6,7 +6,7 @@
 //! sends `Registered`. After that the client streams pair-token updates and
 //! the server streams `PeerAvailable` / `PeerGone`.
 
-use iroh_base::{EndpointAddr, EndpointId};
+use iroh_base::{EndpointAddr, EndpointId, TransportAddr};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -15,6 +15,15 @@ use crate::pair::PairToken;
 use crate::ticket::SignedTicket;
 
 pub const ALPN: &[u8] = b"yakvc/rdv/1";
+
+/// Most pair tokens a session may hold; more closes it with
+/// [`CloseCode::LimitExceeded`].
+pub const MAX_PAIRS: usize = 2048;
+
+/// Session updates (`SetPairs`, `AddPairs`, `RemovePairs` and `UpdateAddr`)
+/// a client may send per second, in bursts of up to as many; more closes it
+/// with [`CloseCode::RateLimited`].
+pub const PAIR_UPDATES_PER_SEC: u32 = 10;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClientMsg {
@@ -78,4 +87,81 @@ pub enum CloseCode {
     /// A verified session took over this session's unverified UUID, or holds
     /// the UUID an unverified ticket was asked for.
     Superseded = 6,
+}
+
+/// Most IP addresses an [`EndpointAddr`] may carry on the rendezvous. Real
+/// clients have a handful (one per interface and family, plus what the relay
+/// sees); the bound keeps `PeerAvailable` far below the message size limit.
+pub const MAX_IP_ADDRS: usize = 16;
+
+/// Longest relay URL an [`EndpointAddr`] may carry on the rendezvous.
+pub const MAX_RELAY_URL_LEN: usize = 256;
+
+/// `addr` reduced to what the rendezvous accepts: the first
+/// [`MAX_IP_ADDRS`] IP addresses and one relay URL of at most
+/// [`MAX_RELAY_URL_LEN`] bytes. Other transports are dropped.
+pub fn fit_addr(addr: &EndpointAddr) -> EndpointAddr {
+    let ips = addr
+        .ip_addrs()
+        .take(MAX_IP_ADDRS)
+        .copied()
+        .map(TransportAddr::Ip);
+    let relay = addr
+        .relay_urls()
+        .find(|url| url.as_str().len() <= MAX_RELAY_URL_LEN)
+        .cloned()
+        .map(TransportAddr::Relay);
+    EndpointAddr::from_parts(addr.id, ips.chain(relay))
+}
+
+/// Whether the rendezvous accepts `addr` as it is.
+pub fn addr_fits(addr: &EndpointAddr) -> bool {
+    fit_addr(addr) == *addr
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::SocketAddr;
+
+    use iroh_base::{RelayUrl, SecretKey};
+
+    use super::*;
+
+    fn ips(count: usize) -> impl Iterator<Item = TransportAddr> {
+        (0..count).map(|n| TransportAddr::Ip(SocketAddr::from(([127, 0, 0, 1], n as u16))))
+    }
+
+    #[test]
+    fn small_addresses_fit() {
+        let relay: RelayUrl = "https://relay.example.com".parse().unwrap();
+        let addr = EndpointAddr::new(SecretKey::generate().public())
+            .with_relay_url(relay)
+            .with_addrs(ips(MAX_IP_ADDRS));
+        assert!(addr_fits(&addr));
+        assert_eq!(fit_addr(&addr), addr);
+    }
+
+    #[test]
+    fn oversize_addresses_are_trimmed() {
+        let id = SecretKey::generate().public();
+        let many_ips = EndpointAddr::new(id).with_addrs(ips(MAX_IP_ADDRS + 1));
+        assert!(!addr_fits(&many_ips));
+        assert_eq!(fit_addr(&many_ips).ip_addrs().count(), MAX_IP_ADDRS);
+
+        let long: RelayUrl = format!("https://{}.example.com", "a".repeat(MAX_RELAY_URL_LEN))
+            .parse()
+            .unwrap();
+        let short: RelayUrl = "https://relay.example.com".parse().unwrap();
+        assert!(!addr_fits(
+            &EndpointAddr::new(id).with_relay_url(long.clone())
+        ));
+        let two_relays = EndpointAddr::new(id)
+            .with_relay_url(long)
+            .with_relay_url(short.clone());
+        assert!(!addr_fits(&two_relays));
+        assert_eq!(
+            fit_addr(&two_relays),
+            EndpointAddr::new(id).with_relay_url(short)
+        );
+    }
 }
