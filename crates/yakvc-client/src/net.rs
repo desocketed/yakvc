@@ -577,21 +577,7 @@ impl Inner {
     /// unverified ticket is refused while a verified link holds the UUID.
     /// Links with the same standing are left alone.
     fn claim(&self, remote: EndpointId, uuid: Uuid, verified: bool) -> Result<(), CloseCode> {
-        let peers = self.peers.lock().unwrap();
-        let others = peers
-            .iter()
-            .filter(|&(&id, entry)| id != remote && entry.uuid == uuid);
-        for (_, entry) in others {
-            let Some(conn) = entry.open_conn() else {
-                continue;
-            };
-            match (verified, entry.verified) {
-                (false, true) => return Err(CloseCode::Superseded),
-                (true, false) => close(conn, CloseCode::Superseded),
-                _ => {}
-            }
-        }
-        Ok(())
+        claim(&self.peers.lock().unwrap(), remote, uuid, verified)
     }
 
     fn is_banned(&self, remote: EndpointId) -> bool {
@@ -599,6 +585,31 @@ impl Inner {
         banned.retain(|_, until| *until > tokio::time::Instant::now());
         banned.contains_key(&remote)
     }
+}
+
+/// See [`Inner::claim`]; [`peer::register`] calls it with the peers lock
+/// already held, so a claim and the link it admits can't interleave with
+/// another handshake for the same UUID.
+fn claim(
+    peers: &HashMap<EndpointId, PeerEntry>,
+    remote: EndpointId,
+    uuid: Uuid,
+    verified: bool,
+) -> Result<(), CloseCode> {
+    let others = peers
+        .iter()
+        .filter(|&(&id, entry)| id != remote && entry.uuid == uuid);
+    for (_, entry) in others {
+        let Some(conn) = entry.open_conn() else {
+            continue;
+        };
+        match (verified, entry.verified) {
+            (false, true) => return Err(CloseCode::Superseded),
+            (true, false) => close(conn, CloseCode::Superseded),
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 impl Trust {
