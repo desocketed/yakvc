@@ -89,7 +89,7 @@ The game's own Voice/Speech slider (Options → Music & Sounds) sets the volume 
 
 ## Settings
 
-**Settings…** in the voice menu opens the settings. With Mod Menu installed, the config button on Yak VC's entry in the mods list opens them too. Changes apply and are saved when you leave the screen.
+**Settings…** in the voice menu opens the settings. With Mod Menu installed, the config button on Yak VC's entry in the mods list opens them too, also from the title screen before you join a world. Changes apply and are saved when you leave the screen.
 
 ![The voice settings](guide/voice-settings.png)
 

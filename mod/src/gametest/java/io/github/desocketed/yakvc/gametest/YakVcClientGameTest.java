@@ -29,10 +29,12 @@ import net.fabricmc.fabric.api.entity.FakePlayer;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.CameraType;
 import net.minecraft.client.KeyMapping;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.AbstractScrollArea;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.events.ContainerEventHandler;
 import net.minecraft.client.gui.components.events.GuiEventListener;
+import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.client.gui.screens.options.controls.KeyBindsScreen;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.network.chat.Component;
@@ -74,6 +76,7 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 			mc.options.vignette().set(false);
 			mc.options.showAutosaveIndicator().set(false);
 		});
+		checkSettingsWithoutWorld(context, feeder);
 		try (TestSingleplayerContext singleplayer = context.worldBuilder().create()) {
 			// The world builder already fixes the seed and weather and stops time; this fixes the time and view.
 			singleplayer.getServer().runCommand("time set noon");
@@ -150,6 +153,17 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 				throw new AssertionError("engine reported errors; see the log");
 			}
 		}
+	}
+
+	/**
+	 * Mod Menu opens the settings from the title screen, with no world or voice session, so they must work there too.
+	 * Mod Menu isn't on the test classpath, so the screen is opened directly, as its entry does.
+	 */
+	private static void checkSettingsWithoutWorld(ClientGameTestContext context, GameStateFeeder feeder) {
+		context.setScreen(() -> new VoiceSettingsScreen(new TitleScreen(), Minecraft.getInstance().options, feeder));
+		context.waitForScreen(VoiceSettingsScreen.class);
+		context.clickScreenButton("gui.done");
+		context.waitForScreen(TitleScreen.class);
 	}
 
 	/**
