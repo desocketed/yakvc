@@ -54,13 +54,7 @@ struct Client {
 
 impl Client {
     async fn connect(server: &Server, name: &str) -> Client {
-        let endpoint = Endpoint::builder(presets::Minimal)
-            .clear_ip_transports()
-            .bind_addr("127.0.0.1:0")
-            .unwrap()
-            .bind()
-            .await
-            .unwrap();
+        let endpoint = loopback_endpoint().await;
         Client::connect_with(endpoint, server.endpoint_addr(), name).await
     }
 
@@ -166,6 +160,16 @@ impl Client {
     }
 }
 
+async fn loopback_endpoint() -> Endpoint {
+    Endpoint::builder(presets::Minimal)
+        .clear_ip_transports()
+        .bind_addr("127.0.0.1:0")
+        .unwrap()
+        .bind()
+        .await
+        .unwrap()
+}
+
 async fn relay_only_endpoint(url: RelayUrl) -> Endpoint {
     Endpoint::builder(presets::Minimal)
         .clear_ip_transports()
@@ -268,6 +272,89 @@ async fn updates_before_registering_are_a_protocol_error() {
     let mut client = Client::connect(&server, "alice").await;
     client.send(ClientMsg::AddPairs(vec![])).await;
     assert_eq!(client.close_code().await, code(CloseCode::ProtocolError));
+}
+
+/// An address with one IP address more than the rendezvous accepts.
+fn oversize_addr(id: EndpointId) -> EndpointAddr {
+    let mut addr = EndpointAddr::new(id);
+    for port in 0..=rdv::MAX_IP_ADDRS as u16 {
+        addr = addr.with_ip_addr(([127, 0, 0, 1], port).into());
+    }
+    addr
+}
+
+#[tokio::test]
+async fn oversize_hello_address_is_a_protocol_error() {
+    let server = dev_server().await;
+    let mut client = Client::connect(&server, "alice").await;
+    let ClientMsg::Hello(mut hello) = client.hello(None) else {
+        unreachable!()
+    };
+    hello.addr = oversize_addr(client.id());
+    client.send(ClientMsg::Hello(hello)).await;
+    assert_eq!(client.close_code().await, code(CloseCode::ProtocolError));
+}
+
+#[tokio::test]
+async fn oversize_address_update_closes_only_the_sender() {
+    let server = dev_server().await;
+    let mut alice = Client::connect(&server, "alice").await;
+    let mut bob = Client::connect(&server, "bob").await;
+    let mut carol = Client::connect(&server, "carol").await;
+    alice.register().await;
+    bob.register().await;
+    carol.register().await;
+    alice
+        .send(ClientMsg::AddPairs(vec![alice.token_for(&bob)]))
+        .await;
+    bob.send(ClientMsg::AddPairs(vec![bob.token_for(&alice)]))
+        .await;
+    alice.expect_peer_available(&bob).await;
+    bob.expect_peer_available(&alice).await;
+
+    alice
+        .send(ClientMsg::UpdateAddr(oversize_addr(alice.id())))
+        .await;
+    assert_eq!(alice.close_code().await, code(CloseCode::ProtocolError));
+
+    // Bob's session carries on: he hears that Alice left and gets new matches.
+    match bob.recv().await {
+        ServerMsg::PeerGone(id) => assert_eq!(id, alice.id()),
+        other => panic!("expected PeerGone, got {other:?}"),
+    }
+    bob.send(ClientMsg::AddPairs(vec![bob.token_for(&carol)]))
+        .await;
+    carol
+        .send(ClientMsg::AddPairs(vec![carol.token_for(&bob)]))
+        .await;
+    bob.expect_peer_available(&carol).await;
+}
+
+#[tokio::test]
+async fn unregistered_connections_are_capped() {
+    let limits = Limits {
+        max_unregistered: 1,
+        ..Limits::default()
+    };
+    let server = builder()
+        .insecure_dev_auth()
+        .limits(limits)
+        .spawn()
+        .await
+        .unwrap();
+    let mut alice = Client::connect(&server, "alice").await;
+
+    let endpoint = loopback_endpoint().await;
+    let connect = endpoint.connect(server.endpoint_addr(), rdv::ALPN);
+    let refused = tokio::time::timeout(TIMEOUT, connect)
+        .await
+        .expect("connect timed out");
+    assert!(refused.is_err());
+
+    // Registering frees the slot.
+    alice.register().await;
+    let mut bob = Client::connect(&server, "bob").await;
+    bob.register().await;
 }
 
 #[tokio::test]
@@ -433,6 +520,68 @@ async fn auth_attempts_are_rate_limited_per_endpoint() {
 
     alice.send(ClientMsg::Renew).await;
     assert_eq!(alice.close_code().await, code(CloseCode::RateLimited));
+}
+
+#[tokio::test]
+async fn challenges_beyond_the_mojang_budget_are_told_to_retry() {
+    let mojang = FakeMojang::start().await;
+    let limits = Limits {
+        mojang_checks_per_min: 1,
+        ..Limits::default()
+    };
+    let server = builder()
+        .session_server(SessionServer::new(&mojang.url))
+        .limits(limits)
+        .spawn()
+        .await
+        .unwrap();
+    let mut alice = Client::connect(&server, "alice").await;
+    alice.send(alice.hello(None)).await;
+    alice.answer_challenge().await;
+    alice.expect_registered().await;
+
+    // A fresh key gets past the per-EndpointId limit, but not the budget.
+    let mut bob = Client::connect(&server, "bob").await;
+    bob.send(bob.hello(None)).await;
+    assert!(matches!(
+        bob.recv().await,
+        ServerMsg::RetryAfter { secs: 59 | 60 }
+    ));
+    assert_eq!(bob.close_code().await, code(CloseCode::RateLimited));
+    assert_eq!(mojang.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn challenges_without_a_known_ip_share_a_budget() {
+    let mojang = FakeMojang::start().await;
+    let limits = Limits {
+        unknown_ip_challenges_per_min: 1,
+        ..Limits::default()
+    };
+    let server = builder()
+        .session_server(SessionServer::new(&mojang.url))
+        .relay(relay_options())
+        .limits(limits)
+        .spawn()
+        .await
+        .unwrap();
+    let mut alice = Client::connect_via_relay(&server, "alice").await;
+    alice.send(alice.hello(None)).await;
+    alice.answer_challenge().await;
+    alice.expect_registered().await;
+
+    let mut bob = Client::connect_via_relay(&server, "bob").await;
+    bob.send(bob.hello(None)).await;
+    assert!(matches!(
+        bob.recv().await,
+        ServerMsg::RetryAfter { secs: 59 | 60 }
+    ));
+
+    // Direct connections are covered by the per-IP limit instead.
+    let mut carol = Client::connect(&server, "carol").await;
+    carol.send(carol.hello(None)).await;
+    carol.answer_challenge().await;
+    carol.expect_registered().await;
 }
 
 #[tokio::test]
