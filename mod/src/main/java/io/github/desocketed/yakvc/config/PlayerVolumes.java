@@ -2,8 +2,9 @@ package io.github.desocketed.yakvc.config;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import com.google.gson.JsonParseException;
-import com.google.gson.reflect.TypeToken;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import io.github.desocketed.yakvc.YakVcClient;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -19,6 +20,8 @@ import java.util.UUID;
 public final class PlayerVolumes {
 	public static final String FILE_NAME = "players.json";
 	public static final Setting DEFAULT = new Setting(1f, false);
+	/** The voice menu's slider goes up to 200%. */
+	public static final float MAX_VOLUME = 2f;
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
 	/** {@code volume} is a gain: 1 is unchanged, 2 is twice as loud. */
@@ -32,20 +35,38 @@ public final class PlayerVolumes {
 		this.settings = settings;
 	}
 
-	/** Reads the saved settings. A missing or unreadable file starts empty rather than turning voice off. */
+	/**
+	 * Reads the saved settings. A missing or unreadable file starts empty rather than turning voice off. The file may
+	 * be edited by hand, so each entry is checked on its own: a broken one is dropped, and volumes are clamped to what
+	 * the menu can set, because the engine rejects a negative or non-finite volume.
+	 */
 	public static PlayerVolumes load(Path configDir) {
 		Path file = configDir.resolve(FILE_NAME);
 		Map<UUID, Setting> settings = new TreeMap<>();
 		if (Files.exists(file)) {
 			try {
-				Map<UUID, Setting> saved = GSON.fromJson(Files.readString(file),
-						new TypeToken<Map<UUID, Setting>>() {}.getType());
-				if (saved != null) settings.putAll(saved);
-			} catch (IOException | JsonParseException e) {
+				JsonObject saved = JsonParser.parseString(Files.readString(file)).getAsJsonObject();
+				for (Map.Entry<String, JsonElement> entry : saved.entrySet()) {
+					try {
+						settings.put(UUID.fromString(entry.getKey()), parse(entry.getValue().getAsJsonObject()));
+					} catch (RuntimeException e) {
+						YakVcClient.LOGGER.warn("Ignoring the entry {} in {}: {}", entry.getKey(), file, e.toString());
+					}
+				}
+			} catch (IOException | RuntimeException e) {
 				YakVcClient.LOGGER.warn("Ignoring unreadable {}", file, e);
 			}
 		}
 		return new PlayerVolumes(file, settings);
+	}
+
+	/** A missing field keeps its default. */
+	private static Setting parse(JsonObject json) {
+		float volume = json.has("volume") ? json.get("volume").getAsFloat() : DEFAULT.volume();
+		boolean muted = json.has("muted") ? json.get("muted").getAsBoolean() : DEFAULT.muted();
+		// NaN fails every comparison, so it can't be clamped.
+		if (Float.isNaN(volume)) throw new IllegalArgumentException("volume is not a number");
+		return new Setting(Math.clamp(volume, 0f, MAX_VOLUME), muted);
 	}
 
 	public Setting get(UUID player) {
