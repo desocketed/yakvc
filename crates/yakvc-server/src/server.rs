@@ -10,7 +10,7 @@ use yakvc_shared::rdv::{self, CloseCode};
 use yakvc_shared::{EndpointAddr, EndpointId, IssuerId, IssuerKey, RelayUrl, SecretKey};
 
 use crate::auth::Auth;
-use crate::limits::RateLimiter;
+use crate::limits::{RateLimiter, Slots, TokenBucket};
 use crate::metrics::Metrics;
 use crate::mojang::SessionServer;
 use crate::relay::RelayGate;
@@ -89,6 +89,17 @@ pub struct Limits {
     pub relay_client_bytes_per_sec: u32,
     /// How long a relay client may stay without a rendezvous session.
     pub relay_grace: Duration,
+    /// Challenges the whole server may issue per minute (with a burst of as
+    /// many). Each one can lead to a `hasJoined` call, and fresh keys get
+    /// around the per-EndpointId limit, so this keeps a flood from pushing
+    /// the server into Mojang's rate limit, which would block every sign-in.
+    pub mojang_checks_per_min: u32,
+    /// Challenges per minute, shared by every connection without a known
+    /// source IP (those arriving through the relay), which the per-IP limit
+    /// can't cover.
+    pub unknown_ip_challenges_per_min: u32,
+    /// Connections that may be open at once without being registered yet.
+    pub max_unregistered: usize,
 }
 
 /// Live counters, for metrics and tests.
@@ -120,6 +131,9 @@ pub(crate) struct Shared {
     pub relay_gate: Option<Arc<RelayGate>>,
     pub auth_per_endpoint: Mutex<RateLimiter<EndpointId>>,
     pub auth_per_ip: Mutex<RateLimiter<IpAddr>>,
+    pub mojang_checks: Mutex<TokenBucket>,
+    pub unknown_ip_challenges: Mutex<TokenBucket>,
+    pub unregistered: Slots,
     pub metrics: Metrics,
 }
 
@@ -277,6 +291,17 @@ impl ServerBuilder {
                 minute,
             )),
             auth_per_ip: Mutex::new(RateLimiter::new(self.limits.auth_per_ip_per_min, minute)),
+            mojang_checks: Mutex::new(TokenBucket::new(
+                self.limits.mojang_checks_per_min,
+                minute,
+                Instant::now(),
+            )),
+            unknown_ip_challenges: Mutex::new(TokenBucket::new(
+                self.limits.unknown_ip_challenges_per_min,
+                minute,
+                Instant::now(),
+            )),
+            unregistered: Slots::new(self.limits.max_unregistered),
             limits: self.limits,
             sessions,
             relay_gate,
@@ -373,6 +398,12 @@ impl Default for Limits {
             pair_updates_per_sec: rdv::PAIR_UPDATES_PER_SEC,
             relay_client_bytes_per_sec: 80_000,
             relay_grace: Duration::from_secs(30),
+            // Mojang is said to allow about 600 `hasJoined` calls per 10
+            // minutes per IP; a full bucket plus ten minutes of refill stays
+            // under that.
+            mojang_checks_per_min: 50,
+            unknown_ip_challenges_per_min: 20,
+            max_unregistered: 500,
         }
     }
 }
