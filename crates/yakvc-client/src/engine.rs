@@ -47,6 +47,8 @@ pub struct PeerAudio {
 pub struct PeerInfo {
     pub uuid: Uuid,
     pub name: String,
+    /// The peer proved its account to Mojang.
+    pub verified: bool,
     pub state: PeerState,
     pub rtt: Option<Duration>,
     pub stream: Option<StreamStats>,
@@ -237,7 +239,7 @@ impl Engine {
         // The endpoint is built once, so `rendezvous` and `relay_only` only
         // take effect on the next start.
         self.voice.update_config(&config);
-        self.net.set_trust(verifier(&config));
+        self.net.set_trust(verifier(&config), config.verified_only);
     }
 
     /// The QUIC close code of the last connection the peer `uuid` closed,
@@ -255,6 +257,7 @@ impl Engine {
                 stream: self.voice.stats(peer.uuid),
                 uuid: peer.uuid,
                 name: peer.name,
+                verified: peer.verified,
                 state: peer.state,
                 rtt: peer.rtt,
             })
@@ -271,6 +274,7 @@ impl Engine {
                 uuid,
                 name.to_owned(),
                 self.net.endpoint_id(),
+                true,
                 SystemTime::now(),
                 DIRECT_CALL_TICKET_LIFETIME,
             )
@@ -383,6 +387,7 @@ impl EngineBuilder {
         let protocols = vec![voice.protocol()];
         let trust = Trust {
             verifier: verifier(&config),
+            verified_only: config.verified_only,
             direct_calls: false,
         };
         let net = block_on(&runtime, async {
@@ -585,7 +590,11 @@ mod tests {
         async fn wait_for_peer(&mut self, uuid: Uuid, state: PeerState) {
             let wait = async {
                 while let Some(event) = self.events.next().await {
-                    if event == (Event::Peer { uuid, state }) {
+                    if let Event::Peer {
+                        uuid: u, state: s, ..
+                    } = event
+                        && (u, s) == (uuid, state)
+                    {
                         return;
                     }
                 }

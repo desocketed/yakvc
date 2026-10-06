@@ -28,8 +28,8 @@ use yakvc_client::{
     Config, Engine, Event, Events, Input, PeerState, Pose, RendezvousState, StreamStats, Uuid,
     Vec3, World,
 };
-use yakvc_server::{RelayOptions, Server};
-use yakvc_shared::{IssuerKey, SecretKey};
+use yakvc_server::{RelayOptions, Server, SessionServer};
+use yakvc_shared::{IssuerKey, SecretKey, offline_uuid};
 
 /// Default time [`TestClient`] waits for an expected event.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -40,6 +40,9 @@ pub const TRACKING_RANGE: f64 = 48.0;
 
 /// How often the simulated game server pushes world snapshots: every tick.
 const TICK: Duration = Duration::from_millis(50);
+
+/// The production ticket lifetime.
+pub const DAY: Duration = Duration::from_secs(24 * 3600);
 
 /// A dev-auth rendezvous with a plain-HTTP relay on localhost, plus the
 /// simulated game world.
@@ -61,6 +64,8 @@ pub struct TestNet {
 pub struct ClientBuilder<'a> {
     net: &'a TestNet,
     name: Option<String>,
+    /// Claim the name's offline UUID instead of the readable test UUID.
+    offline: bool,
     voice: Voice,
     impairment: Impairment,
     max_peers: Option<usize>,
@@ -109,9 +114,24 @@ enum Voice {
 }
 
 impl TestNet {
+    /// A dev-auth rendezvous: every client gets a (verified) dev ticket.
     pub async fn start() -> TestNet {
+        TestNet::start_with(true, DAY).await
+    }
+
+    /// A rendezvous that checks accounts with Mojang, at an address where
+    /// nothing answers. Test clients have no account (they answer every
+    /// `JoinRequest` with a failure), so only clients claiming an offline
+    /// UUID register, with unverified tickets; see
+    /// [`ClientBuilder::offline`] and [`ClientBuilder::spawn`]. Tickets last
+    /// `ticket_lifetime`, so a short one makes clients renew during a test.
+    pub async fn start_without_accounts(ticket_lifetime: Duration) -> TestNet {
+        TestNet::start_with(false, ticket_lifetime).await
+    }
+
+    async fn start_with(dev_auth: bool, ticket_lifetime: Duration) -> TestNet {
         let localhost = "127.0.0.1:0".parse().expect("valid address");
-        let server = Server::builder(SecretKey::generate(), IssuerKey::generate())
+        let mut builder = Server::builder(SecretKey::generate(), IssuerKey::generate())
             .bind(localhost)
             .relay(RelayOptions {
                 http_bind: localhost,
@@ -119,10 +139,13 @@ impl TestNet {
                 quic_bind: None,
                 open: false,
             })
-            .insecure_dev_auth()
-            .spawn()
-            .await
-            .expect("test server starts");
+            .ticket_lifetime(ticket_lifetime);
+        builder = if dev_auth {
+            builder.insecure_dev_auth()
+        } else {
+            builder.session_server(SessionServer::new("http://127.0.0.1:9"))
+        };
+        let server = builder.spawn().await.expect("test server starts");
 
         let config = Config {
             rendezvous: Some(server.endpoint_addr().into()),
@@ -163,6 +186,7 @@ impl TestNet {
         ClientBuilder {
             net: self,
             name: None,
+            offline: false,
             voice: Voice::Silence,
             impairment: Impairment::default(),
             max_peers: None,
@@ -237,6 +261,13 @@ impl<'a> ClientBuilder<'a> {
         self
     }
 
+    /// Claims the offline UUID of the name, as players on an offline-mode
+    /// server have.
+    pub fn offline(mut self) -> Self {
+        self.offline = true;
+        self
+    }
+
     /// Speaks a sine tone while talking. The default is silence.
     pub fn tone(mut self, frequency_hz: f32) -> Self {
         self.voice = Voice::Tone(frequency_hz);
@@ -273,9 +304,25 @@ impl<'a> ClientBuilder<'a> {
 
     /// Starts the engine and waits until it is registered with the rendezvous.
     pub async fn start(self) -> TestClient {
+        let mut client = self.spawn();
+        client
+            .wait_for("registration", |e| {
+                matches!(e, Event::Rendezvous(RendezvousState::Registered { .. }))
+            })
+            .await
+            .unwrap_or_else(|e| panic!("{}: {e}", client.uuid));
+        client
+    }
+
+    /// Starts the engine without waiting for it to register.
+    pub fn spawn(self) -> TestClient {
         let n = self.net.clients_started.fetch_add(1, Ordering::Relaxed);
         let name = self.name.unwrap_or_else(|| format!("player{n}"));
-        let uuid = uuid_for(&name);
+        let uuid = if self.offline {
+            offline_uuid(&name)
+        } else {
+            uuid_for(&name)
+        };
 
         let source: Box<dyn FrameSource> = match self.voice {
             Voice::Silence => Box::new(SilenceSource::new()),
@@ -307,21 +354,14 @@ impl<'a> ClientBuilder<'a> {
             engine: Arc::downgrade(&engine),
         });
 
-        let mut client = TestClient {
+        TestClient {
             uuid,
             engine,
             events,
             recording,
             players: self.net.players.clone(),
             input: Mutex::new(Input::default()),
-        };
-        client
-            .wait_for("registration", |e| {
-                matches!(e, Event::Rendezvous(RendezvousState::Registered { .. }))
-            })
-            .await
-            .unwrap_or_else(|e| panic!("{name}: {e}"));
-        client
+        }
     }
 }
 
@@ -377,7 +417,9 @@ impl TestClient {
             .and_then(|p| p.stream)
     }
 
-    /// Waits for an event matching `pred`, discarding others.
+    /// Waits for an event matching `pred`, discarding others. A
+    /// `JoinRequest` on the way is answered with a failure: test players
+    /// have no Mojang account.
     pub async fn wait_for(
         &mut self,
         what: &str,
@@ -385,6 +427,9 @@ impl TestClient {
     ) -> Result<Event, Timeout> {
         let found = tokio::time::timeout(DEFAULT_TIMEOUT, async {
             while let Some(event) = self.events.next().await {
+                if let Event::JoinRequest { id, .. } = event {
+                    self.engine.complete_join(id, false);
+                }
                 if pred(&event) {
                     return Some(event);
                 }
@@ -412,9 +457,10 @@ impl TestClient {
         if already {
             return Ok(());
         }
-        self.wait_for(&format!("peer {uuid} to become {state:?}"), |e| {
-            *e == Event::Peer { uuid, state }
-        })
+        self.wait_for(
+            &format!("peer {uuid} to become {state:?}"),
+            |e| matches!(e, Event::Peer { uuid: u, state: s, .. } if (*u, *s) == (uuid, state)),
+        )
         .await
         .map(|_| ())
     }

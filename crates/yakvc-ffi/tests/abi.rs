@@ -154,6 +154,7 @@ fn offline_config() -> String {
             addrs: vec!["127.0.0.1:9".parse().unwrap()],
             relay: None,
         }),
+        trusted_issuers: vec![yakvc_shared::IssuerKey::generate().id()],
         ..Default::default()
     };
     toml::to_string(&config).unwrap()

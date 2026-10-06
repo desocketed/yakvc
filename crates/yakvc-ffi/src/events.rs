@@ -75,27 +75,35 @@ pub(crate) fn encode(event: &Event) -> Vec<u8> {
             YAKVC_EVENT_JOIN_REQUEST
         }
         Event::Rendezvous(state) => {
-            let (code, value) = match state {
-                RendezvousState::Connecting => (YAKVC_RDV_CONNECTING, 0),
-                RendezvousState::Authenticating => (YAKVC_RDV_AUTHENTICATING, 0),
-                RendezvousState::Registered { expires_at } => {
+            let (code, value, verified) = match state {
+                RendezvousState::Connecting => (YAKVC_RDV_CONNECTING, 0, false),
+                RendezvousState::Authenticating => (YAKVC_RDV_AUTHENTICATING, 0, false),
+                RendezvousState::Registered {
+                    expires_at,
+                    verified,
+                } => {
                     let secs = expires_at
                         .duration_since(UNIX_EPOCH)
                         .unwrap_or_default()
                         .as_secs();
-                    (YAKVC_RDV_REGISTERED, secs)
+                    (YAKVC_RDV_REGISTERED, secs, *verified)
                 }
                 RendezvousState::RetryingIn(delay) => {
                     let millis = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX);
-                    (YAKVC_RDV_RETRYING, millis)
+                    (YAKVC_RDV_RETRYING, millis, false)
                 }
-                RendezvousState::Disconnected => (YAKVC_RDV_DISCONNECTED, 0),
+                RendezvousState::Disconnected => (YAKVC_RDV_DISCONNECTED, 0, false),
             };
             payload.push(code);
             payload.extend(value.to_le_bytes());
+            payload.push(u8::from(verified));
             YAKVC_EVENT_RENDEZVOUS_STATE
         }
-        Event::Peer { uuid, state } => {
+        Event::Peer {
+            uuid,
+            state,
+            verified,
+        } => {
             payload.extend(uuid.as_bytes());
             payload.push(match state {
                 PeerState::Connecting => YAKVC_PEER_CONNECTING,
@@ -105,6 +113,7 @@ pub(crate) fn encode(event: &Event) -> Vec<u8> {
                 PeerState::Failed => YAKVC_PEER_FAILED,
                 PeerState::Gone => YAKVC_PEER_GONE,
             });
+            payload.push(u8::from(*verified));
             YAKVC_EVENT_PEER_STATE
         }
         Event::Talking { uuid, talking } => {
@@ -169,9 +178,11 @@ mod tests {
     fn encodes_rendezvous_states() {
         let registered = Event::Rendezvous(RendezvousState::Registered {
             expires_at: UNIX_EPOCH + Duration::from_secs(1_800_000_000),
+            verified: true,
         });
         let mut payload = vec![YAKVC_RDV_REGISTERED];
         payload.extend(1_800_000_000u64.to_le_bytes());
+        payload.push(1);
         assert_eq!(
             encode(&registered),
             record(YAKVC_EVENT_RENDEZVOUS_STATE, &payload)
@@ -180,6 +191,7 @@ mod tests {
         let retrying = Event::Rendezvous(RendezvousState::RetryingIn(Duration::from_secs(10)));
         let mut payload = vec![YAKVC_RDV_RETRYING];
         payload.extend(10_000u64.to_le_bytes());
+        payload.push(0);
         assert_eq!(
             encode(&retrying),
             record(YAKVC_EVENT_RENDEZVOUS_STATE, &payload)
@@ -188,6 +200,7 @@ mod tests {
         let connecting = Event::Rendezvous(RendezvousState::Connecting);
         let mut payload = vec![YAKVC_RDV_CONNECTING];
         payload.extend(0u64.to_le_bytes());
+        payload.push(0);
         assert_eq!(
             encode(&connecting),
             record(YAKVC_EVENT_RENDEZVOUS_STATE, &payload)
@@ -199,9 +212,11 @@ mod tests {
         let event = Event::Peer {
             uuid: UUID,
             state: PeerState::RelayFull,
+            verified: true,
         };
         let mut payload = UUID_BYTES.to_vec();
         payload.push(YAKVC_PEER_RELAY_FULL);
+        payload.push(1);
         assert_eq!(encode(&event), record(YAKVC_EVENT_PEER_STATE, &payload));
     }
 
