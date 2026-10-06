@@ -1,0 +1,109 @@
+name: Project status
+
+# Rewrites the pinned "Project status" issue (#86 chose this dashboard): a
+# progress bar per milestone, open bugs by area and issues closed per week.
+# Mermaid renders in issues on the web and in the mobile app.
+on:
+  issues:
+    types: [opened, closed, reopened, deleted, labeled, unlabeled, milestoned, demilestoned]
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+# Bursts of issue events only need the last run.
+concurrency:
+  group: project-status
+  cancel-in-progress: true
+
+env:
+  STATUS_ISSUE: 99
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const issues = (await github.paginate(github.rest.issues.listForRepo, {
+              owner, repo, state: "all", per_page: 100,
+            })).filter((i) => !i.pull_request && i.number !== Number(process.env.STATUS_ISSUE));
+            const milestones = await github.paginate(github.rest.issues.listMilestones, {
+              owner, repo, state: "all", per_page: 100,
+            });
+
+            const bar = (done, total) => {
+              const filled = total === 0 ? 10 : Math.round((10 * done) / total);
+              return "▓".repeat(filled) + "░".repeat(10 - filled);
+            };
+            const rows = milestones
+              .sort((a, b) => a.number - b.number)
+              .map((m) => {
+                const total = m.open_issues + m.closed_issues;
+                const done = m.state === "closed" ? "done" : `${m.closed_issues}/${total}`;
+                const shown = m.state === "closed" ? bar(1, 1) : bar(m.closed_issues, total);
+                return `| [${m.title}](${m.html_url}) | \`${shown}\` | ${done} |`;
+              });
+
+            const openBugs = issues.filter((i) => i.state === "open" && i.labels.some((l) => l.name === "bug"));
+            const byArea = {};
+            for (const bug of openBugs) {
+              const area = bug.labels.find((l) => l.name.startsWith("area: "))?.name.slice(6) ?? "none";
+              byArea[area] = (byArea[area] ?? 0) + 1;
+            }
+            const pie = Object.entries(byArea)
+              .sort((a, b) => b[1] - a[1])
+              .map(([area, n]) => `    "${area}" : ${n}`);
+
+            // Weeks start on Monday (UTC); the last bar is the current week.
+            const week = 7 * 24 * 3600 * 1000;
+            const now = new Date();
+            const monday = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - ((now.getUTCDay() + 6) % 7));
+            const starts = [...Array(8).keys()].map((k) => monday - (7 - k) * week);
+            const closed = starts.map((start) =>
+              issues.filter((i) => i.closed_at && i.state_reason !== "not_planned" &&
+                Date.parse(i.closed_at) >= start && Date.parse(i.closed_at) < start + week).length);
+            const opened = starts.map((start) =>
+              issues.filter((i) => Date.parse(i.created_at) >= start && Date.parse(i.created_at) < start + week).length);
+            const labels = starts.map((s) => `"${new Date(s).toISOString().slice(5, 10)}"`);
+            const top = Math.max(1, ...closed, ...opened);
+
+            const open = issues.filter((i) => i.state === "open");
+            const waiting = open.filter((i) => i.labels.some((l) => l.name === "needs-maintainer"));
+            const body = [
+              "Kept current by the `Project status` workflow on every issue change and once a day; edits here are overwritten.",
+              "",
+              `**${open.length} open issues**, ${openBugs.length} of them bugs. ` +
+                `[${waiting.length} need the maintainer](https://github.com/${owner}/${repo}/issues?q=is%3Aopen+label%3Aneeds-maintainer).`,
+              "",
+              "## Milestones",
+              "",
+              "| Milestone | Progress | Closed |",
+              "| --- | --- | --- |",
+              ...rows,
+              "",
+              "## Open bugs by area",
+              "",
+              openBugs.length === 0 ? "No open bugs." : ["```mermaid", "pie", ...pie, "```"].join("\n"),
+              "",
+              "## Issues per week",
+              "",
+              "Bars are issues closed as completed, the line is issues opened.",
+              "",
+              "```mermaid",
+              "xychart-beta",
+              `    x-axis [${labels.join(", ")}]`,
+              `    y-axis "Issues" 0 --> ${top}`,
+              `    bar [${closed.join(", ")}]`,
+              `    line [${opened.join(", ")}]`,
+              "```",
+              "",
+              `_Updated ${now.toISOString().slice(0, 16).replace("T", " ")} UTC._`,
+              "",
+              "<!-- claude -->",
+            ].join("\n");
+            await github.rest.issues.update({ owner, repo, issue_number: Number(process.env.STATUS_ISSUE), body });
