@@ -247,16 +247,19 @@ async fn handshake(
 /// datagram routing, path state and ticket updates.
 async fn serve(inner: Arc<Inner>, conn: Connection, dialed: bool, hello: Hello) {
     let remote = conn.remote_id();
-    let Some(status) = register(
+    let status = match register(
         &inner,
         &conn,
         dialed,
         hello.uuid,
         &hello.name,
         hello.verified,
-    ) else {
-        close(&conn, CloseCode::Duplicate);
-        return;
+    ) {
+        Ok(status) => status,
+        Err(code) => {
+            close(&conn, code);
+            return;
+        }
     };
     let mut tasks = start_protocols(&conn, dialed, &hello.agreed, &status, &inner.banned).await;
     tasks.spawn(watch_paths(conn.clone(), status));
@@ -329,8 +332,10 @@ async fn open_protocol_stream(
     }
 }
 
-/// Records a verified connection in the peer table. Returns `None` if an
-/// existing connection to the same peer wins the duplicate tie break.
+/// Records a verified connection in the peer table. Fails with `Duplicate` if
+/// an existing connection to the same peer wins the tie break, and repeats
+/// the handshake's `verified_only` and claim checks under the peers lock:
+/// another handshake or `set_trust` may have run since.
 fn register(
     inner: &Arc<Inner>,
     conn: &Connection,
@@ -338,10 +343,14 @@ fn register(
     uuid: Uuid,
     name: &str,
     verified: bool,
-) -> Option<Arc<PeerStatus>> {
+) -> Result<Arc<PeerStatus>, CloseCode> {
     let remote = conn.remote_id();
     let dialed_by_lower = dialed == (inner.endpoint.id() < remote);
     let mut peers = inner.peers.lock().unwrap();
+    if !verified && inner.trust.lock().unwrap().verified_only {
+        return Err(CloseCode::BadTicket);
+    }
+    super::claim(&peers, remote, uuid, verified)?;
     let entry = peers
         .entry(remote)
         .or_insert_with(|| PeerEntry::new(uuid, name.to_owned(), &inner.events));
@@ -350,7 +359,7 @@ fn register(
     {
         // Both sides apply the same rule, so they keep the same connection.
         if link.dialed_by_lower && !dialed_by_lower {
-            return None;
+            return Err(CloseCode::Duplicate);
         }
         close(&link.conn, CloseCode::Duplicate);
     }
@@ -369,7 +378,7 @@ fn register(
         flags.relayed = relayed;
         flags.verified = verified;
     });
-    Some(entry.status.clone())
+    Ok(entry.status.clone())
 }
 
 /// Forgets a closed connection. A peer the rendezvous still lists stays in
@@ -717,8 +726,11 @@ mod tests {
         let (second, second_b) = connect(a, &b).await;
 
         // Pretend the first was dialed by the lower id and the second wasn't.
-        assert!(register(inner, &first, a_is_lower, uuid(2), "bob", true).is_some());
-        assert!(register(inner, &second, !a_is_lower, uuid(2), "bob", true).is_none());
+        assert!(register(inner, &first, a_is_lower, uuid(2), "bob", true).is_ok());
+        assert!(matches!(
+            register(inner, &second, !a_is_lower, uuid(2), "bob", true),
+            Err(CloseCode::Duplicate)
+        ));
         assert_eq!(
             events.try_next(),
             Some(Event::Peer {
@@ -733,7 +745,7 @@ mod tests {
         // A newer connection that was also dialed by the lower id replaces
         // the old one, which is closed as a duplicate.
         let (third, _third_b) = connect(a, &b).await;
-        assert!(register(inner, &third, a_is_lower, uuid(2), "bob", true).is_some());
+        assert!(register(inner, &third, a_is_lower, uuid(2), "bob", true).is_ok());
         assert!(closed_with(first_b.closed().await, CloseCode::Duplicate));
 
         // The stale connection ending doesn't remove the peer; the current
