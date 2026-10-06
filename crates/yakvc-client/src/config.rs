@@ -9,13 +9,18 @@ use yakvc_shared::{EndpointAddr, EndpointId, IssuerId, RelayUrl, Uuid};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
-    /// `None` uses the built-in default rendezvous.
+    /// The rendezvous to register with. `None` runs without one: there is no
+    /// built-in default yet, so voice then only works in direct calls.
     pub rendezvous: Option<RendezvousConfig>,
-    /// Issuers whose tickets are accepted from peers. Empty means the
-    /// built-in default issuer.
+    /// Issuers whose tickets are accepted, from peers and for our own
+    /// ticket. There is no built-in default, so a `rendezvous` needs its
+    /// issuer listed here.
     pub trusted_issuers: Vec<IssuerId>,
     /// Accept dev tickets. Only for local testing against `--insecure-dev-auth`.
     pub dev_mode: bool,
+    /// Only talk with players whose ticket is verified (their account was
+    /// proven to Mojang).
+    pub verified_only: bool,
     /// Never use direct IP paths; all traffic goes through the relay.
     pub relay_only: bool,
     /// Voice range in blocks.
@@ -112,6 +117,10 @@ impl Config {
         if !(-100.0..=0.0).contains(&self.audio.vad_threshold_db) {
             return invalid("audio.vad_threshold_db must be between -100 and 0");
         }
+        if self.rendezvous.is_some() && self.trusted_issuers.is_empty() {
+            // Nothing would be trusted, not even our own ticket.
+            return invalid("trusted_issuers must list the rendezvous's issuer");
+        }
         if self.dev != DevConfig::default() && !self.dev_mode {
             return invalid("the [dev] section needs dev_mode = true");
         }
@@ -136,6 +145,7 @@ impl Default for Config {
             rendezvous: None,
             trusted_issuers: Vec::new(),
             dev_mode: false,
+            verified_only: false,
             relay_only: false,
             voice_range: 48.0,
             friends_only: None,
@@ -201,6 +211,9 @@ mod tests {
         let id = iroh::SecretKey::generate().public();
         let config = Config::from_toml(&format!(
             r#"
+            trusted_issuers = ["{id}"]
+            verified_only = true
+
             [rendezvous]
             endpoint_id = "{id}"
             addrs = ["127.0.0.1:4433"]
@@ -208,10 +221,21 @@ mod tests {
             "#
         ))
         .unwrap();
+        assert!(config.verified_only);
         let rendezvous = config.rendezvous.unwrap();
         assert_eq!(rendezvous.endpoint_id, id);
         assert_eq!(rendezvous.addrs, vec!["127.0.0.1:4433".parse().unwrap()]);
         assert!(rendezvous.relay.is_some());
+    }
+
+    #[test]
+    fn a_rendezvous_needs_a_trusted_issuer() {
+        let id = iroh::SecretKey::generate().public();
+        let toml = format!("[rendezvous]\nendpoint_id = \"{id}\"\naddrs = []");
+        assert!(matches!(
+            Config::from_toml(&toml),
+            Err(ConfigError::Invalid(_))
+        ));
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! Tickets: issuer-signed statements binding an EndpointId to a Minecraft UUID.
 //!
 //! A ticket travels as a [`SignedTicket`]: the postcard-encoded [`TicketBody`]
-//! bytes plus an ed25519 signature over `b"yakvc-ticket-v1" ‖ body`. Verifiers
+//! bytes plus an ed25519 signature over `b"yakvc-ticket-v2" ‖ body`. Verifiers
 //! check the signature over the bytes as received and only then decode them,
 //! so a ticket is never re-encoded. The only way to obtain a [`Ticket`] is
 //! through [`TicketVerifier::verify`], so holding one means it was checked.
@@ -15,10 +15,13 @@ use iroh_base::{EndpointId, PublicKey, SecretKey, Signature};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::auth::is_offline_uuid;
 use crate::wire::WireError;
 
-/// Domain tag prepended to the body bytes before signing.
-pub const SIGNING_CONTEXT: &[u8] = b"yakvc-ticket-v1";
+/// Domain tag prepended to the body bytes before signing. v2 added
+/// [`TicketBody::verified`]; the new tag makes tickets cached by older builds
+/// fail their signature check instead of being misread.
+pub const SIGNING_CONTEXT: &[u8] = b"yakvc-ticket-v2";
 
 /// The ed25519 key a rendezvous uses to sign tickets. Distinct from its
 /// endpoint key so several rendezvous instances can share one issuer.
@@ -39,6 +42,9 @@ pub struct TicketBody {
     pub endpoint_id: EndpointId,
     pub issued_at: u64,
     pub expires_at: u64,
+    /// The holder proved the account to Mojang. Without that proof a ticket
+    /// is only valid for an offline UUID (see [`is_offline_uuid`]).
+    pub verified: bool,
     /// Issued by a rendezvous running `--insecure-dev-auth`; rejected unless
     /// the verifier accepts dev tickets.
     pub dev: bool,
@@ -65,6 +71,7 @@ pub struct Ticket {
 pub struct TicketVerifier {
     trusted: Vec<IssuerId>,
     accept_dev: bool,
+    verified_only: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -79,6 +86,10 @@ pub enum TicketError {
     Expired,
     #[error("dev tickets are not accepted")]
     DevTicket,
+    #[error("unverified ticket for an account UUID")]
+    UnverifiedAccount,
+    #[error("only verified players are accepted")]
+    Unverified,
 }
 
 impl IssuerKey {
@@ -136,6 +147,7 @@ impl TicketBody {
         uuid: Uuid,
         name: String,
         endpoint_id: EndpointId,
+        verified: bool,
         now: SystemTime,
         lifetime: Duration,
     ) -> Self {
@@ -146,6 +158,7 @@ impl TicketBody {
             endpoint_id,
             issued_at,
             expires_at: issued_at.saturating_add(lifetime.as_secs()),
+            verified,
             dev: false,
         }
     }
@@ -204,6 +217,7 @@ impl TicketVerifier {
         TicketVerifier {
             trusted: issuers.into_iter().collect(),
             accept_dev: false,
+            verified_only: false,
         }
     }
 
@@ -212,7 +226,20 @@ impl TicketVerifier {
         self
     }
 
-    /// Checks issuer, signature, expiry and the dev flag, in that order.
+    /// Rejects every unverified ticket, for players who only want to talk
+    /// with Mojang-proven accounts.
+    pub fn verified_only(mut self, verified_only: bool) -> Self {
+        self.verified_only = verified_only;
+        self
+    }
+
+    /// Checks issuer, signature, expiry, the dev flag and the verified rules,
+    /// in that order.
+    ///
+    /// An unverified ticket must name an offline UUID: offline-mode servers
+    /// give every player one, so there it is no weaker than the server's own
+    /// identity, while online-mode servers only show account UUIDs, which an
+    /// unverified ticket can then never match.
     pub fn verify(&self, ticket: &SignedTicket, now: SystemTime) -> Result<Ticket, TicketError> {
         if !self.trusted.contains(&ticket.issuer) {
             return Err(TicketError::UntrustedIssuer);
@@ -229,6 +256,12 @@ impl TicketVerifier {
         }
         if body.dev && !self.accept_dev {
             return Err(TicketError::DevTicket);
+        }
+        if !body.verified && !is_offline_uuid(body.uuid) {
+            return Err(TicketError::UnverifiedAccount);
+        }
+        if !body.verified && self.verified_only {
+            return Err(TicketError::Unverified);
         }
         Ok(Ticket {
             body,
@@ -251,6 +284,7 @@ fn unix_secs(time: SystemTime) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::offline_uuid;
 
     const HOUR: Duration = Duration::from_secs(3600);
 
@@ -264,9 +298,19 @@ mod tests {
             Uuid::from_u128(42),
             "alice".into(),
             endpoint_id,
+            true,
             now(),
             24 * HOUR,
         )
+    }
+
+    /// An unverified ticket for alice's offline UUID.
+    fn offline_body() -> TicketBody {
+        TicketBody {
+            uuid: offline_uuid("alice"),
+            verified: false,
+            ..body()
+        }
     }
 
     fn issuer() -> IssuerKey {
@@ -378,6 +422,40 @@ mod tests {
             Err(TicketError::DevTicket)
         ));
         assert!(verifier.accept_dev(true).verify(&signed, now()).is_ok());
+    }
+
+    #[test]
+    fn unverified_tickets_are_only_valid_for_offline_uuids() {
+        let key = issuer();
+        let verifier = TicketVerifier::new([key.id()]);
+        assert!(verifier.verify(&key.sign(&offline_body()), now()).is_ok());
+
+        // An account UUID (version 4) needs a Mojang proof.
+        let account = TicketBody {
+            uuid: Uuid::from_u128(0x0123_4567_89ab_4def_8123_4567_89ab_cdef),
+            ..offline_body()
+        };
+        assert!(matches!(
+            verifier.verify(&key.sign(&account), now()),
+            Err(TicketError::UnverifiedAccount)
+        ));
+        // A verified ticket may name any UUID, an offline one included.
+        let verified = TicketBody {
+            verified: true,
+            ..offline_body()
+        };
+        assert!(verifier.verify(&key.sign(&verified), now()).is_ok());
+    }
+
+    #[test]
+    fn verified_only_rejects_every_unverified_ticket() {
+        let key = issuer();
+        let verifier = TicketVerifier::new([key.id()]).verified_only(true);
+        assert!(matches!(
+            verifier.verify(&key.sign(&offline_body()), now()),
+            Err(TicketError::Unverified)
+        ));
+        assert!(verifier.verify(&key.sign(&body()), now()).is_ok());
     }
 
     #[test]

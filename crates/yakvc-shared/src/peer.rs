@@ -44,4 +44,7 @@ pub enum CloseCode {
     /// The peer is at its connection cap and we rank too low to displace
     /// anyone, or we were evicted for a better-ranked peer.
     TooManyPeers = 7,
+    /// A verified ticket for the same UUID replaced this unverified link, or
+    /// holds the UUID this unverified ticket claims.
+    Superseded = 8,
 }

@@ -1,8 +1,11 @@
-//! The Mojang session challenge used to prove a UUID to the rendezvous.
+//! The Mojang session challenge used to prove a UUID to the rendezvous, and
+//! the offline UUIDs that need no proof.
 
 use iroh_base::EndpointId;
+use md5::Md5;
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
+use uuid::Uuid;
 
 /// Random challenge sent by the rendezvous.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,6 +30,23 @@ pub fn session_server_id(nonce: &Nonce, client: EndpointId, rendezvous: Endpoint
         .chain_update(rendezvous.as_bytes())
         .finalize();
     mc_hex_digest(hash.into())
+}
+
+/// The UUID an offline-mode server gives the player `name`:
+/// `UUID.nameUUIDFromBytes(("OfflinePlayer:" + name).getBytes(UTF_8))`, an
+/// MD5 name-based UUID (version 3) without a namespace.
+pub fn offline_uuid(name: &str) -> Uuid {
+    let hash = Md5::new()
+        .chain_update(b"OfflinePlayer:")
+        .chain_update(name.as_bytes())
+        .finalize();
+    uuid::Builder::from_md5_bytes(hash.into()).into_uuid()
+}
+
+/// Whether `uuid` is an offline UUID (version 3). Online-mode servers only
+/// use account UUIDs, which are version 4.
+pub fn is_offline_uuid(uuid: Uuid) -> bool {
+    uuid.get_version_num() == 3
 }
 
 /// Minecraft prints a SHA-1 as Java's `new BigInteger(hash).toString(16)`:
@@ -98,6 +118,28 @@ mod tests {
         assert_ne!(id, session_server_id(&Nonce([8; 32]), client, rdv));
         assert_ne!(id, session_server_id(&nonce, rdv, client));
         assert!(id.len() <= 41);
+    }
+
+    /// From Java's `UUID.nameUUIDFromBytes` (OpenJDK 25), names as UTF-8.
+    const JAVA_OFFLINE_UUIDS: [(&str, &str); 5] = [
+        ("Notch", "b50ad385-829d-3141-a216-7e7d7539ba7f"),
+        ("jeb_", "a762f560-4fce-3236-812a-b80efff0b62b"),
+        ("Steve", "5627dd98-e6be-3c21-b8a8-e92344183641"),
+        ("a", "52428a0e-1e30-3cb1-976c-e728b2614047"),
+        (
+            "\u{dc}n\u{ef}c\u{f6}d\u{e9}_\u{540d}\u{524d}",
+            "e1197f6d-e1fd-32af-9d16-58fea814fbc3",
+        ),
+    ];
+
+    #[test]
+    fn offline_uuids_match_java() {
+        for (name, expected) in JAVA_OFFLINE_UUIDS {
+            let uuid = offline_uuid(name);
+            assert_eq!(uuid.to_string(), expected, "{name}");
+            assert!(is_offline_uuid(uuid));
+        }
+        assert!(!is_offline_uuid(Uuid::new_v4()));
     }
 
     #[test]

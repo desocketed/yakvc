@@ -94,12 +94,23 @@ pub(crate) fn uuid(n: u8) -> Uuid {
     Uuid::from_bytes([n; 16])
 }
 
-/// A ticket for `endpoint` as `uuid`, signed by `issuer`.
+/// A verified ticket for `endpoint` as `uuid`, signed by `issuer`.
 pub(crate) fn ticket(issuer: &IssuerKey, uuid: Uuid, endpoint: &Endpoint) -> SignedTicket {
+    signed_ticket(issuer, uuid, endpoint, true)
+}
+
+/// A ticket for `endpoint` as `uuid`, signed by `issuer`.
+pub(crate) fn signed_ticket(
+    issuer: &IssuerKey,
+    uuid: Uuid,
+    endpoint: &Endpoint,
+    verified: bool,
+) -> SignedTicket {
     let body = TicketBody::new(
         uuid,
         format!("player{}", uuid.as_bytes()[0]),
         endpoint.id(),
+        verified,
         SystemTime::now(),
         Duration::from_secs(3600),
     );

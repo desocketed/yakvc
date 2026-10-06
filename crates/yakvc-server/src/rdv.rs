@@ -1,11 +1,13 @@
 //! Serves one `yakvc/rdv/1` connection.
 //!
 //! The client opens one bi-stream. Before registering it may only send
-//! `Hello` and then `Joined` (for the `Challenge` it was sent), and must be
-//! registered within [`AUTH_TIMEOUT`]. Once registered it sends pair-token
-//! and address updates, and may `Renew` its ticket by running the challenge
-//! again. Every reply and push goes through one writer task, so the reading
-//! side never has to give up halfway through a message.
+//! `Hello` and then `Joined` or `Decline` (for the `Challenge` it was sent),
+//! and must be registered within [`AUTH_TIMEOUT`]. Once registered it sends
+//! pair-token and address updates, and may `Renew` its ticket by running the
+//! challenge again. A failed renewal never ends the session: the client keeps
+//! its current ticket and is told to retry later. Every reply and push goes
+//! through one writer task, so the reading side never has to give up halfway
+//! through a message.
 
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -16,9 +18,9 @@ use tokio::sync::mpsc;
 use yakvc_shared::auth::Nonce;
 use yakvc_shared::rdv::{ClientMsg, CloseCode, Hello, ServerMsg};
 use yakvc_shared::wire::{WireError, read_msg, write_msg};
-use yakvc_shared::{EndpointId, SignedTicket, Uuid};
+use yakvc_shared::{EndpointId, SignedTicket, Uuid, is_offline_uuid};
 
-use crate::auth::JoinCheck;
+use crate::auth::{JoinCheck, proves};
 use crate::limits::TokenBucket;
 use crate::server::Shared;
 use crate::sessions::close;
@@ -32,6 +34,10 @@ const FLUSH_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Minecraft names are at most 16 characters.
 const MAX_NAME_LEN: usize = 16;
+
+/// How long a client whose renewal was refused waits before trying again.
+/// It keeps its current ticket meanwhile.
+const REFUSED_RENEWAL_RETRY: u32 = 60;
 
 pub(crate) async fn serve(shared: Arc<Shared>, incoming: Incoming) {
     let ip = match incoming.remote_addr() {
@@ -138,6 +144,7 @@ impl Client {
         match msg {
             ClientMsg::Hello(hello) => self.on_hello(hello),
             ClientMsg::Joined => self.on_joined().await,
+            ClientMsg::Decline => self.on_decline(),
             ClientMsg::Renew => self.on_renew(),
             ClientMsg::UpdateAddr(addr) => {
                 self.check_update()?;
@@ -179,45 +186,59 @@ impl Client {
         }
         let cached = hello
             .cached_ticket
-            .clone()
-            .filter(|ticket| self.shared.auth.can_reuse(ticket, &hello, self.id));
+            .as_ref()
+            .and_then(|ticket| self.shared.auth.reusable(ticket, &hello, self.id));
         self.hello = Some(hello);
 
-        if let Some(ticket) = cached {
+        // An unverified cached ticket is refused while a verified session
+        // holds its UUID; the challenge then decides, as without a ticket.
+        if let Some(ticket) = cached
+            && self.register(ticket.signed().clone(), ticket.verified)
+        {
             self.shared.metrics.auth_cached.inc();
-            self.register(ticket);
             Ok(())
         } else if self.shared.auth.is_dev() {
             let (uuid, name) = self.identity();
-            let ticket = self.shared.auth.issue(uuid, name, self.id);
+            let ticket = self.shared.auth.issue(uuid, name, self.id, true);
             self.shared.metrics.auth_ok.inc();
-            self.register(ticket);
+            self.register(ticket, true);
             Ok(())
         } else {
             self.start_challenge()
         }
     }
 
+    /// Starts a renewal. A challenge left unanswered by a failed
+    /// `joinServer` is simply replaced.
     fn on_renew(&mut self) -> Result<(), CloseCode> {
-        if !self.is_registered() || self.challenge.is_some() {
+        if !self.is_registered() {
             return Err(CloseCode::ProtocolError);
         }
+        self.challenge = None;
         if self.shared.auth.is_dev() {
             let (uuid, name) = self.identity();
-            let ticket = self.shared.auth.issue(uuid, name, self.id);
+            let ticket = self.shared.auth.issue(uuid, name, self.id, true);
             self.shared.metrics.auth_ok.inc();
-            self.shared.sessions.update_ticket(self.id, ticket.clone());
-            self.send(ServerMsg::Registered(ticket));
+            self.adopt(ticket, true);
             return Ok(());
         }
         self.start_challenge()
     }
 
     fn start_challenge(&mut self) -> Result<(), CloseCode> {
-        if let Some(secs) = self.shared.auth.retry_after() {
+        // An offline UUID may decline the challenge, which needs no Mojang
+        // call, so it is challenged even while Mojang is blocked.
+        let (uuid, _) = self.identity();
+        if !is_offline_uuid(uuid)
+            && let Some(secs) = self.shared.auth.retry_after()
+        {
             return self.retry_later(secs);
         }
-        self.check_auth_rate()?;
+        // The challenge is what counts against the auth limits, so a
+        // `Decline` (which must answer one) is counted too.
+        if let Err(code) = self.check_auth_rate() {
+            return self.refuse(code);
+        }
         let nonce = Nonce::random();
         self.challenge = Some(nonce);
         self.send(ServerMsg::Challenge(nonce));
@@ -233,22 +254,69 @@ impl Client {
         self.shared.metrics.observe_mojang(started.elapsed());
 
         match check {
-            JoinCheck::Confirmed(profile) if profile.uuid == uuid => {
+            JoinCheck::Confirmed(profile) if proves(&profile, uuid) => {
                 self.shared.metrics.auth_ok.inc();
-                let ticket = self.shared.auth.issue(profile.uuid, profile.name, self.id);
-                if self.is_registered() {
-                    self.shared.sessions.update_ticket(self.id, ticket.clone());
-                    self.send(ServerMsg::Registered(ticket));
-                } else {
-                    self.register(ticket);
-                }
+                // Mojang's spelling of the name; the UUID is the claimed one,
+                // which may be the offline UUID of that name.
+                let ticket = self.shared.auth.issue(uuid, profile.name, self.id, true);
+                // A verified ticket is never refused.
+                self.adopt(ticket, true);
                 Ok(())
             }
             JoinCheck::Confirmed(_) | JoinCheck::Rejected => {
                 self.shared.metrics.auth_failed.inc();
-                Err(CloseCode::AuthFailed)
+                self.refuse(CloseCode::AuthFailed)
             }
             JoinCheck::RetryAfter(secs) => self.retry_later(secs),
+        }
+    }
+
+    /// The client can't prove its account: issue an unverified ticket, which
+    /// is only valid for an offline UUID and only while no verified session
+    /// holds that UUID. Mojang is not asked.
+    fn on_decline(&mut self) -> Result<(), CloseCode> {
+        self.challenge.take().ok_or(CloseCode::ProtocolError)?;
+        let (uuid, name) = self.identity();
+        if !is_offline_uuid(uuid) {
+            self.shared.metrics.auth_failed.inc();
+            return self.refuse(CloseCode::AuthFailed);
+        }
+        let ticket = self.shared.auth.issue(uuid, name, self.id, false);
+        if self.adopt(ticket, false) {
+            self.shared.metrics.auth_unverified.inc();
+            Ok(())
+        } else {
+            self.shared.metrics.auth_failed.inc();
+            self.refuse(CloseCode::Superseded)
+        }
+    }
+
+    /// Registers with `ticket`, or renews the session's ticket. Returns
+    /// false if the sessions refused it (see `Sessions::register`).
+    fn adopt(&mut self, ticket: SignedTicket, verified: bool) -> bool {
+        if !self.is_registered() {
+            return self.register(ticket, verified);
+        }
+        let renewed = self
+            .shared
+            .sessions
+            .update_ticket(self.id, ticket.clone(), verified);
+        if renewed {
+            self.send(ServerMsg::Registered(ticket));
+        }
+        renewed
+    }
+
+    /// Ends an initial authentication with `code`. A registered client keeps
+    /// its session and current ticket instead, and is told to retry later.
+    fn refuse(&mut self, code: CloseCode) -> Result<(), CloseCode> {
+        if self.is_registered() {
+            self.send(ServerMsg::RetryAfter {
+                secs: REFUSED_RENEWAL_RETRY,
+            });
+            Ok(())
+        } else {
+            Err(code)
         }
     }
 
@@ -264,15 +332,21 @@ impl Client {
         }
     }
 
-    fn register(&mut self, ticket: SignedTicket) {
+    /// Returns false if the sessions refused the ticket (see
+    /// `Sessions::register`).
+    fn register(&mut self, ticket: SignedTicket, verified: bool) -> bool {
         let hello = self.hello.as_ref().expect("registered after hello");
-        self.shared.sessions.register(
+        let registered = self.shared.sessions.register(
             &self.conn,
             hello.uuid,
+            verified,
             ticket.clone(),
             hello.addr.clone(),
             self.outbox.clone(),
         );
+        if !registered {
+            return false;
+        }
         let limits = &self.shared.limits;
         self.pair_updates = Some(TokenBucket::new(
             limits.pair_updates_per_sec,
@@ -280,6 +354,7 @@ impl Client {
             Instant::now(),
         ));
         self.send(ServerMsg::Registered(ticket));
+        true
     }
 
     fn is_registered(&self) -> bool {
