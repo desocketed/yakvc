@@ -249,6 +249,8 @@ public record ClientConfig(String toml) {
 			# input_device = "..."
 			# output_device = "..."
 
+			# Without a [rendezvous] table Yak VC uses its built-in server (except with dev_mode). For your own
+			# server, uncomment it and list the server's issuer in trusted_issuers above.
 			# [rendezvous]
 			# endpoint_id = "<endpoint id>"
 			# addrs = ["127.0.0.1:4433"]
