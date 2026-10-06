@@ -18,8 +18,8 @@ class EngineEventTest {
 	void decodesEveryRecordType() {
 		ByteArrayOutputStream out = new ByteArrayOutputStream();
 		record(out, 1, le(4).putInt(7).array(), "-7f".getBytes(StandardCharsets.UTF_8));
-		record(out, 2, new byte[] {2}, le(8).putLong(1_800_000_000L).array());
-		record(out, 3, UUID_BYTES, new byte[] {1});
+		record(out, 2, new byte[] {2}, le(8).putLong(1_800_000_000L).array(), new byte[] {1});
+		record(out, 3, UUID_BYTES, new byte[] {1, 0});
 		record(out, 4, UUID_BYTES, new byte[] {1});
 		record(out, 5, le(4).putFloat(-12.5f).array());
 		record(out, 99, new byte[] {1, 2, 3});
@@ -28,8 +28,8 @@ class EngineEventTest {
 
 		assertEquals(List.of(
 				new EngineEvent.JoinRequest(7, "-7f"),
-				new EngineEvent.Rendezvous(EngineEvent.RendezvousState.REGISTERED, 1_800_000_000L),
-				new EngineEvent.Peer(ID, EngineEvent.PeerState.DIRECT),
+				new EngineEvent.Rendezvous(EngineEvent.RendezvousState.REGISTERED, 1_800_000_000L, true),
+				new EngineEvent.Peer(ID, EngineEvent.PeerState.DIRECT, false),
 				new EngineEvent.Talking(ID, true),
 				new EngineEvent.MicLevel(-12.5f),
 				new EngineEvent.Error("no mic")), EngineEvent.decode(buf, buf.length));

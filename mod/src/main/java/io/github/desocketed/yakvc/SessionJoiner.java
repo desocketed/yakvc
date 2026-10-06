@@ -1,6 +1,7 @@
 package io.github.desocketed.yakvc;
 
 import com.mojang.authlib.exceptions.AuthenticationException;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
@@ -11,12 +12,20 @@ import java.util.concurrent.Executor;
  *
  * <p>Never while the game is logging in to a server: Mojang keeps one pending join per account, so ours would replace
  * the game's and the server would kick the player.
+ *
+ * <p>Without an account there is nothing to call: the answer is a failure straight away, and on an offline-mode server
+ * the engine then asks for an unverified ticket instead.
  */
 public final class SessionJoiner {
 	/** authlib's {@code joinServer} for the signed-in account. */
 	@FunctionalInterface
 	public interface Mojang {
 		void joinServer(String serverId) throws AuthenticationException;
+
+		/** False when the game plainly has no Mojang account (see {@link #isAccount}). */
+		default boolean hasAccount() {
+			return true;
+		}
 	}
 
 	/** {@code joinServer} blocks on HTTP, so it runs off the client thread. Requests are rare: one thread each. */
@@ -43,8 +52,21 @@ public final class SessionJoiner {
 		return CompletableFuture.supplyAsync(() -> join(serverId), WORKER);
 	}
 
-	/** Calls {@code joinServer} unless the game is logging in. Returns whether it succeeded. */
+	/**
+	 * Whether the launcher gave the game something that can be a Mojang account. Offline launchers give players
+	 * their offline UUID (version 3, which no account has) and often no access token; offline developer mode never
+	 * signs in.
+	 */
+	public static boolean isAccount(UUID profileId, String accessToken, boolean offlineDeveloperMode) {
+		return !offlineDeveloperMode && profileId.version() != 3 && !accessToken.isBlank();
+	}
+
+	/** Calls {@code joinServer} unless there is no account or the game is logging in. Returns whether it succeeded. */
 	boolean join(String serverId) {
+		if (!mojang.hasAccount()) {
+			YakVcClient.LOGGER.info("Voice sign-in skipped: no Minecraft account");
+			return false;
+		}
 		if (loggingIn) {
 			YakVcClient.LOGGER.info("Voice sign-in refused: the game is logging in to a server; retrying later");
 			return false;

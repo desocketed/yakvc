@@ -44,6 +44,10 @@ public record ClientConfig(String toml) {
 		return bool(value("", "relay_only"), false);
 	}
 
+	public boolean verifiedOnly() {
+		return bool(value("", "verified_only"), false);
+	}
+
 	/** Blocks; the engine's default when unset. */
 	public double voiceRange() {
 		return number(value("", "voice_range"), 48);
@@ -220,6 +224,10 @@ public record ClientConfig(String toml) {
 
 			# Mute players you blocked in Social Interactions, both ways.
 			mute_blocked_players = true
+
+			# Only talk with players whose Minecraft account is verified with Mojang. Players without an account
+			# (on offline-mode servers) are then neither heard nor sent your voice.
+			verified_only = false
 
 			# Development against a local `yakvc-server` with `insecure_dev_auth = true`: uncomment these two lines
 			# and the [rendezvous] table below, filled in with the IDs the server prints at startup.

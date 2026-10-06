@@ -79,7 +79,10 @@ public final class GameStateFeeder {
 
 	// Shown by the HUD and the voice menu.
 	private EngineEvent.@Nullable RendezvousState rendezvous;
+	/** Registered with a verified ticket. */
+	private boolean verified;
 	private final Map<UUID, EngineEvent.PeerState> peers = new HashMap<>();
+	private final Set<UUID> verifiedPeers = new HashSet<>();
 	private final Set<UUID> talking = new LinkedHashSet<>();
 	private int errorEvents;
 	private boolean micHeard;
@@ -292,18 +295,22 @@ public final class GameStateFeeder {
 		switch (event) {
 			case EngineEvent.JoinRequest(int id, String serverId) ->
 					pendingJoins.add(new PendingJoin(id, joiner.joinAsync(serverId)));
-			case EngineEvent.Rendezvous(EngineEvent.RendezvousState state, long value) -> {
+			case EngineEvent.Rendezvous(EngineEvent.RendezvousState state, long value, boolean isVerified) -> {
 				rendezvous = state;
-				YakVcClient.LOGGER.info("Rendezvous {} ({})", state, value);
+				verified = state == EngineEvent.RendezvousState.REGISTERED && isVerified;
+				YakVcClient.LOGGER.info("Rendezvous {} ({}){}", state, value, verified ? " verified" : "");
 			}
-			case EngineEvent.Peer(UUID uuid, EngineEvent.PeerState state) -> {
+			case EngineEvent.Peer(UUID uuid, EngineEvent.PeerState state, boolean isVerified) -> {
 				if (state == EngineEvent.PeerState.GONE) {
 					talking.remove(uuid);
 					peers.remove(uuid);
+					verifiedPeers.remove(uuid);
 				} else {
 					peers.put(uuid, state);
+					if (isVerified) verifiedPeers.add(uuid);
+					else verifiedPeers.remove(uuid);
 				}
-				YakVcClient.LOGGER.info("Peer {} {} {}", uuid, name(uuid), state);
+				YakVcClient.LOGGER.info("Peer {} {} {}{}", uuid, name(uuid), state, isVerified ? " verified" : "");
 			}
 			case EngineEvent.Talking(UUID uuid, boolean isTalking) -> {
 				if (isTalking) talking.add(uuid);
@@ -381,9 +388,19 @@ public final class GameStateFeeder {
 		return rendezvous;
 	}
 
+	/** Whether we are registered with a verified ticket, i.e. our Mojang account is proven. */
+	public boolean verified() {
+		return verified;
+	}
+
 	/** The connection state of a peer the engine knows, or null. */
 	public EngineEvent.@Nullable PeerState peerState(UUID uuid) {
 		return peers.get(uuid);
+	}
+
+	/** Whether a peer proved its Mojang account. */
+	public boolean peerVerified(UUID uuid) {
+		return verifiedPeers.contains(uuid);
 	}
 
 	/** Who is talking right now, the local player included. */
