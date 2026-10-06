@@ -311,9 +311,9 @@ Voice is 48 kHz mono Opus in 20 ms frames, sent as unreliable QUIC datagrams on 
 **Limits (defaults)**
 
 - 5 auth attempts per EndpointId per minute; 30 per source IP per minute. Only challenges count (cached-ticket hellos don't), and connections arriving through the relay have no source IP, so they get only the per-EndpointId limit.
-- At most 2,048 pair tokens per session and 10 pair updates per second.
+- At most 2,048 pair tokens per session (`rdv::MAX_PAIRS`) and 10 updates per second (`rdv::PAIR_UPDATES_PER_SEC`), counting `UpdateAddr` as well as `SetPairs`, `AddPairs` and `RemovePairs`. The client stays under both: it merges tab-list changes and sends at most one pair batch (up to 2 messages) every 250 ms, and above 2,048 tokens it logs a warning and keeps the lowest 2,048.
 - 5 s timeout on Mojang calls with one retry; auth fails closed on Mojang outage, answered with `RetryAfter { secs: 10 }`. Cached tickets keep working, and while Mojang rate-limits us a cached ticket with under 2 h left is still accepted.
-- On a Mojang HTTP 429 the server stops calling `hasJoined` until Mojang's `Retry-After` (or 10 s) has passed and answers pending auths with `RetryAfter { secs }`. Clients back off exponentially (10 s doubling to 10 min, with jitter) and keep using any unexpired cached ticket meanwhile.
+- On a Mojang HTTP 429 the server stops calling `hasJoined` until Mojang's `Retry-After` (or 10 s) has passed and answers pending auths with `RetryAfter { secs }`. Clients back off exponentially (10 s doubling to 10 min, with jitter) and keep using any unexpired cached ticket meanwhile. A rendezvous close with `RateLimited` or `LimitExceeded` takes the same backoff, which is not reset by having registered earlier in the session.
 - Relay: each client keeps its relayed sends within a 512 kbps budget (see connection lifecycle). The server backs this with `iroh-relay`'s per-client receive limit (`Limits::client_rx`, which caps what each client sends into the relay) of 80 KB/s (640 kbps, leaving headroom for control traffic and bursts). The server exports relayed bytes as metrics (`yakvc_relay_bytes_{recv,sent}_total`); comparing them to a monthly budget is left to the metrics system.
 
 **Dev mode**
