@@ -1,30 +1,23 @@
 name: CI
 
-# Actions minutes are limited while the repository is private (macOS bills
-# 10x, Windows 2x), and scripts/ci-local.sh already runs every Linux check
-# before each push to main. So pushes to main don't run CI: a version tag
-# runs everything and publishes the release, and Claude dispatches a run by
-# hand for changes that could break Windows or macOS. macOS only builds on
-# tags and when that run asks for it, since it is most of a run's cost.
+# The repository is public, so standard runners cost nothing: every push to
+# main and every pull request runs everything on Linux, Windows and macOS.
+# A version tag also publishes the release.
 on:
   push:
+    branches: [main]
     # A version tag (v<workspace version>) also publishes the release.
     tags: ["v*"]
+    paths-ignore: ["**.md", "docs/**", "LICENSE-*"]
   pull_request:
     paths-ignore: ["**.md", "docs/**", "LICENSE-*"]
   workflow_dispatch:
-    inputs:
-      macos:
-        description: Also build macOS (10x the minutes of Linux)
-        type: boolean
-        default: false
 
 permissions:
   contents: read
 
 env:
   CARGO_TERM_COLOR: always
-  BUILD_MACOS: ${{ startsWith(github.ref, 'refs/tags/') || inputs.macos == true }}
 
 jobs:
   rust:
@@ -61,8 +54,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The env context isn't available here, so this repeats BUILD_MACOS.
-        os: ${{ fromJSON((startsWith(github.ref, 'refs/tags/') || inputs.macos == true) && '["ubuntu-latest", "windows-latest", "macos-latest"]' || '["ubuntu-latest", "windows-latest"]') }}
+        os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -163,10 +155,7 @@ jobs:
           unzip -l "$jar" | tee contents
           entries="natives/natives.sha256 natives/linux-x86_64/libyakvc_ffi.so
             natives/linux-aarch64/libyakvc_ffi.so natives/windows-x86_64/yakvc_ffi.dll
-            THIRD_PARTY_LICENSES"
-          if [ "$BUILD_MACOS" = true ]; then
-            entries="$entries natives/macos-universal/libyakvc_ffi.dylib"
-          fi
+            natives/macos-universal/libyakvc_ffi.dylib THIRD_PARTY_LICENSES"
           for entry in $entries; do
             grep -q " $entry\$" contents || { echo "$jar has no $entry" >&2; exit 1; }
           done
