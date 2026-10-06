@@ -10,8 +10,9 @@
 /**
  * Version of this C ABI. Java refuses to use a library whose version differs
  * from the one it was built against. Bump on any incompatible change.
+ * 2: verified flags in the rendezvous and peer state events.
  */
-#define YAKVC_ABI_VERSION 1
+#define YAKVC_ABI_VERSION 2
 
 #define YAKVC_OK 0
 

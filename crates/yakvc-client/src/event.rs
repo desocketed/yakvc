@@ -13,9 +13,13 @@ pub enum Event {
         server_id: String,
     },
     Rendezvous(RendezvousState),
+    /// A peer's connection state, or whether its ticket is verified,
+    /// changed.
     Peer {
         uuid: Uuid,
         state: PeerState,
+        /// The peer proved its account to Mojang.
+        verified: bool,
     },
     /// A peer (or the local player) started or stopped talking.
     Talking {
@@ -37,6 +41,8 @@ pub enum RendezvousState {
     Authenticating,
     Registered {
         expires_at: SystemTime,
+        /// Our ticket is verified: the account was proven to Mojang.
+        verified: bool,
     },
     /// Mojang or the rendezvous asked us to back off.
     RetryingIn(Duration),

@@ -20,6 +20,8 @@ Yak VC runs on Windows (x86_64), macOS (Intel and Apple silicon) and Linux (x86_
 
 When the game starts, Yak VC signs in to the Yak VC voice server with your Minecraft account, the same way the game does when you join a server. Your password and access token go only to Mojang, never to Yak VC.
 
+You don't need a Minecraft account to talk on offline-mode servers (servers that don't check accounts). Without one, Yak VC signs you in *unverified*: you talk as usual there, but on servers that check accounts you get no voice, and players who turned on **Only Verified Players** don't hear you. Players with a verified account show a badge (a cyan check mark), and when a verified and an unverified player claim the same identity, the verified one wins.
+
 ## Keys
 
 The keys are in Options → Controls → Key Binds, under **Yak VC**.
@@ -57,7 +59,7 @@ Under the icons, a speaker and a name show each player who is talking, so you kn
 
 ## Who is talking
 
-A green speaker floats over the head of every player who is talking, above their name tag. It shows through walls, like name tags do. In third person you see it over your own head too.
+A green speaker floats over the head of every player who is talking, above their name tag, with the verified badge next to it when their account is verified. It shows through walls, like name tags do. In third person you see it over your own head too.
 
 ![A speaker over a talking player](guide/talking-indicator.png)
 
@@ -67,7 +69,7 @@ Press your **Open Voice Menu** key. The top line says whether voice is connected
 
 ![The voice menu](guide/voice-menu.png)
 
-Each row shows the player's face and name, a speaker while they talk, and their voice connection:
+Each row shows the player's face and name, the verified badge if their Minecraft account is verified, a speaker while they talk, and their voice connection:
 
 | Status | Meaning |
 | --- | --- |
@@ -76,7 +78,7 @@ Each row shows the player's face and name, a speaker while they talk, and their 
 | Direct | Connected straight to them. |
 | Relayed | Connected through the Yak VC relay, because a direct connection wasn't possible or one of you uses Relay Only. |
 | Relay full | Your relay allowance is used up by nearer players, so they don't get your voice until a slot frees up. |
-| Connection failed | Yak VC couldn't reach them. It tries again later. |
+| Connection failed | Yak VC couldn't reach them, or refused them (for example an unverified player while **Only Verified Players** is on). It tries again later. |
 | Blocked: muted both ways | You blocked them in Social Interactions. |
 
 **Volume** goes from 0 to 200 % and **Mute** silences just that player; they also stop sending you their voice. Both are remembered for that player, on every server.
@@ -102,6 +104,10 @@ The game's own Voice/Speech slider (Options → Music & Sounds) sets the volume 
 - **Relay Only**: sends all voice through the Yak VC relay, so other players don't learn your IP address (see [privacy](#privacy)). Off by default. It takes effect after you restart the game.
 - **Obey Chat Limits**: turns voice off while your Microsoft account or launcher disables chat. On by default.
 - **Mute Blocked**: players you block in Social Interactions can't hear you, and you don't hear them. On by default.
+
+Under **Account** the settings say whether your Minecraft account is verified (see [Installing](#installing)).
+
+- **Only Verified Players**: talk only with players whose Minecraft account is verified, the ones with the badge. Players without an account, as on offline-mode servers, can't hear you and you don't hear them. Off by default.
 
 ## Privacy
 
@@ -141,6 +147,7 @@ The keys that the settings screen shows:
 | `relay_only` | `false` | Relay Only |
 | `respect_chat_restrictions` | `true` | Obey Chat Limits |
 | `mute_blocked_players` | `true` | Mute Blocked |
+| `verified_only` | `false` | Only Verified Players |
 | `[audio]` `activation` | `"push_to_talk"` | Activation (`"push_to_talk"` or `"voice"`) |
 | `[audio]` `bitrate` | `24000` | Bitrate, in bits per second |
 | `[audio]` `input_device` | unset | Microphone, by name |

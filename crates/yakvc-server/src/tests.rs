@@ -8,8 +8,8 @@ use iroh::{Endpoint, RelayMode};
 use yakvc_shared::rdv::{self, ClientMsg, CloseCode, Hello, ServerMsg};
 use yakvc_shared::wire::{read_msg, write_msg};
 use yakvc_shared::{
-    EndpointAddr, EndpointId, IssuerKey, PairToken, RelayUrl, SecretKey, SignedTicket,
-    TicketVerifier, Uuid,
+    EndpointAddr, EndpointId, IssuerKey, PairToken, RelayUrl, SecretKey, SignedTicket, Ticket,
+    TicketVerifier, Uuid, offline_uuid,
 };
 
 use crate::mojang::fake::{FakeMojang, response, uuid_for};
@@ -46,6 +46,8 @@ fn relay_options() -> RelayOptions {
 /// A rendezvous client reduced to sending and receiving messages.
 struct Client {
     name: String,
+    /// `uuid_for(name)`, the fake Mojang's account UUID, unless changed.
+    uuid: Uuid,
     endpoint: Endpoint,
     conn: Connection,
     send: SendStream,
@@ -74,6 +76,7 @@ impl Client {
         let (send, recv) = conn.open_bi().await.unwrap();
         Client {
             name: name.into(),
+            uuid: uuid_for(name),
             endpoint,
             conn,
             send,
@@ -86,7 +89,32 @@ impl Client {
     }
 
     fn uuid(&self) -> Uuid {
-        uuid_for(&self.name)
+        self.uuid
+    }
+
+    /// Claims the offline UUID of the name, as on an offline-mode server.
+    fn offline(mut self) -> Client {
+        self.uuid = offline_uuid(&self.name);
+        self
+    }
+
+    /// Opens a new connection from the same endpoint, as after a restart.
+    async fn reconnect(&mut self, server: &Server) {
+        let conn = self
+            .endpoint
+            .connect(server.endpoint_addr(), rdv::ALPN)
+            .await
+            .unwrap();
+        let (send, recv) = conn.open_bi().await.unwrap();
+        self.conn = conn;
+        self.send = send;
+        self.recv = recv;
+    }
+
+    /// Answers the challenge with `Decline`, as a client without an account.
+    async fn decline_challenge(&mut self) {
+        assert!(matches!(self.recv().await, ServerMsg::Challenge(_)));
+        self.send(ClientMsg::Decline).await;
     }
 
     fn hello(&self, cached_ticket: Option<SignedTicket>) -> ClientMsg {
@@ -149,6 +177,13 @@ impl Client {
         }
     }
 
+    async fn expect_retry_after(&mut self) -> u32 {
+        match self.recv().await {
+            ServerMsg::RetryAfter { secs } => secs,
+            other => panic!("expected RetryAfter, got {other:?}"),
+        }
+    }
+
     async fn close_code(&self) -> u64 {
         let err = tokio::time::timeout(TIMEOUT, self.conn.closed())
             .await
@@ -194,6 +229,12 @@ fn code(code: CloseCode) -> u64 {
     code as u64
 }
 
+fn verify(server: &Server, ticket: &SignedTicket) -> Ticket {
+    TicketVerifier::new([server.issuer_id()])
+        .verify(ticket, SystemTime::now())
+        .unwrap()
+}
+
 #[tokio::test]
 async fn dev_clients_that_see_each_other_are_matched() {
     let server = dev_server().await;
@@ -207,6 +248,7 @@ async fn dev_clients_that_see_each_other_are_matched() {
     let verifier = TicketVerifier::new([server.issuer_id()]).accept_dev(true);
     let ticket = verifier.verify(&ticket, SystemTime::now()).unwrap();
     assert!(ticket.dev);
+    assert!(ticket.verified, "dev tickets count as verified");
     assert_eq!(ticket.endpoint_id, alice.id());
     assert_eq!(ticket.uuid, alice.uuid());
 
@@ -409,10 +451,9 @@ async fn mojang_challenge_issues_a_real_ticket() {
     alice.answer_challenge().await;
     let ticket = alice.expect_registered().await;
 
-    let ticket = TicketVerifier::new([server.issuer_id()])
-        .verify(&ticket, SystemTime::now())
-        .unwrap();
+    let ticket = verify(&server, &ticket);
     assert!(!ticket.dev);
+    assert!(ticket.verified);
     assert_eq!(ticket.uuid, alice.uuid());
     let remaining = ticket.remaining(SystemTime::now());
     assert!(
@@ -432,14 +473,7 @@ async fn cached_ticket_skips_the_challenge() {
     let ticket = alice.expect_registered().await;
 
     // Reconnect from the same endpoint with the cached ticket.
-    let conn = alice
-        .endpoint
-        .connect(server.endpoint_addr(), rdv::ALPN)
-        .await;
-    let (send, recv) = conn.as_ref().unwrap().open_bi().await.unwrap();
-    alice.conn = conn.unwrap();
-    alice.send = send;
-    alice.recv = recv;
+    alice.reconnect(&server).await;
     alice.send(alice.hello(Some(ticket.clone()))).await;
     let reused = alice.expect_registered().await;
     assert_eq!(reused.to_bytes(), ticket.to_bytes());
@@ -518,8 +552,197 @@ async fn auth_attempts_are_rate_limited_per_endpoint() {
     alice.answer_challenge().await;
     alice.expect_registered().await;
 
+    // A renewal over the limit is refused, but the session stays.
     alice.send(ClientMsg::Renew).await;
+    alice.expect_retry_after().await;
+    alice.send(ClientMsg::AddPairs(vec![])).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(server.stats().sessions, 1);
+
+    // Initial auths over the limit are closed.
+    alice.reconnect(&server).await;
+    alice.send(alice.hello(None)).await;
     assert_eq!(alice.close_code().await, code(CloseCode::RateLimited));
+}
+
+#[tokio::test]
+async fn decline_gives_an_offline_uuid_an_unverified_ticket_without_mojang() {
+    let mojang = FakeMojang::start().await;
+    let server = mojang_server(&mojang).await;
+    let mut alice = Client::connect(&server, "alice").await.offline();
+    alice.send(alice.hello(None)).await;
+    alice.decline_challenge().await;
+    let ticket = verify(&server, &alice.expect_registered().await);
+    assert!(!ticket.verified);
+    assert_eq!(ticket.uuid, offline_uuid("alice"));
+    assert_eq!(ticket.name, "alice");
+    assert!(mojang.requests().is_empty());
+
+    // Unverified players match like any other.
+    let mut bob = Client::connect(&server, "bob").await.offline();
+    bob.send(bob.hello(None)).await;
+    bob.decline_challenge().await;
+    bob.expect_registered().await;
+    alice
+        .send(ClientMsg::SetPairs(vec![alice.token_for(&bob)]))
+        .await;
+    bob.send(ClientMsg::SetPairs(vec![bob.token_for(&alice)]))
+        .await;
+    alice.expect_peer_available(&bob).await;
+    bob.expect_peer_available(&alice).await;
+}
+
+#[tokio::test]
+async fn decline_for_an_account_uuid_fails_auth() {
+    let mojang = FakeMojang::start().await;
+    let server = mojang_server(&mojang).await;
+    let mut alice = Client::connect(&server, "alice").await;
+    alice.uuid = Uuid::new_v4();
+    alice.send(alice.hello(None)).await;
+    alice.decline_challenge().await;
+    assert_eq!(alice.close_code().await, code(CloseCode::AuthFailed));
+    assert!(mojang.requests().is_empty());
+}
+
+#[tokio::test]
+async fn decline_without_a_challenge_is_a_protocol_error() {
+    let server = dev_server().await;
+    let mut alice = Client::connect(&server, "alice").await.offline();
+    alice.register().await;
+    alice.send(ClientMsg::Decline).await;
+    assert_eq!(alice.close_code().await, code(CloseCode::ProtocolError));
+}
+
+/// The fake Mojang confirms the account `alice`, whose offline UUID is
+/// what an offline-mode server gives her.
+#[tokio::test]
+async fn signed_in_players_get_a_verified_ticket_for_their_offline_uuid() {
+    let mojang = FakeMojang::start().await;
+    let server = mojang_server(&mojang).await;
+    let mut alice = Client::connect(&server, "alice").await.offline();
+    alice.send(alice.hello(None)).await;
+    alice.answer_challenge().await;
+    let ticket = verify(&server, &alice.expect_registered().await);
+    assert!(ticket.verified);
+    assert_eq!(ticket.uuid, offline_uuid("alice"));
+}
+
+#[tokio::test]
+async fn a_verified_session_supersedes_unverified_ones_for_its_uuid() {
+    let mojang = FakeMojang::start().await;
+    let server = mojang_server(&mojang).await;
+    let mut impostor = Client::connect(&server, "alice").await.offline();
+    impostor.send(impostor.hello(None)).await;
+    impostor.decline_challenge().await;
+    let cached = impostor.expect_registered().await;
+    let mut bob = Client::connect(&server, "bob").await.offline();
+    bob.send(bob.hello(None)).await;
+    bob.decline_challenge().await;
+    bob.expect_registered().await;
+    impostor
+        .send(ClientMsg::SetPairs(vec![impostor.token_for(&bob)]))
+        .await;
+    bob.send(ClientMsg::SetPairs(vec![bob.token_for(&impostor)]))
+        .await;
+    bob.expect_peer_available(&impostor).await;
+    impostor.expect_peer_available(&bob).await;
+
+    let mut alice = Client::connect(&server, "alice").await.offline();
+    alice.send(alice.hello(None)).await;
+    alice.answer_challenge().await;
+    alice.expect_registered().await;
+    assert_eq!(impostor.close_code().await, code(CloseCode::Superseded));
+    match bob.recv().await {
+        ServerMsg::PeerGone(id) => assert_eq!(id, impostor.id()),
+        other => panic!("expected PeerGone, got {other:?}"),
+    }
+
+    // While Alice is registered, unverified claims to her UUID are refused,
+    // from a cached ticket or a fresh decline alike.
+    impostor.reconnect(&server).await;
+    impostor.send(impostor.hello(Some(cached))).await;
+    impostor.decline_challenge().await;
+    assert_eq!(impostor.close_code().await, code(CloseCode::Superseded));
+    assert_eq!(server.stats().sessions, 2);
+}
+
+#[tokio::test]
+async fn an_unverified_cached_ticket_registers_while_no_verified_session_holds_the_uuid() {
+    let mojang = FakeMojang::start().await;
+    let server = mojang_server(&mojang).await;
+    let mut alice = Client::connect(&server, "alice").await.offline();
+    alice.send(alice.hello(None)).await;
+    alice.decline_challenge().await;
+    let ticket = alice.expect_registered().await;
+
+    alice.reconnect(&server).await;
+    alice.send(alice.hello(Some(ticket.clone()))).await;
+    assert_eq!(
+        alice.expect_registered().await.to_bytes(),
+        ticket.to_bytes()
+    );
+}
+
+#[tokio::test]
+async fn a_refused_renewal_keeps_the_session_and_its_ticket() {
+    let mojang = FakeMojang::start().await;
+    let server = mojang_server(&mojang).await;
+    let mut alice = Client::connect(&server, "alice").await;
+    alice.send(alice.hello(None)).await;
+    alice.answer_challenge().await;
+    alice.expect_registered().await;
+
+    // Mojang says no.
+    mojang.script([response("204 No Content", "", "")]);
+    alice.send(ClientMsg::Renew).await;
+    alice.answer_challenge().await;
+    alice.expect_retry_after().await;
+
+    // joinServer failed on the client, which leaves the challenge
+    // unanswered and later renews again.
+    alice.send(ClientMsg::Renew).await;
+    assert!(matches!(alice.recv().await, ServerMsg::Challenge(_)));
+    alice.send(ClientMsg::Renew).await;
+    alice.answer_challenge().await;
+    alice.expect_registered().await;
+
+    // An account UUID can't fall back to an unverified ticket.
+    alice.send(ClientMsg::Renew).await;
+    alice.decline_challenge().await;
+    alice.expect_retry_after().await;
+    alice.send(ClientMsg::AddPairs(vec![])).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(server.stats().sessions, 1);
+}
+
+#[tokio::test]
+async fn a_verified_offline_player_can_renew_as_unverified() {
+    let mojang = FakeMojang::start().await;
+    let server = mojang_server(&mojang).await;
+    let mut alice = Client::connect(&server, "alice").await.offline();
+    alice.send(alice.hello(None)).await;
+    alice.answer_challenge().await;
+    assert!(verify(&server, &alice.expect_registered().await).verified);
+
+    alice.send(ClientMsg::Renew).await;
+    alice.decline_challenge().await;
+    assert!(!verify(&server, &alice.expect_registered().await).verified);
+}
+
+#[tokio::test]
+async fn offline_uuids_are_challenged_while_mojang_is_blocked() {
+    let mojang = FakeMojang::start().await;
+    mojang.script([response("429 Too Many Requests", "Retry-After: 60\r\n", "")]);
+    let server = mojang_server(&mojang).await;
+    let mut bob = Client::connect(&server, "bob").await;
+    bob.send(bob.hello(None)).await;
+    bob.answer_challenge().await;
+    assert_eq!(bob.expect_retry_after().await, 60);
+
+    let mut alice = Client::connect(&server, "alice").await.offline();
+    alice.send(alice.hello(None)).await;
+    alice.decline_challenge().await;
+    assert!(!verify(&server, &alice.expect_registered().await).verified);
 }
 
 #[tokio::test]
@@ -549,6 +772,54 @@ async fn challenges_beyond_the_mojang_budget_are_told_to_retry() {
     ));
     assert_eq!(bob.close_code().await, code(CloseCode::RateLimited));
     assert_eq!(mojang.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn declines_leave_the_mojang_budget_alone() {
+    let mojang = FakeMojang::start().await;
+    let limits = Limits {
+        mojang_checks_per_min: 1,
+        ..Limits::default()
+    };
+    let server = builder()
+        .session_server(SessionServer::new(&mojang.url))
+        .limits(limits)
+        .spawn()
+        .await
+        .unwrap();
+    for name in ["bob", "carol"] {
+        let mut client = Client::connect(&server, name).await.offline();
+        client.send(client.hello(None)).await;
+        client.decline_challenge().await;
+        client.expect_registered().await;
+    }
+
+    let mut alice = Client::connect(&server, "alice").await;
+    alice.send(alice.hello(None)).await;
+    alice.answer_challenge().await;
+    alice.expect_registered().await;
+
+    // An offline player who answers `Joined` does call Mojang, so the
+    // budget applies there.
+    let mut dave = Client::connect(&server, "dave").await.offline();
+    dave.send(dave.hello(None)).await;
+    dave.answer_challenge().await;
+    assert!(matches!(
+        dave.recv().await,
+        ServerMsg::RetryAfter { secs: 59 | 60 }
+    ));
+    assert_eq!(mojang.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn decline_for_another_names_offline_uuid_fails_auth() {
+    let mojang = FakeMojang::start().await;
+    let server = mojang_server(&mojang).await;
+    let mut mallory = Client::connect(&server, "mallory").await;
+    mallory.uuid = offline_uuid("alice");
+    mallory.send(mallory.hello(None)).await;
+    mallory.decline_challenge().await;
+    assert_eq!(mallory.close_code().await, code(CloseCode::AuthFailed));
 }
 
 #[tokio::test]

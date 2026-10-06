@@ -246,6 +246,7 @@ mod tests {
             p.uuid,
             "player".into(),
             p.id,
+            true,
             SystemTime::now(),
             Duration::from_secs(60),
         );

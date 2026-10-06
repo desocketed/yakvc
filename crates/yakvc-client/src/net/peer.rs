@@ -48,6 +48,7 @@ pub(super) enum SetupError {
 struct Hello {
     uuid: Uuid,
     name: String,
+    verified: bool,
     /// When the peer's ticket expires.
     expires: Instant,
     /// Protocols both sides speak, with the agreed version.
@@ -216,6 +217,9 @@ async fn handshake(
     let ticket = inner
         .verify_peer(&theirs.ticket, remote)
         .map_err(SetupError::Rejected)?;
+    inner
+        .claim(remote, ticket.uuid, ticket.verified)
+        .map_err(SetupError::Rejected)?;
 
     let agreed = inner
         .protocols
@@ -231,6 +235,7 @@ async fn handshake(
     Ok(Hello {
         uuid: ticket.uuid,
         name: ticket.name.clone(),
+        verified: ticket.verified,
         expires: expiry_instant(&ticket),
         agreed,
         control_send: send,
@@ -242,9 +247,19 @@ async fn handshake(
 /// datagram routing, path state and ticket updates.
 async fn serve(inner: Arc<Inner>, conn: Connection, dialed: bool, hello: Hello) {
     let remote = conn.remote_id();
-    let Some(status) = register(&inner, &conn, dialed, hello.uuid, &hello.name) else {
-        close(&conn, CloseCode::Duplicate);
-        return;
+    let status = match register(
+        &inner,
+        &conn,
+        dialed,
+        hello.uuid,
+        &hello.name,
+        hello.verified,
+    ) {
+        Ok(status) => status,
+        Err(code) => {
+            close(&conn, code);
+            return;
+        }
     };
     let mut tasks = start_protocols(&conn, dialed, &hello.agreed, &status, &inner.banned).await;
     tasks.spawn(watch_paths(conn.clone(), status));
@@ -317,18 +332,25 @@ async fn open_protocol_stream(
     }
 }
 
-/// Records a verified connection in the peer table. Returns `None` if an
-/// existing connection to the same peer wins the duplicate tie break.
+/// Records a verified connection in the peer table. Fails with `Duplicate` if
+/// an existing connection to the same peer wins the tie break, and repeats
+/// the handshake's `verified_only` and claim checks under the peers lock:
+/// another handshake or `set_trust` may have run since.
 fn register(
     inner: &Arc<Inner>,
     conn: &Connection,
     dialed: bool,
     uuid: Uuid,
     name: &str,
-) -> Option<Arc<PeerStatus>> {
+    verified: bool,
+) -> Result<Arc<PeerStatus>, CloseCode> {
     let remote = conn.remote_id();
     let dialed_by_lower = dialed == (inner.endpoint.id() < remote);
     let mut peers = inner.peers.lock().unwrap();
+    if !verified && inner.trust.lock().unwrap().verified_only {
+        return Err(CloseCode::BadTicket);
+    }
+    super::claim(&peers, remote, uuid, verified)?;
     let entry = peers
         .entry(remote)
         .or_insert_with(|| PeerEntry::new(uuid, name.to_owned(), &inner.events));
@@ -337,12 +359,13 @@ fn register(
     {
         // Both sides apply the same rule, so they keep the same connection.
         if link.dialed_by_lower && !dialed_by_lower {
-            return None;
+            return Err(CloseCode::Duplicate);
         }
         close(&link.conn, CloseCode::Duplicate);
     }
     entry.uuid = uuid;
     entry.name = name.to_owned();
+    entry.verified = verified;
     entry.link = Some(Link {
         conn: conn.clone(),
         dialed_by_lower,
@@ -353,8 +376,9 @@ fn register(
         flags.connected = true;
         flags.failed = false;
         flags.relayed = relayed;
+        flags.verified = verified;
     });
-    Some(entry.status.clone())
+    Ok(entry.status.clone())
 }
 
 /// Forgets a closed connection. A peer the rendezvous still lists stays in
@@ -404,7 +428,13 @@ async fn peer_control(inner: &Arc<Inner>, conn: &Connection, hello: Hello) {
         tokio::select! {
             msg = msgs.recv() => match msg {
                 Some(PeerMsg::TicketUpdate(signed)) => match inner.verify_peer(&signed, remote) {
-                    Ok(ticket) if ticket.uuid == uuid => expires = expiry_instant(&ticket),
+                    Ok(ticket) if ticket.uuid == uuid => {
+                        if let Err(code) = inner.claim(remote, uuid, ticket.verified) {
+                            break code;
+                        }
+                        set_verified(inner, remote, ticket.verified);
+                        expires = expiry_instant(&ticket);
+                    }
                     Ok(_) => break CloseCode::BadTicket,
                     Err(code) => break code,
                 },
@@ -473,6 +503,14 @@ fn record_peer_close(inner: &Arc<Inner>, conn: &Connection) {
             flags.closed_by_peer = Some(code);
         });
     }
+}
+
+/// Records whether the peer's latest ticket is verified.
+fn set_verified(inner: &Arc<Inner>, remote: EndpointId, verified: bool) {
+    if let Some(entry) = inner.peers.lock().unwrap().get_mut(&remote) {
+        entry.verified = verified;
+    }
+    set_status(inner, remote, |flags| flags.verified = verified);
 }
 
 fn mark_failed(inner: &Arc<Inner>, remote: EndpointId) {
@@ -583,10 +621,10 @@ mod tests {
     use std::collections::HashSet;
 
     use iroh::endpoint::{ConnectionError, VarInt};
-    use yakvc_shared::{IssuerKey, TicketVerifier};
+    use yakvc_shared::{IssuerKey, TicketVerifier, offline_uuid};
 
     use super::super::test_util::{
-        connect, eventually, loopback_addr, loopback_endpoint, probe, ticket, uuid,
+        connect, eventually, loopback_addr, loopback_endpoint, probe, signed_ticket, ticket, uuid,
     };
     use super::*;
     use crate::event::{self, Event, Events, PeerState};
@@ -664,6 +702,7 @@ mod tests {
         let (events_tx, events) = event::channel();
         let trust = Trust {
             verifier: TicketVerifier::new([]),
+            verified_only: false,
             direct_calls: false,
         };
         let net = Net::new(
@@ -687,13 +726,17 @@ mod tests {
         let (second, second_b) = connect(a, &b).await;
 
         // Pretend the first was dialed by the lower id and the second wasn't.
-        assert!(register(inner, &first, a_is_lower, uuid(2), "bob").is_some());
-        assert!(register(inner, &second, !a_is_lower, uuid(2), "bob").is_none());
+        assert!(register(inner, &first, a_is_lower, uuid(2), "bob", true).is_ok());
+        assert!(matches!(
+            register(inner, &second, !a_is_lower, uuid(2), "bob", true),
+            Err(CloseCode::Duplicate)
+        ));
         assert_eq!(
             events.try_next(),
             Some(Event::Peer {
                 uuid: uuid(2),
-                state: PeerState::Direct
+                state: PeerState::Direct,
+                verified: true,
             })
         );
         assert!(first.close_reason().is_none());
@@ -702,7 +745,7 @@ mod tests {
         // A newer connection that was also dialed by the lower id replaces
         // the old one, which is closed as a duplicate.
         let (third, _third_b) = connect(a, &b).await;
-        assert!(register(inner, &third, a_is_lower, uuid(2), "bob").is_some());
+        assert!(register(inner, &third, a_is_lower, uuid(2), "bob", true).is_ok());
         assert!(closed_with(first_b.closed().await, CloseCode::Duplicate));
 
         // The stale connection ending doesn't remove the peer; the current
@@ -715,7 +758,8 @@ mod tests {
             events.try_next(),
             Some(Event::Peer {
                 uuid: uuid(2),
-                state: PeerState::Gone
+                state: PeerState::Gone,
+                verified: true,
             })
         );
     }
@@ -727,7 +771,7 @@ mod tests {
         let b = loopback_endpoint().await;
         let (conn, conn_b) = connect(&inner.endpoint, &b).await;
         net.set_tab_list(HashSet::from([uuid(2)]));
-        register(inner, &conn, true, uuid(2), "bob").unwrap();
+        register(inner, &conn, true, uuid(2), "bob", true).unwrap();
 
         net.set_tab_list(HashSet::from([uuid(3)]));
         assert!(closed_with(conn_b.closed().await, CloseCode::NotVisible));
@@ -739,7 +783,7 @@ mod tests {
         let inner = net.inner();
         let b = loopback_endpoint().await;
         let (conn, conn_b) = connect(&inner.endpoint, &b).await;
-        register(inner, &conn, true, uuid(2), "bob").unwrap();
+        register(inner, &conn, true, uuid(2), "bob", false).unwrap();
         let _connected = events.try_next();
 
         inner.peer_gone(b.id());
@@ -748,7 +792,8 @@ mod tests {
             events.try_next(),
             Some(Event::Peer {
                 uuid: uuid(2),
-                state: PeerState::Gone
+                state: PeerState::Gone,
+                verified: false,
             })
         );
     }
@@ -762,19 +807,31 @@ mod tests {
     }
 
     async fn side(n: u8, issuer: &IssuerKey, trusted: &IssuerKey) -> Side {
+        side_as(uuid(n), &format!("player{n}"), true, issuer, trusted).await
+    }
+
+    /// A side claiming `uuid` and `name`, with a verified or unverified ticket.
+    async fn side_as(
+        uuid: Uuid,
+        name: &str,
+        verified: bool,
+        issuer: &IssuerKey,
+        trusted: &IssuerKey,
+    ) -> Side {
         let endpoint = loopback_endpoint().await;
         let (events_tx, events) = event::channel();
         let (probe, links) = probe(1, 1);
         let trust = Trust {
             verifier: TicketVerifier::new([trusted.id()]),
+            verified_only: false,
             direct_calls: false,
         };
         let net = Net::new(endpoint.clone(), vec![probe], trust, events_tx, MAX_PEERS);
         net.set_identity(Identity {
-            uuid: uuid(n),
-            name: format!("player{n}"),
+            uuid,
+            name: name.into(),
         });
-        let own = ticket(issuer, uuid(n), &endpoint);
+        let own = signed_ticket(issuer, uuid, name, &endpoint, verified);
         net.inner().own_ticket.send_replace(Some(own));
         Side {
             net,
@@ -800,7 +857,7 @@ mod tests {
         async fn next_peer_state(&mut self) -> (Uuid, PeerState) {
             let next = async {
                 loop {
-                    if let Some(Event::Peer { uuid, state }) = self.events.next().await {
+                    if let Some(Event::Peer { uuid, state, .. }) = self.events.next().await {
                         return (uuid, state);
                     }
                 }
@@ -827,6 +884,59 @@ mod tests {
         })
         .await;
         assert_eq!(alice.net.peers()[0].name, "player2");
+    }
+
+    /// On an offline-mode server: an unverified player claiming bob's
+    /// offline UUID, then the real, signed-in bob.
+    #[tokio::test]
+    async fn a_verified_peer_replaces_an_unverified_one_for_the_same_uuid() {
+        let issuer = IssuerKey::generate();
+        let bob = offline_uuid("bob");
+        let alice = side(1, &issuer, &issuer).await;
+        let impostor = side_as(bob, "bob", false, &issuer, &issuer).await;
+        let real = side_as(bob, "bob", true, &issuer, &issuer).await;
+        alice.net.set_tab_list(HashSet::from([bob]));
+        impostor.sees(&[1]);
+        real.sees(&[1]);
+
+        alice.dial(&impostor).await.unwrap();
+        eventually("alice links the unverified bob", || {
+            alice.net.peers().iter().any(|peer| !peer.verified)
+        })
+        .await;
+        alice.dial(&real).await.unwrap();
+        eventually("the unverified link is closed", || {
+            let peers = alice.net.peers();
+            peers.len() == 1 && peers[0].verified
+        })
+        .await;
+
+        // While the verified link is up, unverified claims are refused.
+        assert!(matches!(
+            alice.dial(&impostor).await,
+            Err(SetupError::Rejected(CloseCode::Superseded))
+        ));
+    }
+
+    #[tokio::test]
+    async fn verified_only_refuses_unverified_peers() {
+        let issuer = IssuerKey::generate();
+        let alice = side(1, &issuer, &issuer).await;
+        let bob = offline_uuid("bob");
+        let unverified = side_as(bob, "bob", false, &issuer, &issuer).await;
+        alice.net.set_tab_list(HashSet::from([bob]));
+        unverified.sees(&[1]);
+
+        alice.dial(&unverified).await.unwrap();
+        eventually("alice links bob", || alice.net.peers().len() == 1).await;
+        // Turning the setting on closes the link and refuses new ones.
+        let verifier = TicketVerifier::new([issuer.id()]);
+        alice.net.set_trust(verifier, true);
+        eventually("the link is closed", || alice.net.peers().is_empty()).await;
+        assert!(matches!(
+            alice.dial(&unverified).await,
+            Err(SetupError::Rejected(CloseCode::BadTicket))
+        ));
     }
 
     #[tokio::test]

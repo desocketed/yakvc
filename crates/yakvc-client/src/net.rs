@@ -156,7 +156,10 @@ pub(crate) struct Identity {
 /// Which peer tickets are accepted.
 #[derive(Debug, Clone)]
 pub(crate) struct Trust {
+    /// Checks our own ticket, and peers' with `verified_only` added.
     pub verifier: TicketVerifier,
+    /// Refuse peers whose ticket is unverified.
+    pub verified_only: bool,
     /// Direct-call mode (CLI): accept any self-signed ticket and ignore the
     /// tab list. Never set in the game.
     pub direct_calls: bool,
@@ -167,6 +170,7 @@ pub(crate) struct Trust {
 pub(crate) struct PeerSummary {
     pub uuid: Uuid,
     pub name: String,
+    pub verified: bool,
     pub state: PeerState,
     pub rtt: Option<Duration>,
 }
@@ -204,6 +208,8 @@ type Bans = Arc<Mutex<HashMap<EndpointId, tokio::time::Instant>>>;
 struct PeerEntry {
     uuid: Uuid,
     name: String,
+    /// The peer's latest ticket is verified.
+    verified: bool,
     /// Where to dial. Set while the rendezvous lists the peer.
     addr: Option<EndpointAddr>,
     link: Option<Link>,
@@ -258,7 +264,9 @@ struct StatusFlags {
     failed: bool,
     relayed: bool,
     relay_full: bool,
-    reported: Option<PeerState>,
+    verified: bool,
+    /// The state and verified flag last sent in an [`Event::Peer`].
+    reported: Option<(PeerState, bool)>,
     /// The close code of the last connection the peer closed, for tests.
     closed_by_peer: Option<u64>,
 }
@@ -342,8 +350,22 @@ impl Net {
         });
     }
 
-    pub(crate) fn set_trust(&self, verifier: TicketVerifier) {
-        self.inner.trust.lock().unwrap().verifier = verifier;
+    /// Replaces the trusted issuers and the `verified_only` setting. Turning
+    /// `verified_only` on closes the links to unverified peers.
+    pub(crate) fn set_trust(&self, verifier: TicketVerifier, verified_only: bool) {
+        {
+            let mut trust = self.inner.trust.lock().unwrap();
+            trust.verifier = verifier;
+            trust.verified_only = verified_only;
+        }
+        if verified_only {
+            let peers = self.inner.peers.lock().unwrap();
+            for entry in peers.values().filter(|entry| !entry.verified) {
+                if let Some(conn) = entry.open_conn() {
+                    close(conn, CloseCode::BadTicket);
+                }
+            }
+        }
     }
 
     /// Talks to the rendezvous until the engine shuts down: authenticates,
@@ -404,6 +426,7 @@ impl Net {
             .map(|entry| PeerSummary {
                 uuid: entry.uuid,
                 name: entry.name.clone(),
+                verified: entry.verified,
                 state: entry.status.state(),
                 rtt: entry
                     .link
@@ -452,7 +475,7 @@ impl Inner {
     }
 
     /// Verifies a peer's ticket for a connection from `remote`: signature,
-    /// issuer and expiry, then [`check_peer`].
+    /// issuer, expiry and the verified rules, then [`check_peer`].
     fn verify_peer(&self, signed: &SignedTicket, remote: EndpointId) -> Result<Ticket, CloseCode> {
         let trust = self.trust.lock().unwrap().clone();
         let verifier = if trust.direct_calls {
@@ -461,7 +484,7 @@ impl Inner {
             // key pair, which is all a direct call needs.
             TicketVerifier::new([signed.issuer()]).accept_dev(true)
         } else {
-            trust.verifier
+            trust.peer_verifier()
         };
         let ticket = verifier
             .verify(signed, SystemTime::now())
@@ -485,11 +508,11 @@ impl Inner {
         if remote == self.endpoint.id() || !yakvc_shared::rdv::addr_fits(&addr) {
             return;
         }
-        let verifier = self.trust.lock().unwrap().verifier.clone();
+        let verifier = self.trust.lock().unwrap().peer_verifier();
         let ticket = match verifier.verify(&signed, SystemTime::now()) {
             Ok(ticket) if ticket.endpoint_id == remote => ticket,
-            // The rendezvous should never send this; the peer handshake
-            // would reject it anyway.
+            // The rendezvous should never send a bad ticket, and an
+            // unverified one under `verified_only` is not wanted.
             _ => return,
         };
         let mut peers = self.peers.lock().unwrap();
@@ -497,7 +520,10 @@ impl Inner {
             .entry(remote)
             .or_insert_with(|| PeerEntry::new(ticket.uuid, ticket.name.clone(), &self.events));
         entry.addr = Some(addr);
-        entry.status.update(|_| {});
+        entry.verified = ticket.verified;
+        entry
+            .status
+            .update(|flags| flags.verified = ticket.verified);
         if entry.dialer.as_ref().is_none_or(|task| task.is_finished()) {
             let task = self
                 .runtime
@@ -546,10 +572,49 @@ impl Inner {
             .any(|&id| id == remote)
     }
 
+    /// Verified priority, one link per UUID: a verified ticket for `uuid`
+    /// closes open links to other endpoints that claim it unverified, and an
+    /// unverified ticket is refused while a verified link holds the UUID.
+    /// Links with the same standing are left alone.
+    fn claim(&self, remote: EndpointId, uuid: Uuid, verified: bool) -> Result<(), CloseCode> {
+        claim(&self.peers.lock().unwrap(), remote, uuid, verified)
+    }
+
     fn is_banned(&self, remote: EndpointId) -> bool {
         let mut banned = self.banned.lock().unwrap();
         banned.retain(|_, until| *until > tokio::time::Instant::now());
         banned.contains_key(&remote)
+    }
+}
+
+/// See [`Inner::claim`]; [`peer::register`] calls it with the peers lock
+/// already held, so a claim and the link it admits can't interleave with
+/// another handshake for the same UUID.
+fn claim(
+    peers: &HashMap<EndpointId, PeerEntry>,
+    remote: EndpointId,
+    uuid: Uuid,
+    verified: bool,
+) -> Result<(), CloseCode> {
+    let others = peers
+        .iter()
+        .filter(|&(&id, entry)| id != remote && entry.uuid == uuid);
+    for (_, entry) in others {
+        let Some(conn) = entry.open_conn() else {
+            continue;
+        };
+        match (verified, entry.verified) {
+            (false, true) => return Err(CloseCode::Superseded),
+            (true, false) => close(conn, CloseCode::Superseded),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+impl Trust {
+    fn peer_verifier(&self) -> TicketVerifier {
+        self.verifier.clone().verified_only(self.verified_only)
     }
 }
 
@@ -641,6 +706,7 @@ impl PeerEntry {
         PeerEntry {
             uuid,
             name,
+            verified: false,
             addr: None,
             link: None,
             status: Arc::new(PeerStatus {
@@ -688,23 +754,28 @@ impl PeerStatus {
     fn update(&self, change: impl FnOnce(&mut StatusFlags)) {
         let mut flags = self.flags.lock().unwrap();
         change(&mut flags);
-        let state = flags.state();
-        if flags.reported != Some(state) {
-            flags.reported = Some(state);
+        let reported = (flags.state(), flags.verified);
+        if flags.reported != Some(reported) {
+            flags.reported = Some(reported);
             self.events.send(Event::Peer {
                 uuid: self.uuid,
-                state,
+                state: reported.0,
+                verified: reported.1,
             });
         }
     }
 
     fn report_gone(&self) {
         let mut flags = self.flags.lock().unwrap();
-        if flags.reported.is_some() && flags.reported != Some(PeerState::Gone) {
-            flags.reported = Some(PeerState::Gone);
+        let Some((state, verified)) = flags.reported else {
+            return;
+        };
+        if state != PeerState::Gone {
+            flags.reported = Some((PeerState::Gone, verified));
             self.events.send(Event::Peer {
                 uuid: self.uuid,
                 state: PeerState::Gone,
+                verified,
             });
         }
     }
@@ -774,6 +845,7 @@ mod tests {
             endpoint_id: endpoint,
             issued_at: 0,
             expires_at: u64::MAX,
+            verified: true,
             dev: false,
         }
     }
@@ -841,6 +913,7 @@ mod tests {
                 failed,
                 relayed,
                 relay_full,
+                verified: false,
                 reported: None,
                 closed_by_peer: None,
             }

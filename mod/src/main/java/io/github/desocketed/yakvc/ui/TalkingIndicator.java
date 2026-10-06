@@ -6,18 +6,21 @@ import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderContext;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.AbstractClientPlayer;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
+import net.minecraft.network.chat.Component;
 import net.minecraft.util.LightCoordsUtil;
 import net.minecraft.world.entity.EntityAttachment;
 import net.minecraft.world.phys.Vec3;
 
 /**
- * A green speaker over the head of every player who is talking, one line above the name tag. It is drawn the way
- * vanilla draws name tags, through walls included, from a Fabric level render event rather than a mixin into the
- * player renderer.
+ * A green speaker over the head of every player who is talking, one line above the name tag, with the verified badge
+ * next to it for players whose account is verified. It is drawn the way vanilla draws name tags, through walls
+ * included, from a Fabric level render event rather than a mixin into the player renderer.
  */
 public final class TalkingIndicator {
 	/** One line of name-tag text, upwards. */
 	private static final int ABOVE_NAME_TAG = -10;
+	private static final Component VERIFIED_SPEAKER = Component.empty().append(Icons.SPEAKER).append(" ")
+			.append(Icons.VERIFIED);
 
 	private final GameStateFeeder feeder;
 
@@ -41,8 +44,11 @@ public final class TalkingIndicator {
 			poseStack.pushPose();
 			poseStack.translate(relative.x, relative.y, relative.z);
 			// The game shows no name tag over your own head.
-			int offset = player == minecraft.player ? 0 : ABOVE_NAME_TAG;
-			context.submitNodeCollector().submitNameTag(poseStack, attachment, offset, Icons.SPEAKER, true,
+			boolean own = player == minecraft.player;
+			int offset = own ? 0 : ABOVE_NAME_TAG;
+			boolean verified = own ? feeder.verified() : feeder.peerVerified(player.getUUID());
+			Component label = verified ? VERIFIED_SPEAKER : Icons.SPEAKER;
+			context.submitNodeCollector().submitNameTag(poseStack, attachment, offset, label, true,
 					LightCoordsUtil.FULL_BRIGHT, camera);
 			poseStack.popPose();
 		}

@@ -150,7 +150,7 @@ public final class VoiceMenuScreen extends Screen {
 		}
 	}
 
-	/** Face, name, voice connection and talking icon on the left; volume and mute on the right. */
+	/** Face, name, verified badge, talking icon and voice connection on the left; volume and mute on the right. */
 	private final class PlayerRow extends ContainerObjectSelectionList.Entry<PlayerRow> {
 		private final UUID uuid;
 		private final VolumeSlider volume;
@@ -179,8 +179,13 @@ public final class VoiceMenuScreen extends Screen {
 			int textX = x + 24;
 			String name = feeder.name(uuid);
 			graphics.text(font, name, textX, y + 3, 0xFFFFFFFF, false);
+			int iconX = textX + font.width(name) + 4;
+			if (feeder.peerVerified(uuid)) {
+				graphics.text(font, Icons.VERIFIED, iconX, y + 3, 0xFFFFFFFF, false);
+				iconX += font.width(Icons.VERIFIED) + 3;
+			}
 			if (feeder.talking().contains(uuid)) {
-				graphics.text(font, Icons.SPEAKER, textX + font.width(name) + 4, y + 3, 0xFFFFFFFF, false);
+				graphics.text(font, Icons.SPEAKER, iconX, y + 3, 0xFFFFFFFF, false);
 			}
 			graphics.text(font, connection(), textX, y + 14, 0xFFA0A0A0, false);
 

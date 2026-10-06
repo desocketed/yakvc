@@ -12,10 +12,14 @@ public sealed interface EngineEvent {
 	/** Call Mojang {@code joinServer} with {@code serverId}, then {@code completeJoin(id, ok)}. */
 	record JoinRequest(int id, String serverId) implements EngineEvent {}
 
-	/** {@code value} is the ticket expiry (Unix seconds) when registered, the delay (ms) when retrying, else 0. */
-	record Rendezvous(RendezvousState state, long value) implements EngineEvent {}
+	/**
+	 * {@code value} is the ticket expiry (Unix seconds) when registered, the delay (ms) when retrying, else 0.
+	 * {@code verified} is whether a registered session's ticket proves the Mojang account.
+	 */
+	record Rendezvous(RendezvousState state, long value, boolean verified) implements EngineEvent {}
 
-	record Peer(UUID uuid, PeerState state) implements EngineEvent {}
+	/** {@code verified}: the peer proved its Mojang account. */
+	record Peer(UUID uuid, PeerState state, boolean verified) implements EngineEvent {}
 
 	/** A peer, or the local player, started or stopped talking. */
 	record Talking(UUID uuid, boolean talking) implements EngineEvent {}
@@ -43,8 +47,8 @@ public sealed interface EngineEvent {
 			in.position(in.position() + len);
 			EngineEvent event = switch (type) {
 				case 1 -> new JoinRequest(payload.getInt(), utf8(payload));
-				case 2 -> new Rendezvous(RendezvousState.values()[payload.get()], payload.getLong());
-				case 3 -> new Peer(uuid(payload), PeerState.values()[payload.get()]);
+				case 2 -> new Rendezvous(RendezvousState.values()[payload.get()], payload.getLong(), payload.get() != 0);
+				case 3 -> new Peer(uuid(payload), PeerState.values()[payload.get()], payload.get() != 0);
 				case 4 -> new Talking(uuid(payload), payload.get() != 0);
 				case 5 -> new MicLevel(payload.getFloat());
 				case 6 -> new Error(utf8(payload));

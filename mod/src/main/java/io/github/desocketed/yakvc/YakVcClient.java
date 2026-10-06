@@ -1,5 +1,6 @@
 package io.github.desocketed.yakvc;
 
+import com.mojang.authlib.exceptions.AuthenticationException;
 import io.github.desocketed.yakvc.config.ClientConfig;
 import io.github.desocketed.yakvc.config.PlayerVolumes;
 import io.github.desocketed.yakvc.input.VoiceKeys;
@@ -81,10 +82,21 @@ public final class YakVcClient implements ClientModInitializer {
 			LOGGER.warn("[dev] null_output is set in client.toml: nothing is played");
 		}
 
-		SessionJoiner joiner = new SessionJoiner(serverId -> {
-			Minecraft minecraft = Minecraft.getInstance();
-			User user = minecraft.getUser();
-			minecraft.services().sessionService().joinServer(user.getProfileId(), user.getAccessToken(), serverId);
+		SessionJoiner joiner = new SessionJoiner(new SessionJoiner.Mojang() {
+			@Override
+			public void joinServer(String serverId) throws AuthenticationException {
+				Minecraft minecraft = Minecraft.getInstance();
+				User user = minecraft.getUser();
+				minecraft.services().sessionService().joinServer(user.getProfileId(), user.getAccessToken(), serverId);
+			}
+
+			@Override
+			public boolean hasAccount() {
+				Minecraft minecraft = Minecraft.getInstance();
+				User user = minecraft.getUser();
+				return SessionJoiner.isAccount(user.getProfileId(), user.getAccessToken(),
+						minecraft.isOfflineDeveloperMode());
+			}
 		});
 		// The game calls joinServer itself during the login phase; the configuration phase comes after it.
 		ClientLoginConnectionEvents.INIT.register((handler, minecraft) -> joiner.loginStarted());

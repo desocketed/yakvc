@@ -30,7 +30,12 @@ pub enum ClientMsg {
     Hello(Hello),
     /// `joinServer` succeeded for the last `Challenge`.
     Joined,
-    /// Start a challenge for a fresh ticket on the existing session.
+    /// The answer to a `Challenge` when `joinServer` can't be done (no
+    /// account, an offline launcher, Mojang down): asks for an unverified
+    /// ticket, which is only issued for an offline UUID.
+    Decline,
+    /// Start a challenge for a fresh ticket on the existing session. Also
+    /// replaces a challenge left unanswered by a failed `joinServer`.
     Renew,
     /// The client's addresses changed.
     UpdateAddr(EndpointAddr),
@@ -54,8 +59,9 @@ pub enum ServerMsg {
     Challenge(Nonce),
     /// Session registered (or ticket renewed).
     Registered(SignedTicket),
-    /// Mojang is rate-limiting the rendezvous or is unavailable; retry the
-    /// challenge later.
+    /// Mojang is rate-limiting the rendezvous or is unavailable, or a
+    /// renewal was refused; retry the challenge later. A registered session
+    /// stays up with its current ticket.
     RetryAfter {
         secs: u32,
     },
@@ -78,6 +84,9 @@ pub enum CloseCode {
     RateLimited = 3,
     LimitExceeded = 4,
     ShuttingDown = 5,
+    /// A verified session took over this session's unverified UUID, or holds
+    /// the UUID an unverified ticket was asked for.
+    Superseded = 6,
 }
 
 /// Most IP addresses an [`EndpointAddr`] may carry on the rendezvous. Real

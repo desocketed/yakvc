@@ -81,6 +81,10 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 			singleplayer.getConnection().waitForChunksRender();
 			context.waitFor(mc -> feeder.session() != null && feeder.session().active());
 			context.waitFor(mc -> feeder.rendezvous() == EngineEvent.RendezvousState.REGISTERED);
+			// Dev tickets count as verified, so the badge shows in the talking indicator and the settings.
+			if (!context.computeOnClient(mc -> feeder.verified())) {
+				throw new AssertionError("the dev rendezvous gave an unverified ticket");
+			}
 			UUID me = context.computeOnClient(mc -> mc.player.getUUID());
 			hudScreenshot(context, "hud-ready");
 

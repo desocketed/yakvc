@@ -30,7 +30,7 @@ import java.util.UUID;
  */
 public final class NativeBridge {
 	/** Must equal {@code YAKVC_ABI_VERSION} in {@code yakvc.h}. */
-	public static final int ABI_VERSION = 1;
+	public static final int ABI_VERSION = 2;
 
 	public static final int INPUT_PUSH_TO_TALK = 1;
 	public static final int INPUT_MUTED = 1 << 1;

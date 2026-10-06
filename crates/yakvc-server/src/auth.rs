@@ -5,7 +5,9 @@ use std::time::{Duration, Instant, SystemTime};
 
 use yakvc_shared::auth::{Nonce, session_server_id};
 use yakvc_shared::rdv::Hello;
-use yakvc_shared::{EndpointId, IssuerKey, SignedTicket, TicketBody, TicketVerifier, Uuid};
+use yakvc_shared::{
+    EndpointId, IssuerKey, SignedTicket, Ticket, TicketBody, TicketVerifier, Uuid, offline_uuid,
+};
 
 use crate::mojang::{MojangError, Profile, SessionServer};
 
@@ -58,24 +60,44 @@ impl Auth {
         self.mojang.is_none()
     }
 
-    /// Whether `cached` can register this client without a challenge: one of
+    /// `cached`, if it can register this client without a challenge: one of
     /// our tickets for this EndpointId, UUID and name, with more than
     /// [`RENEW_BEFORE`] left. While Mojang is rate-limiting us, any time left
     /// will do, since a fresh ticket can't be issued anyway.
-    pub fn can_reuse(&self, cached: &SignedTicket, hello: &Hello, client: EndpointId) -> bool {
+    pub fn reusable(
+        &self,
+        cached: &SignedTicket,
+        hello: &Hello,
+        client: EndpointId,
+    ) -> Option<Ticket> {
         let now = SystemTime::now();
-        let Ok(ticket) = self.verifier.verify(cached, now) else {
-            return false;
-        };
+        let ticket = self.verifier.verify(cached, now).ok()?;
         let fresh_enough = ticket.remaining(now) > RENEW_BEFORE || self.retry_after().is_some();
-        ticket.endpoint_id == client
+        let reusable = ticket.endpoint_id == client
             && ticket.uuid == hello.uuid
             && ticket.name == hello.name
-            && fresh_enough
+            && fresh_enough;
+        reusable.then_some(ticket)
     }
 
-    pub fn issue(&self, uuid: Uuid, name: String, client: EndpointId) -> SignedTicket {
-        let mut body = TicketBody::new(uuid, name, client, SystemTime::now(), self.lifetime);
+    /// Signs a ticket. `verified` says whether the client proved the account
+    /// to Mojang; dev tickets count as verified, so dev setups behave like
+    /// signed-in players.
+    pub fn issue(
+        &self,
+        uuid: Uuid,
+        name: String,
+        client: EndpointId,
+        verified: bool,
+    ) -> SignedTicket {
+        let mut body = TicketBody::new(
+            uuid,
+            name,
+            client,
+            verified,
+            SystemTime::now(),
+            self.lifetime,
+        );
         body.dev = self.is_dev();
         self.issuer.sign(&body)
     }
@@ -107,6 +129,13 @@ impl Auth {
             }
         }
     }
+}
+
+/// Whether Mojang's `profile` proves the claimed `uuid`: it is the account's
+/// own UUID, or the offline UUID of the account's name, which a signed-in
+/// player has on an offline-mode server.
+pub(crate) fn proves(profile: &Profile, uuid: Uuid) -> bool {
+    profile.uuid == uuid || offline_uuid(&profile.name) == uuid
 }
 
 fn secs_rounded_up(d: Duration) -> u32 {
@@ -155,33 +184,38 @@ mod tests {
     async fn reuses_only_matching_fresh_tickets() {
         let mojang = FakeMojang::start().await;
         let auth = auth(Some(&mojang), DAY);
-        let ticket = auth.issue(uuid_for("alice"), "alice".into(), client());
+        let ticket = auth.issue(uuid_for("alice"), "alice".into(), client(), true);
+        let reusable = |ticket: &SignedTicket, name, client| {
+            auth.reusable(ticket, &hello(name, None), client).is_some()
+        };
 
-        assert!(auth.can_reuse(&ticket, &hello("alice", None), client()));
+        assert!(reusable(&ticket, "alice", client()));
         // Different name (and so UUID), or different EndpointId.
-        assert!(!auth.can_reuse(&ticket, &hello("bob", None), client()));
-        assert!(!auth.can_reuse(&ticket, &hello("alice", None), rendezvous()));
+        assert!(!reusable(&ticket, "bob", client()));
+        assert!(!reusable(&ticket, "alice", rendezvous()));
         // Another issuer's ticket.
         let foreign = IssuerKey::generate().sign(&TicketBody::new(
             uuid_for("alice"),
             "alice".into(),
             client(),
+            true,
             SystemTime::now(),
             DAY,
         ));
-        assert!(!auth.can_reuse(&foreign, &hello("alice", None), client()));
+        assert!(!reusable(&foreign, "alice", client()));
     }
 
     #[tokio::test]
     async fn tickets_close_to_expiry_are_reused_only_while_mojang_is_blocked() {
         let mojang = FakeMojang::start().await;
         let auth = auth(Some(&mojang), Duration::from_secs(3600));
-        let ticket = auth.issue(uuid_for("alice"), "alice".into(), client());
-        assert!(!auth.can_reuse(&ticket, &hello("alice", None), client()));
+        let ticket = auth.issue(uuid_for("alice"), "alice".into(), client(), true);
+        let hello = hello("alice", None);
+        assert!(auth.reusable(&ticket, &hello, client()).is_none());
 
         mojang.script([response("429 Too Many Requests", "Retry-After: 30\r\n", "")]);
         auth.check_join("alice", &Nonce([0; 32]), client()).await;
-        assert!(auth.can_reuse(&ticket, &hello("alice", None), client()));
+        assert!(auth.reusable(&ticket, &hello, client()).is_some());
     }
 
     #[tokio::test]
@@ -189,12 +223,13 @@ mod tests {
         let mojang = FakeMojang::start().await;
         let prod = auth(Some(&mojang), DAY);
         let dev = Auth::new(IssuerKey::from_bytes(&[3; 32]), DAY, None, rendezvous());
-        let dev_ticket = dev.issue(uuid_for("alice"), "alice".into(), client());
-        assert!(!prod.can_reuse(&dev_ticket, &hello("alice", None), client()));
-        assert!(dev.can_reuse(&dev_ticket, &hello("alice", None), client()));
+        let dev_ticket = dev.issue(uuid_for("alice"), "alice".into(), client(), true);
+        let hello = hello("alice", None);
+        assert!(prod.reusable(&dev_ticket, &hello, client()).is_none());
+        assert!(dev.reusable(&dev_ticket, &hello, client()).is_some());
 
         let verifier = TicketVerifier::new([IssuerKey::from_bytes(&[3; 32]).id()]);
-        let real = prod.issue(uuid_for("alice"), "alice".into(), client());
+        let real = prod.issue(uuid_for("alice"), "alice".into(), client(), true);
         assert!(!verifier.verify(&real, SystemTime::now()).unwrap().dev);
         assert!(verifier.verify(&dev_ticket, SystemTime::now()).is_err());
     }
@@ -277,6 +312,18 @@ mod tests {
             JoinCheck::RetryAfter(10)
         );
         assert_eq!(auth.retry_after(), None);
+    }
+
+    #[test]
+    fn a_profile_proves_its_account_and_offline_uuid() {
+        let profile = Profile {
+            uuid: uuid_for("alice"),
+            name: "alice".into(),
+        };
+        assert!(proves(&profile, uuid_for("alice")));
+        assert!(proves(&profile, offline_uuid("alice")));
+        assert!(!proves(&profile, uuid_for("bob")));
+        assert!(!proves(&profile, offline_uuid("bob")));
     }
 
     #[test]
