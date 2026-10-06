@@ -480,7 +480,9 @@ impl Inner {
     /// connected.
     fn peer_available(self: &Arc<Self>, signed: SignedTicket, addr: EndpointAddr) {
         let remote = addr.id;
-        if remote == self.endpoint.id() {
+        // The rendezvous rejects oversize addresses, so one here comes from a
+        // misbehaving rendezvous; don't keep or dial it.
+        if remote == self.endpoint.id() || !yakvc_shared::rdv::addr_fits(&addr) {
             return;
         }
         let verifier = self.trust.lock().unwrap().verifier.clone();
