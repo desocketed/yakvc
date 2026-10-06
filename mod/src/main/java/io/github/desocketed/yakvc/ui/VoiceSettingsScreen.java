@@ -11,12 +11,14 @@ import java.util.List;
 import java.util.Objects;
 import net.minecraft.client.OptionInstance;
 import net.minecraft.client.Options;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.MultiLineTextWidget;
+import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.options.OptionsSubScreen;
 import net.minecraft.network.chat.Component;
 import org.jspecify.annotations.Nullable;
-
 /**
  * The settings in {@code client.toml} that players are expected to change. When the screen closes, changed values are
  * written into the file text, checked and applied by the engine with {@code yakvc_update_config}, and only then saved.
@@ -32,8 +34,8 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	private final OptionInstance<String> activation;
 	private final OptionInstance<Integer> range;
 	private final OptionInstance<Integer> bitrateKbps;
-	private final OptionInstance<String> inputDevice;
-	private final OptionInstance<String> outputDevice;
+	private final Dropdown inputDevice;
+	private final Dropdown outputDevice;
 	private final OptionInstance<Boolean> relayOnly;
 	private final OptionInstance<Boolean> respectChatRestrictions;
 	private final OptionInstance<Boolean> muteBlockedPlayers;
@@ -75,16 +77,14 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	}
 
 	/** A device picker over the listed names, plus the configured one if it is unplugged right now. */
-	private static OptionInstance<String> device(String caption, List<String> names, @Nullable String current,
+	private static Dropdown device(String caption, List<String> names, @Nullable String current,
 			String defaultLabel) {
 		List<String> values = new ArrayList<>();
 		values.add(DEFAULT_DEVICE);
 		values.addAll(names);
 		if (current != null && !values.contains(current)) values.add(current);
-		return new OptionInstance<>(caption, OptionInstance.noTooltip(),
-				(label, value) -> value.isEmpty() ? Component.translatable(defaultLabel) : Component.literal(value),
-				new OptionInstance.Enum<>(values, Codec.STRING), current == null ? DEFAULT_DEVICE : current,
-				OptionInstance.NO_ACTION);
+		return new Dropdown(Component.translatable(caption), values, current == null ? DEFAULT_DEVICE : current,
+				value -> value.isEmpty() ? Component.translatable(defaultLabel) : Component.literal(value));
 	}
 
 	@Override
@@ -92,6 +92,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		list.addSmall(activation, range);
 		list.addSmall(bitrateKbps);
 		list.addBig(inputDevice);
+		list.addBig(new MicLevelMeter(feeder::micLevelDb, initial.vadThresholdDb()));
 		list.addBig(outputDevice);
 		list.addHeader(Component.translatable("yakvc.settings.privacy"));
 		list.addBig(new MultiLineTextWidget(Component.translatable("yakvc.settings.ip_note"), font)
@@ -110,6 +111,39 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		}
 		return Component.translatable(feeder.verified() ? "yakvc.settings.account.verified"
 				: "yakvc.settings.account.unverified");
+	}
+
+	// The open device list lies over the options list, so it is drawn last and gets input first.
+
+	@Override
+	public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float a) {
+		super.extractRenderState(graphics, mouseX, mouseY, a);
+		inputDevice.extractList(graphics, mouseX, mouseY);
+		outputDevice.extractList(graphics, mouseX, mouseY);
+	}
+
+	@Override
+	public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+		return inputDevice.listClicked(event.x(), event.y(), height)
+				|| outputDevice.listClicked(event.x(), event.y(), height)
+				|| super.mouseClicked(event, doubleClick);
+	}
+
+	@Override
+	public boolean mouseScrolled(double x, double y, double scrollX, double scrollY) {
+		return inputDevice.listScrolled(scrollY) || outputDevice.listScrolled(scrollY)
+				|| super.mouseScrolled(x, y, scrollX, scrollY);
+	}
+
+	@Override
+	public boolean keyPressed(KeyEvent event) {
+		// Escape closes an open list rather than the screen.
+		if (event.isEscape() && (inputDevice.isOpen() || outputDevice.isOpen())) {
+			inputDevice.close();
+			outputDevice.close();
+			return true;
+		}
+		return super.keyPressed(event);
 	}
 
 	/** Called whenever the screen goes away, after slider values have been applied. */
