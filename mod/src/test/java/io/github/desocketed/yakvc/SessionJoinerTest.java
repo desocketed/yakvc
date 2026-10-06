@@ -7,9 +7,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.mojang.authlib.exceptions.AuthenticationUnavailableException;
 import com.mojang.authlib.exceptions.InvalidCredentialsException;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 
 class SessionJoinerTest {
@@ -64,6 +69,51 @@ class SessionJoinerTest {
 	}
 
 	@Test
+	void aLoginWaitsForAJoinInFlight() throws Exception {
+		CountDownLatch joinStarted = new CountDownLatch(1);
+		CountDownLatch releaseJoin = new CountDownLatch(1);
+		List<String> order = Collections.synchronizedList(new ArrayList<>());
+		SessionJoiner joiner = new SessionJoiner(serverId -> {
+			joinStarted.countDown();
+			await(releaseJoin);
+			order.add("voice join");
+		});
+		CompletableFuture<Boolean> join = joiner.joinAsync("1");
+		assertTrue(joinStarted.await(5, TimeUnit.SECONDS));
+
+		Thread login = Thread.ofVirtual().start(() -> {
+			joiner.loginStarted();
+			order.add("game login");
+		});
+		login.join(200);
+		assertTrue(login.isAlive(), "the login must wait for the voice join");
+		releaseJoin.countDown();
+		login.join(5_000);
+		assertTrue(join.get());
+		assertEquals(List.of("voice join", "game login"), order);
+	}
+
+	@Test
+	void aLoginWaitsOnlyBriefly() throws Exception {
+		CountDownLatch joinStarted = new CountDownLatch(1);
+		CountDownLatch releaseJoin = new CountDownLatch(1);
+		SessionJoiner joiner = new SessionJoiner(serverId -> {
+			joinStarted.countDown();
+			await(releaseJoin);
+		}, Duration.ofMillis(100));
+		CompletableFuture<Boolean> join = joiner.joinAsync("1");
+		assertTrue(joinStarted.await(5, TimeUnit.SECONDS));
+
+		long start = System.nanoTime();
+		joiner.loginStarted();
+		long waited = System.nanoTime() - start;
+		assertTrue(waited >= Duration.ofMillis(100).toNanos(), "waited " + waited + " ns");
+		assertTrue(waited < Duration.ofSeconds(4).toNanos(), "waited " + waited + " ns");
+		releaseJoin.countDown();
+		assertTrue(join.get());
+	}
+
+	@Test
 	void mojangErrorsMeanFailure() throws Exception {
 		SessionJoiner unreachable = new SessionJoiner(serverId -> {
 			throw new AuthenticationUnavailableException("Cannot contact authentication server");
@@ -79,5 +129,14 @@ class SessionJoinerTest {
 			throw new IllegalStateException("bug");
 		});
 		assertFalse(broken.joinAsync("1").get());
+	}
+
+	/** {@code joinServer} can't throw {@code InterruptedException}. */
+	private static void await(CountDownLatch latch) {
+		try {
+			latch.await();
+		} catch (InterruptedException e) {
+			throw new IllegalStateException(e);
+		}
 	}
 }

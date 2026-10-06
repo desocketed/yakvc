@@ -1,7 +1,9 @@
-//! Token-bucket rate limits.
+//! Token-bucket rate limits and caps on concurrent connections.
 
 use std::collections::HashMap;
 use std::hash::Hash;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 /// Allows `capacity` events at once, refilling to `capacity` over `period`.
@@ -33,6 +35,14 @@ impl TokenBucket {
         } else {
             false
         }
+    }
+
+    /// Whole seconds until the next token, at least one.
+    pub fn secs_to_next_token(&mut self, now: Instant) -> u32 {
+        self.refill(now);
+        let secs = ((1.0 - self.tokens) / self.per_sec).ceil();
+        // `as` saturates, so even an empty bucket refilling over years fits.
+        (secs as u32).max(1)
     }
 
     fn is_full(&mut self, now: Instant) -> bool {
@@ -79,9 +89,72 @@ impl<K: Hash + Eq> RateLimiter<K> {
     }
 }
 
+/// A cap on how many of something may exist at once.
+#[derive(Debug)]
+pub(crate) struct Slots {
+    max: usize,
+    used: Arc<AtomicUsize>,
+}
+
+/// One taken slot, given back when dropped.
+#[derive(Debug)]
+pub(crate) struct Slot(Arc<AtomicUsize>);
+
+impl Slots {
+    pub fn new(max: usize) -> Self {
+        Slots {
+            max,
+            used: Arc::default(),
+        }
+    }
+
+    pub fn take(&self) -> Option<Slot> {
+        self.used
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
+                (used < self.max).then_some(used + 1)
+            })
+            .ok()?;
+        Some(Slot(self.used.clone()))
+    }
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slots_are_given_back_when_dropped() {
+        let slots = Slots::new(2);
+        let first = slots.take().unwrap();
+        let _second = slots.take().unwrap();
+        assert!(slots.take().is_none());
+        drop(first);
+        assert!(slots.take().is_some());
+    }
+
+    #[test]
+    fn time_to_the_next_token() {
+        let start = Instant::now();
+        let mut bucket = TokenBucket::new(6, MINUTE, start);
+        for _ in 0..6 {
+            bucket.take(start);
+        }
+        // One token every 10 s, rounded up to whole seconds.
+        assert_eq!(bucket.secs_to_next_token(start), 10);
+        assert_eq!(
+            bucket.secs_to_next_token(start + Duration::from_millis(500)),
+            10
+        );
+        assert_eq!(bucket.secs_to_next_token(start + Duration::from_secs(9)), 1);
+        // With a token waiting it is still at least one second.
+        assert_eq!(bucket.secs_to_next_token(start + MINUTE), 1);
+    }
 
     const MINUTE: Duration = Duration::from_secs(60);
 

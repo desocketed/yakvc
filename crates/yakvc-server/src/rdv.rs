@@ -16,12 +16,12 @@ use std::time::{Duration, Instant};
 use iroh::endpoint::{Connection, Incoming, IncomingAddr, RecvStream, SendStream};
 use tokio::sync::mpsc;
 use yakvc_shared::auth::Nonce;
-use yakvc_shared::rdv::{ClientMsg, CloseCode, Hello, ServerMsg};
+use yakvc_shared::rdv::{ClientMsg, CloseCode, Hello, ServerMsg, addr_fits};
 use yakvc_shared::wire::{WireError, read_msg, write_msg};
 use yakvc_shared::{EndpointId, SignedTicket, Uuid, is_offline_uuid};
 
 use crate::auth::{JoinCheck, proves};
-use crate::limits::TokenBucket;
+use crate::limits::{Slot, TokenBucket};
 use crate::server::Shared;
 use crate::sessions::close;
 
@@ -45,6 +45,12 @@ pub(crate) async fn serve(shared: Arc<Shared>, incoming: Incoming) {
         // Through the relay the client's IP is unknown.
         _ => None,
     };
+    // Refused before the handshake, so a flood of connections that never
+    // register costs as little as possible.
+    let Some(unregistered) = shared.unregistered.take() else {
+        incoming.refuse();
+        return;
+    };
     let Ok(conn) = incoming.await else {
         return;
     };
@@ -58,7 +64,7 @@ pub(crate) async fn serve(shared: Arc<Shared>, incoming: Incoming) {
     };
 
     let (outbox, outbox_rx) = mpsc::unbounded_channel();
-    let writer = tokio::spawn(write_all(send, outbox_rx));
+    let writer = tokio::spawn(write_all(conn.clone(), send, outbox_rx));
     let mut client = Client {
         shared: shared.clone(),
         conn: conn.clone(),
@@ -70,6 +76,7 @@ pub(crate) async fn serve(shared: Arc<Shared>, incoming: Incoming) {
         hello: None,
         challenge: None,
         pair_updates: None,
+        unregistered: Some(unregistered),
     };
     let code = match client.run().await {
         Ok(()) => CloseCode::Normal,
@@ -89,9 +96,16 @@ pub(crate) async fn serve(shared: Arc<Shared>, incoming: Incoming) {
 
 /// Writes queued messages until every sender is gone, then finishes the
 /// stream and waits for the client to receive it.
-async fn write_all(mut send: SendStream, mut outbox: mpsc::UnboundedReceiver<ServerMsg>) {
+async fn write_all(
+    conn: Connection,
+    mut send: SendStream,
+    mut outbox: mpsc::UnboundedReceiver<ServerMsg>,
+) {
     while let Some(msg) = outbox.recv().await {
         if write_msg(&mut send, &msg).await.is_err() {
+            // A client that misses a message is out of step with its
+            // session; closing makes it reconnect and start over.
+            close(&conn, CloseCode::Normal, "failed to send");
             return;
         }
     }
@@ -113,6 +127,8 @@ struct Client {
     challenge: Option<Nonce>,
     /// Present once registered.
     pair_updates: Option<TokenBucket>,
+    /// Held until registered, against `Limits::max_unregistered`.
+    unregistered: Option<Slot>,
 }
 
 impl Client {
@@ -148,7 +164,7 @@ impl Client {
             ClientMsg::Renew => self.on_renew(),
             ClientMsg::UpdateAddr(addr) => {
                 self.check_update()?;
-                if addr.id != self.id {
+                if addr.id != self.id || !addr_fits(&addr) {
                     return Err(CloseCode::ProtocolError);
                 }
                 self.shared.sessions.update_addr(self.id, addr);
@@ -181,7 +197,9 @@ impl Client {
 
     fn on_hello(&mut self, hello: Hello) -> Result<(), CloseCode> {
         let valid_name = !hello.name.is_empty() && hello.name.len() <= MAX_NAME_LEN;
-        if self.hello.is_some() || hello.addr.id != self.id || !valid_name {
+        // The address is forwarded to every match, so it must stay small.
+        let valid_addr = hello.addr.id == self.id && addr_fits(&hello.addr);
+        if self.hello.is_some() || !valid_addr || !valid_name {
             return Err(CloseCode::ProtocolError);
         }
         let cached = hello
@@ -238,6 +256,9 @@ impl Client {
         // `Decline` (which must answer one) is counted too.
         if let Err(code) = self.check_auth_rate() {
             return self.refuse(code);
+        }
+        if let Some(secs) = self.check_challenge_budget() {
+            return self.retry_later(secs);
         }
         let nonce = Nonce::random();
         self.challenge = Some(nonce);
@@ -353,6 +374,7 @@ impl Client {
             Duration::from_secs(1),
             Instant::now(),
         ));
+        self.unregistered = None;
         self.send(ServerMsg::Registered(ticket));
         true
     }
@@ -390,6 +412,26 @@ impl Client {
             Ok(())
         } else {
             Err(CloseCode::RateLimited)
+        }
+    }
+
+    /// Takes a challenge from the server-wide budgets, or returns the seconds
+    /// to wait. Taken when the challenge is issued rather than at `Joined`,
+    /// so a refused player hasn't called `joinServer` for nothing.
+    fn check_challenge_budget(&self) -> Option<u32> {
+        let now = Instant::now();
+        let shared = &self.shared;
+        if self.ip.is_none() {
+            let mut bucket = shared.unknown_ip_challenges.lock().unwrap();
+            if !bucket.take(now) {
+                return Some(bucket.secs_to_next_token(now));
+            }
+        }
+        let mut bucket = shared.mojang_checks.lock().unwrap();
+        if bucket.take(now) {
+            None
+        } else {
+            Some(bucket.secs_to_next_token(now))
         }
     }
 

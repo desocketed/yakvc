@@ -117,37 +117,53 @@ public final class GameStateFeeder {
 		session = null;
 	}
 
+	/**
+	 * Every step runs on its own, so one that fails (a value the engine rejects, a bug) can't stop the rest: events
+	 * are always drained and joins always answered, or the event queue grows and the rendezvous never signs in.
+	 */
 	public void tick(Minecraft minecraft) {
+		step(() -> feedGame(minecraft));
+		step(this::drainEvents);
+		step(this::answerJoins);
+	}
+
+	private void feedGame(Minecraft minecraft) {
+		keys.tick();
+		if (keys.menuPressed() && minecraft.gui.screen() == null) {
+			minecraft.gui.setScreen(new VoiceMenuScreen(null, this));
+		}
+		VoiceSession session = this.session;
+		if (session != null) session.tick();
+		else talking.clear();
+		LocalPlayer player = minecraft.player;
+		boolean active = session != null && session.active() && player != null && minecraft.level != null;
+
+		Set<UUID> players = active ? new HashSet<>(session.connection.getOnlinePlayerIds()) : Set.of();
+		refreshBlocked(minecraft, players);
+		step(() -> feedTabList(players));
+		step(() -> {
+			if (active) feedWorld(minecraft, player, session.connection);
+			else clearWorld();
+		});
+		feedPeerAudio(players);
+		step(() -> feedInput(active ? inputFlags(player) : 0));
+		step(() -> feedVolume(minecraft.options.getFinalSoundSourceVolume(SoundSource.VOICE)));
+		step(() -> feedDevice(minecraft.options.soundDevice().get()));
+	}
+
+	/**
+	 * Runs one step of the tick. A poisoned engine is shut down as before; any other failure is logged and the tick
+	 * goes on. The feed methods record a value before sending it, so a value the engine rejected isn't sent again
+	 * every tick, only once it changes.
+	 */
+	private void step(Runnable step) {
 		if (closed) return;
 		try {
-			keys.tick();
-			if (keys.menuPressed() && minecraft.gui.screen() == null) {
-				minecraft.gui.setScreen(new VoiceMenuScreen(null, this));
-			}
-			VoiceSession session = this.session;
-			if (session != null) session.tick();
-			else talking.clear();
-			LocalPlayer player = minecraft.player;
-			boolean active = session != null && session.active() && player != null && minecraft.level != null;
-
-			Set<UUID> players = active ? new HashSet<>(session.connection.getOnlinePlayerIds()) : Set.of();
-			refreshBlocked(minecraft, players);
-			feedTabList(players);
-			if (active) {
-				feedWorld(minecraft, player, session.connection);
-			} else if (!worldEmpty) {
-				bridge.pushWorld(engine, new double[5], new byte[0], new double[0]);
-				tracked = List.of();
-				worldEmpty = true;
-			}
-			feedPeerAudio(players);
-			feedInput(active ? inputFlags(player) : 0);
-			feedVolume(minecraft.options.getFinalSoundSourceVolume(SoundSource.VOICE));
-			feedDevice(minecraft.options.soundDevice().get());
-			drainEvents();
-			answerJoins();
+			step.run();
 		} catch (YakVcException e) {
 			fail(e);
+		} catch (RuntimeException e) {
+			YakVcClient.LOGGER.error("Voice tick step failed", e);
 		}
 	}
 
@@ -206,8 +222,15 @@ public final class GameStateFeeder {
 
 	private void feedTabList(Set<UUID> players) {
 		if (players.equals(tabList)) return;
-		bridge.setTabList(engine, players);
 		tabList = players;
+		bridge.setTabList(engine, players);
+	}
+
+	private void clearWorld() {
+		if (worldEmpty) return;
+		tracked = List.of();
+		worldEmpty = true;
+		bridge.pushWorld(engine, new double[5], new byte[0], new double[0]);
 	}
 
 	/**
@@ -238,19 +261,19 @@ public final class GameStateFeeder {
 			xyz[3 * i + 1] = positions.get(i).y;
 			xyz[3 * i + 2] = positions.get(i).z;
 		}
-		bridge.pushWorld(engine, listener, NativeBridge.uuidBytes(uuids), xyz);
 		tracked = uuids;
 		worldEmpty = false;
+		bridge.pushWorld(engine, listener, NativeBridge.uuidBytes(uuids), xyz);
 	}
 
-	/** Each player's saved volume and mute, with blocked players muted. */
+	/** Each player's saved volume and mute, with blocked players muted. One player's failure doesn't skip the rest. */
 	private void feedPeerAudio(Set<UUID> players) {
 		for (UUID uuid : players) {
 			PlayerVolumes.Setting saved = volumes.get(uuid);
 			PlayerVolumes.Setting wanted = new PlayerVolumes.Setting(saved.volume(), saved.muted() || blocked(uuid));
 			if (wanted.equals(peerAudio.getOrDefault(uuid, PlayerVolumes.DEFAULT))) continue;
-			bridge.setPeerVolume(engine, uuid, wanted.volume(), wanted.muted());
 			peerAudio.put(uuid, wanted);
+			step(() -> bridge.setPeerVolume(engine, uuid, wanted.volume(), wanted.muted()));
 		}
 	}
 
@@ -265,28 +288,28 @@ public final class GameStateFeeder {
 
 	private void feedInput(int flags) {
 		if (flags == inputFlags) return;
-		bridge.setInput(engine, flags);
 		inputFlags = flags;
+		bridge.setInput(engine, flags);
 	}
 
 	private void feedVolume(float volume) {
 		volume = Math.clamp(volume, 0f, 1f);
 		if (volume == gameVolume) return;
-		bridge.setGameVolume(engine, volume);
 		gameVolume = volume;
+		bridge.setGameVolume(engine, volume);
 	}
 
 	private void feedDevice(String device) {
 		if (device.equals(gameDevice)) return;
-		bridge.setGameDevice(engine, device);
 		gameDevice = device;
+		bridge.setGameDevice(engine, device);
 	}
 
 	private void drainEvents() {
 		int written;
-		while ((written = bridge.pollEvents(engine, eventBuffer)) > 0) {
+		while (!closed && (written = bridge.pollEvents(engine, eventBuffer)) > 0) {
 			for (EngineEvent event : EngineEvent.decode(eventBuffer, written)) {
-				handle(event);
+				step(() -> handle(event));
 			}
 		}
 	}
@@ -338,7 +361,7 @@ public final class GameStateFeeder {
 			PendingJoin join = joins.next();
 			if (!join.ok().isDone()) continue;
 			joins.remove();
-			bridge.completeJoin(engine, join.id(), join.ok().join());
+			step(() -> bridge.completeJoin(engine, join.id(), join.ok().join()));
 		}
 	}
 
