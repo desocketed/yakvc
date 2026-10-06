@@ -16,6 +16,15 @@ use crate::ticket::SignedTicket;
 
 pub const ALPN: &[u8] = b"yakvc/rdv/1";
 
+/// Most pair tokens a session may hold; more closes it with
+/// [`CloseCode::LimitExceeded`].
+pub const MAX_PAIRS: usize = 2048;
+
+/// Session updates (`SetPairs`, `AddPairs`, `RemovePairs` and `UpdateAddr`)
+/// a client may send per second, in bursts of up to as many; more closes it
+/// with [`CloseCode::RateLimited`].
+pub const PAIR_UPDATES_PER_SEC: u32 = 10;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClientMsg {
     Hello(Hello),
