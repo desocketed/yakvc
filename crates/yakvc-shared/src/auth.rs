@@ -43,10 +43,12 @@ pub fn offline_uuid(name: &str) -> Uuid {
     uuid::Builder::from_md5_bytes(hash.into()).into_uuid()
 }
 
-/// Whether `uuid` is an offline UUID (version 3). Online-mode servers only
-/// use account UUIDs, which are version 4.
-pub fn is_offline_uuid(uuid: Uuid) -> bool {
-    uuid.get_version_num() == 3
+/// Whether `uuid` is the offline UUID of `name`. Online-mode servers only use
+/// account UUIDs (version 4), which never match. Checking the name, not just
+/// the version, stops an unverified ticket from pairing someone's offline
+/// UUID with another name.
+pub fn is_offline_player(uuid: Uuid, name: &str) -> bool {
+    uuid == offline_uuid(name)
 }
 
 /// Minecraft prints a SHA-1 as Java's `new BigInteger(hash).toString(16)`:
@@ -137,9 +139,10 @@ mod tests {
         for (name, expected) in JAVA_OFFLINE_UUIDS {
             let uuid = offline_uuid(name);
             assert_eq!(uuid.to_string(), expected, "{name}");
-            assert!(is_offline_uuid(uuid));
+            assert!(is_offline_player(uuid, name));
         }
-        assert!(!is_offline_uuid(Uuid::new_v4()));
+        assert!(!is_offline_player(offline_uuid("alice"), "Alice"));
+        assert!(!is_offline_player(Uuid::new_v4(), "alice"));
     }
 
     #[test]

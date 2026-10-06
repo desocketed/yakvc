@@ -15,7 +15,7 @@ use iroh_base::{EndpointId, PublicKey, SecretKey, Signature};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::auth::is_offline_uuid;
+use crate::auth::is_offline_player;
 use crate::wire::WireError;
 
 /// Domain tag prepended to the body bytes before signing. v2 added
@@ -43,7 +43,7 @@ pub struct TicketBody {
     pub issued_at: u64,
     pub expires_at: u64,
     /// The holder proved the account to Mojang. Without that proof a ticket
-    /// is only valid for an offline UUID (see [`is_offline_uuid`]).
+    /// is only valid for the offline UUID of its name (see [`is_offline_player`]).
     pub verified: bool,
     /// Issued by a rendezvous running `--insecure-dev-auth`; rejected unless
     /// the verifier accepts dev tickets.
@@ -86,7 +86,7 @@ pub enum TicketError {
     Expired,
     #[error("dev tickets are not accepted")]
     DevTicket,
-    #[error("unverified ticket for an account UUID")]
+    #[error("unverified ticket for an account UUID or another name")]
     UnverifiedAccount,
     #[error("only verified players are accepted")]
     Unverified,
@@ -257,7 +257,7 @@ impl TicketVerifier {
         if body.dev && !self.accept_dev {
             return Err(TicketError::DevTicket);
         }
-        if !body.verified && !is_offline_uuid(body.uuid) {
+        if !body.verified && !is_offline_player(body.uuid, &body.name) {
             return Err(TicketError::UnverifiedAccount);
         }
         if !body.verified && self.verified_only {
@@ -437,6 +437,15 @@ mod tests {
         };
         assert!(matches!(
             verifier.verify(&key.sign(&account), now()),
+            Err(TicketError::UnverifiedAccount)
+        ));
+        // Alice's offline UUID under another name.
+        let renamed = TicketBody {
+            name: "mallory".into(),
+            ..offline_body()
+        };
+        assert!(matches!(
+            verifier.verify(&key.sign(&renamed), now()),
             Err(TicketError::UnverifiedAccount)
         ));
         // A verified ticket may name any UUID, an offline one included.
