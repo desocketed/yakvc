@@ -22,6 +22,7 @@ use std::sync::{Arc, Mutex, Weak};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+use tokio::sync::mpsc;
 use yakvc_audio::{FrameSource, NullSink, Recording, SilenceSource, ToneSource, WavSource};
 use yakvc_client::sim::Impairment;
 use yakvc_client::{
@@ -78,7 +79,8 @@ pub struct ClientBuilder<'a> {
 pub struct TestClient {
     uuid: Uuid,
     engine: Arc<Engine>,
-    events: Events,
+    /// The engine's events, less the `JoinRequest`s [`answer_joins`] took.
+    events: mpsc::UnboundedReceiver<Event>,
     recording: Recording,
     players: Players,
     /// The last input sent to the engine, so [`TestClient::talk`] and
@@ -347,6 +349,7 @@ impl<'a> ClientBuilder<'a> {
         engine.set_identity(uuid, &name);
 
         let engine = Arc::new(engine);
+        let events = answer_joins(&engine, events);
         self.net.players.lock().expect("players lock").push(Player {
             uuid,
             pos: Vec3::default(),
@@ -417,19 +420,14 @@ impl TestClient {
             .and_then(|p| p.stream)
     }
 
-    /// Waits for an event matching `pred`, discarding others. A
-    /// `JoinRequest` on the way is answered with a failure: test players
-    /// have no Mojang account.
+    /// Waits for an event matching `pred`, discarding others.
     pub async fn wait_for(
         &mut self,
         what: &str,
         mut pred: impl FnMut(&Event) -> bool,
     ) -> Result<Event, Timeout> {
         let found = tokio::time::timeout(DEFAULT_TIMEOUT, async {
-            while let Some(event) = self.events.next().await {
-                if let Event::JoinRequest { id, .. } = event {
-                    self.engine.complete_join(id, false);
-                }
+            while let Some(event) = self.events.recv().await {
                 if pred(&event) {
                     return Some(event);
                 }
@@ -477,6 +475,29 @@ impl TestClient {
         change(&mut input);
         self.engine.set_input(*input);
     }
+}
+
+/// Answers every `JoinRequest` with a failure as soon as it arrives (test
+/// players have no Mojang account) and passes the other events on. Answering
+/// only while a test waits would leave a client that isn't waiting unable to
+/// renew its ticket, and its links would drop when the ticket ran out.
+fn answer_joins(engine: &Arc<Engine>, mut events: Events) -> mpsc::UnboundedReceiver<Event> {
+    let (tx, rx) = mpsc::unbounded_channel();
+    // Weak, so dropping the client still shuts the engine down.
+    let engine = Arc::downgrade(engine);
+    tokio::spawn(async move {
+        while let Some(event) = events.next().await {
+            if let Event::JoinRequest { id, .. } = event {
+                match engine.upgrade() {
+                    Some(engine) => engine.complete_join(id, false),
+                    None => break,
+                }
+            } else if tx.send(event).is_err() {
+                break;
+            }
+        }
+    });
+    rx
 }
 
 /// Makes every client in `clients` see every other one.
