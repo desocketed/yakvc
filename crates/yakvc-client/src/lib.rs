@@ -26,4 +26,5 @@ pub use crate::config::{
 };
 pub use crate::engine::{Engine, EngineBuilder, NetReport, PeerAudio, PeerInfo, StartError};
 pub use crate::event::{Event, Events, JoinId, PeerState, RendezvousState};
+pub use crate::voice::AudioStats;
 pub use crate::world::{Input, Pose, Vec3, World};

@@ -30,7 +30,7 @@ import java.util.UUID;
  */
 public final class NativeBridge {
 	/** Must equal {@code YAKVC_ABI_VERSION} in {@code yakvc.h}. */
-	public static final int ABI_VERSION = 2;
+	public static final int ABI_VERSION = 3;
 
 	public static final int INPUT_PUSH_TO_TALK = 1;
 	public static final int INPUT_MUTED = 1 << 1;
@@ -57,6 +57,7 @@ public final class NativeBridge {
 	private final MethodHandle pollEvents;
 	private final MethodHandle updateConfig;
 	private final MethodHandle listDevices;
+	private final MethodHandle stats;
 	private final MethodHandle lastError;
 
 	public NativeBridge(SymbolLookup library) {
@@ -87,6 +88,8 @@ public final class NativeBridge {
 		updateConfig = linker.downcallHandle(find(library, "yakvc_update_config"),
 				FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, SIZE_T));
 		listDevices = linker.downcallHandle(find(library, "yakvc_list_devices"),
+				FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, SIZE_T, ADDRESS));
+		stats = linker.downcallHandle(find(library, "yakvc_stats"),
 				FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, SIZE_T, ADDRESS));
 		lastError = linker.downcallHandle(find(library, "yakvc_last_error"),
 				FunctionDescriptor.of(SIZE_T, ADDRESS, SIZE_T));
@@ -190,12 +193,22 @@ public final class NativeBridge {
 
 	/** Returns the audio devices as JSON. */
 	public String listDevices(MemorySegment engine) {
+		return readJson(listDevices, engine);
+	}
+
+	/** Returns the diagnostics snapshot as JSON; {@code yakvc_stats} in {@code yakvc.h} lists the fields. */
+	public String stats(MemorySegment engine) {
+		return readJson(stats, engine);
+	}
+
+	/** Calls a function that writes JSON with the {@code (buf, cap, needed)} protocol, growing the buffer as asked. */
+	private String readJson(MethodHandle handle, MemorySegment engine) {
 		try (Arena arena = Arena.ofConfined()) {
 			MemorySegment needed = arena.allocate(SIZE_T);
 			long cap = 4096;
 			while (true) {
 				MemorySegment buf = arena.allocate(cap);
-				check((int) invoke(listDevices, engine, buf, cap, needed));
+				check((int) invoke(handle, engine, buf, cap, needed));
 				long length = needed.get(SIZE_T, 0);
 				if (length <= cap) {
 					return new String(buf.asSlice(0, length).toArray(JAVA_BYTE), StandardCharsets.UTF_8);
