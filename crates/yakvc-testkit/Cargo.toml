@@ -9,7 +9,7 @@ publish.workspace = true
 
 [dependencies]
 thiserror.workspace = true
-tokio = { workspace = true, features = ["time"] }
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
 yakvc-audio.workspace = true
 yakvc-client = { workspace = true, features = ["sim"] }
 yakvc-server.workspace = true

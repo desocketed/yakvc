@@ -198,7 +198,11 @@ impl Ticket {
 
     /// Time left before expiry, or zero if already expired.
     pub fn remaining(&self, now: SystemTime) -> Duration {
-        Duration::from_secs(self.body.expires_at.saturating_sub(unix_secs(now)))
+        // Exact rather than in whole seconds: rounding `now` down would
+        // promise up to a second more than is left, and a renewal scheduled
+        // in that second would come too late.
+        let expires = SystemTime::UNIX_EPOCH + Duration::from_secs(self.body.expires_at);
+        expires.duration_since(now).unwrap_or_default()
     }
 }
 
@@ -337,6 +341,11 @@ mod tests {
         assert_eq!(ticket.name, "alice");
         assert_eq!(ticket.signed().to_bytes(), signed.to_bytes());
         assert_eq!(ticket.remaining(now()), 24 * HOUR);
+        let half_second = Duration::from_millis(500);
+        assert_eq!(
+            ticket.remaining(now() + half_second),
+            24 * HOUR - half_second
+        );
         assert_eq!(ticket.remaining(now() + 30 * HOUR), Duration::ZERO);
     }
 
