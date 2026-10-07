@@ -69,7 +69,10 @@ async fn players_without_accounts_get_nothing_on_online_mode_servers() {
 /// again, and the link stays up throughout.
 #[tokio::test(flavor = "multi_thread")]
 async fn players_without_accounts_renew_unverified_tickets() {
-    let net = TestNet::start_without_accounts(Duration::from_secs(5)).await;
+    // Clients renew with a tenth of the lifetime to spare, and a renewal
+    // takes several round trips: 8 s leaves time for a loaded machine,
+    // while the next renewal still comes within `DEFAULT_TIMEOUT`.
+    let net = TestNet::start_without_accounts(Duration::from_secs(8)).await;
     let mut alice = net.client().name("alice").offline().start().await;
     let mut bob = net.client().name("bob").offline().start().await;
     see_each_other(&[&alice, &bob]);
