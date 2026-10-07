@@ -57,8 +57,8 @@ impl From<EndpointAddr> for RendezvousConfig {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AudioConfig {
-    /// A device id from [`Engine::devices`](crate::Engine::devices); a device
-    /// name also works. `None` uses the system default.
+    /// A device id from [`Engine::devices`](crate::Engine::devices). `None`
+    /// uses the system default.
     pub input_device: Option<String>,
     /// A device id, as for `input_device`. `None` uses the device closest to the game's (see
     /// [`Engine::set_game_device`](crate::Engine::set_game_device)), then the

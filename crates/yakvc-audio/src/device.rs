@@ -46,8 +46,7 @@ pub struct DeviceInfo {
 pub enum DeviceChoice {
     #[default]
     Default,
-    /// The device with this [`DeviceInfo::id`]. Configs written before ids
-    /// hold a name instead, so a name matches too.
+    /// The device with this [`DeviceInfo::id`].
     Id(String),
     /// The device whose name best matches, else the default. Used to follow
     /// Minecraft's selected sound device, whose name differs from cpal's.
@@ -139,7 +138,6 @@ impl Direction {
                 let index = devices
                     .iter()
                     .position(|d| d.id == *wanted)
-                    .or_else(|| devices.iter().position(|d| d.name == *wanted))
                     .ok_or_else(|| no_device(wanted))?;
                 Ok(devices.swap_remove(index).device)
             }
