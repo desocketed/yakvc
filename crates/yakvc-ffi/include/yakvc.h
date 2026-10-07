@@ -11,8 +11,9 @@
  * Version of this C ABI. Java refuses to use a library whose version differs
  * from the one it was built against. Bump on any incompatible change.
  * 2: verified flags in the rendezvous and peer state events.
+ * 3: `yakvc_stats`.
  */
-#define YAKVC_ABI_VERSION 2
+#define YAKVC_ABI_VERSION 3
 
 #define YAKVC_OK 0
 
@@ -234,6 +235,25 @@ int32_t yakvc_update_config(struct YakVcEngine *engine, const uint8_t *toml, siz
  * must be writable.
  */
 int32_t yakvc_list_devices(struct YakVcEngine *engine, uint8_t *buf, size_t cap, size_t *needed);
+
+/**
+ * Writes a diagnostics snapshot as JSON, for the in-game debug overlay. Same
+ * buffer protocol as [`yakvc_list_devices`]. Cheap enough for a few calls a
+ * second, not for every frame. Fields:
+ *
+ * - `endpoint_id`: our Iroh endpoint ID, hex
+ * - `audio`: `microphone_open`, `speakers_open`, `transmitting` (bools);
+ *   `bitrate` (bit/s in use); `overruns`, `underruns` (counts since the
+ *   device opened)
+ * - `peers`: per connected peer, `uuid` (hyphenated), `rtt_ms` (number or
+ *   null), and once audio has arrived `received`, `late`, `fec_recovered`,
+ *   `concealed` (frame counts) and `playout_delay_ms`
+ *
+ * # Safety
+ * `engine` must be live; `buf` must be writable for `cap` bytes; `needed`
+ * must be writable.
+ */
+int32_t yakvc_stats(struct YakVcEngine *engine, uint8_t *buf, size_t cap, size_t *needed);
 
 /**
  * Copies this thread's last error message into `buf` (truncated to `cap`)

@@ -34,8 +34,9 @@ The keys are in Options → Controls → Key Binds, under **Yak VC**.
 | Toggle Mute | not bound | Turns your microphone off and on. |
 | Toggle Deafen | not bound | Stops you hearing anyone. Your microphone still works unless you mute it too. |
 | Open Voice Menu | not bound | Opens the [voice menu](#the-voice-menu), and from there the settings. |
+| Toggle Debug Overlay | not bound | Shows or hides the [debug overlay](#the-debug-overlay). |
 
-Mute, deafen and the voice menu are unbound so they don't clash with other mods. Bind **Open Voice Menu** to get to the settings, or open them from [Mod Menu](https://modrinth.com/mod/modmenu) if you have it installed.
+Mute, deafen, the voice menu and the debug overlay are unbound so they don't clash with other mods. Bind **Open Voice Menu** to get to the settings, or open them from [Mod Menu](https://modrinth.com/mod/modmenu) if you have it installed.
 
 ## The HUD
 
@@ -112,6 +113,10 @@ Under **Account** the settings say whether your Minecraft account is verified (s
 
 - **Only Verified Players**: talk only with players whose Minecraft account is verified, the ones with the badge. Players without an account, as on offline-mode servers, can't hear you and you don't hear them. Off by default.
 
+Under **Troubleshooting**:
+
+- **Debug Overlay**: shows the [debug overlay](#the-debug-overlay). It switches on and off at once and isn't saved, so it is off again after a restart.
+
 ## Privacy
 
 - **Other players learn your IP address.** Voice goes straight from player to player, and Yak VC connects to every Yak VC player on the server as soon as you both join, so all of them can see your IP address, not just the ones near you. On a server network with one shared player list, that is every Yak VC player on the network. Turn on **Relay Only** to hide it: everything then goes through the Yak VC relay. A relay has limited room, so with Relay Only about 11 nearby players can hear you at once; the nearest get it first.
@@ -137,6 +142,24 @@ Yak VC shows a message in the top-right corner when voice stops working:
 | Settings applied but not saved. See the game log. | The settings work until you quit, but Yak VC couldn't write its config file, for example because it is read-only. |
 
 The game log is `logs/latest.log` in your game folder; Yak VC's lines contain `(yakvc)`.
+
+### The debug overlay
+
+For testing, or to attach to a bug report, the debug overlay shows what Yak VC is doing in the top-right corner, a bit like F3. Turn it on with **Debug Overlay** in the settings, or bind **Toggle Debug Overlay** in the key binds. It updates four times a second.
+
+![The debug overlay](guide/debug-overlay.png)
+
+| Line | Meaning |
+| --- | --- |
+| Rendezvous | The connection to the Yak VC server: `connecting`, `authenticating`, `registered` (with how long your sign-in ticket has left), `retrying in` some seconds, or `disconnected`. |
+| Account | Whether the server verified your Minecraft account. |
+| Endpoint | The start of your Yak VC address, which other players' logs show too; `relay only` when **Relay Only** is on. |
+| Microphone, Speakers | The device from the settings, and whether it is open. `not open` means Yak VC can't use it; the game log says why. |
+| Level | Your microphone's loudness, and how you talk: push to talk, or voice above the activation threshold. |
+| Sending | Whether your voice is going out right now; also `muted` or `deafened`. |
+| Bitrate | The quality your voice is sent at now, and the setting. It drops below the setting when the relay is busy. |
+| Overruns, underruns | Glitches since the device opened: microphone audio Yak VC was too slow to pick up, and moments the speakers ran dry. A count that keeps rising means crackling. |
+| Peers | One line per Yak VC player you are connected to: `direct` or `relayed` (or `connecting`, `failed`, `relay full`), `verified` if their account is, the round trip time (`rtt`), the share of their voice lost on the way (`loss`), packets that came too late to play (`late`), and how much audio is held back to smooth out uneven arrival (`buffer`). Loss and late appear once they have talked. |
 
 ## The config file
 

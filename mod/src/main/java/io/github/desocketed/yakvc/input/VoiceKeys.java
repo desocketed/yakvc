@@ -7,7 +7,7 @@ import net.minecraft.resources.Identifier;
 
 /**
  * Voice keybinds. Push-to-talk defaults to V, which vanilla doesn't use. Mute, deafen and the voice menu are unbound by
- * default so they don't clash with minimap and utility mods.
+ * default so they don't clash with minimap and utility mods; so is the debug overlay.
  */
 public final class VoiceKeys {
 	/** Holds push-to-talk down for dev and test runs that have no keyboard. */
@@ -17,14 +17,17 @@ public final class VoiceKeys {
 	public final KeyMapping mute;
 	public final KeyMapping deafen;
 	public final KeyMapping openMenu;
+	public final KeyMapping debugOverlay;
 	private boolean muted;
 	private boolean deafened;
 
-	private VoiceKeys(KeyMapping pushToTalk, KeyMapping mute, KeyMapping deafen, KeyMapping openMenu) {
+	private VoiceKeys(KeyMapping pushToTalk, KeyMapping mute, KeyMapping deafen, KeyMapping openMenu,
+			KeyMapping debugOverlay) {
 		this.pushToTalk = pushToTalk;
 		this.mute = mute;
 		this.deafen = deafen;
 		this.openMenu = openMenu;
+		this.debugOverlay = debugOverlay;
 	}
 
 	public static VoiceKeys register() {
@@ -37,13 +40,22 @@ public final class VoiceKeys {
 				KeyMappingHelper.registerKeyMapping(
 						new KeyMapping("key.yakvc.deafen", InputConstants.UNKNOWN.getValue(), category)),
 				KeyMappingHelper.registerKeyMapping(
-						new KeyMapping("key.yakvc.open_menu", InputConstants.UNKNOWN.getValue(), category)));
+						new KeyMapping("key.yakvc.open_menu", InputConstants.UNKNOWN.getValue(), category)),
+				KeyMappingHelper.registerKeyMapping(
+						new KeyMapping("key.yakvc.debug_overlay", InputConstants.UNKNOWN.getValue(), category)));
 	}
 
 	/** Applies mute and deafen presses since the last tick. */
 	public void tick() {
 		while (mute.consumeClick()) muted = !muted;
 		while (deafen.consumeClick()) deafened = !deafened;
+	}
+
+	/** Whether the debug overlay key was pressed since the last call. */
+	public boolean debugOverlayPressed() {
+		boolean pressed = false;
+		while (debugOverlay.consumeClick()) pressed = !pressed;
+		return pressed;
 	}
 
 	/** Whether the voice menu key was pressed since the last call. */

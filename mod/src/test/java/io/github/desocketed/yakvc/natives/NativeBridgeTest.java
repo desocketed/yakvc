@@ -55,6 +55,9 @@ class NativeBridgeTest {
 			assertTrue(events.contains(new EngineEvent.Rendezvous(EngineEvent.RendezvousState.DISCONNECTED, 0, false)),
 					events.toString());
 			assertTrue(bridge.listDevices(engine).startsWith("{"));
+			VoiceStats stats = VoiceStats.parse(bridge.stats(engine));
+			assertEquals(64, stats.endpointId().length());
+			assertTrue(stats.peers().isEmpty(), stats.toString());
 			bridge.updateConfig(engine, DEV_CONFIG);
 		} finally {
 			bridge.destroy(engine);

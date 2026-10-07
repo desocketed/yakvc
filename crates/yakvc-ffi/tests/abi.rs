@@ -109,6 +109,7 @@ fn every_engine_call_rejects_a_null_engine() {
             yakvc_poll_events(null, buf.as_mut_ptr(), buf.len(), &mut len),
             yakvc_update_config(null, ptr::null(), 0),
             yakvc_list_devices(null, buf.as_mut_ptr(), buf.len(), &mut len),
+            yakvc_stats(null, buf.as_mut_ptr(), buf.len(), &mut len),
         ]
     };
     for code in codes {
@@ -253,6 +254,19 @@ fn engine_lifecycle_through_the_c_abi() {
         // Machines without sound hardware, like CI.
         assert_eq!(code, YAKVC_ERR_AUDIO);
     }
+
+    // Stats snapshot, same buffer protocol.
+    // SAFETY: `engine` is live; a null buffer with capacity 0 is not written.
+    let code = unsafe { yakvc_stats(engine, ptr::null_mut(), 0, &mut needed) };
+    assert_eq!(code, YAKVC_OK);
+    let mut json = vec![0u8; needed];
+    // SAFETY: `json` is writable for `needed` bytes.
+    let code = unsafe { yakvc_stats(engine, json.as_mut_ptr(), json.len(), &mut needed) };
+    assert_eq!(code, YAKVC_OK);
+    let stats: serde_json::Value = serde_json::from_slice(&json).unwrap();
+    assert_eq!(stats["endpoint_id"].as_str().map(str::len), Some(64));
+    assert!(stats["audio"]["bitrate"].is_u64());
+    assert!(stats["peers"].is_array());
 
     let start = Instant::now();
     // SAFETY: `engine` is live and not used afterwards.
