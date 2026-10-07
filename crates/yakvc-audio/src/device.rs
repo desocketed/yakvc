@@ -262,6 +262,10 @@ impl FrameSource for Microphone {
     fn failure(&self) -> Option<String> {
         self.health.failure()
     }
+
+    fn glitches(&self) -> u64 {
+        self.health.glitches()
+    }
 }
 
 /// Plays to an output device, resampled from stereo 48 kHz.
@@ -389,6 +393,10 @@ impl FrameSink for Speakers {
 
     fn failure(&self) -> Option<String> {
         self.health.failure()
+    }
+
+    fn glitches(&self) -> u64 {
+        self.health.glitches()
     }
 }
 

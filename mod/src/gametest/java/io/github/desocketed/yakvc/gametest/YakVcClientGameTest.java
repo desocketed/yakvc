@@ -132,6 +132,7 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 			context.waitFor(mc -> feeder.tracked().contains(REMOTE));
 			checkVoiceMenu(context, feeder);
 			keyBindsScreenshot(context);
+			checkDebugOverlay(context, feeder);
 			singleplayer.getServer().runOnServer(server -> {
 				remote.setGameMode(GameType.SPECTATOR);
 				server.getPlayerList().broadcastAll(new ClientboundPlayerInfoUpdatePacket(Action.UPDATE_GAME_MODE, remote));
@@ -154,6 +155,22 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 				throw new AssertionError("engine reported errors; see the log");
 			}
 		}
+	}
+
+	/**
+	 * Turns the debug overlay on as its settings toggle does (its key is unbound by default), waits for the engine's
+	 * first snapshot and takes the user guide's screenshot.
+	 */
+	private static void checkDebugOverlay(ClientGameTestContext context, GameStateFeeder feeder) {
+		if (KeyMapping.get("key.yakvc.debug_overlay") == null) throw new AssertionError("no debug overlay key");
+		context.runOnClient(mc -> feeder.setDebugOverlay(true));
+		context.waitFor(mc -> feeder.stats() != null);
+		if (feeder.stats().endpointId().length() != 64) {
+			throw new AssertionError("bad stats snapshot " + feeder.stats());
+		}
+		context.waitTicks(2);
+		context.takeScreenshot(TestScreenshotOptions.of("debug-overlay").disableCounterPrefix());
+		context.runOnClient(mc -> feeder.setDebugOverlay(false));
 	}
 
 	/**

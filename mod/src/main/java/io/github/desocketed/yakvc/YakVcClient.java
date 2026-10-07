@@ -6,6 +6,7 @@ import io.github.desocketed.yakvc.config.PlayerVolumes;
 import io.github.desocketed.yakvc.input.VoiceKeys;
 import io.github.desocketed.yakvc.natives.NativeBridge;
 import io.github.desocketed.yakvc.natives.NativeLoader;
+import io.github.desocketed.yakvc.ui.DebugOverlay;
 import io.github.desocketed.yakvc.ui.TalkingIndicator;
 import io.github.desocketed.yakvc.ui.VoiceHud;
 import io.github.desocketed.yakvc.ui.VoiceToasts;
@@ -114,6 +115,7 @@ public final class YakVcClient implements ClientModInitializer {
 		ClientPlayConnectionEvents.DISCONNECT.register((connection, minecraft) -> feeder.leave());
 		ClientTickEvents.END_CLIENT_TICK.register(feeder::tick);
 		HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("yakvc", "voice"), new VoiceHud(feeder));
+		HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("yakvc", "debug"), new DebugOverlay(feeder));
 		LevelRenderEvents.COLLECT_SUBMITS.register(new TalkingIndicator(feeder)::submit);
 	}
 

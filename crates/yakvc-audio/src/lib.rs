@@ -53,6 +53,12 @@ pub trait FrameSource: Send {
     fn failure(&self) -> Option<String> {
         None
     }
+
+    /// Times captured audio was dropped because it wasn't read in time
+    /// (overruns), for diagnostics. Sources without a device report 0.
+    fn glitches(&self) -> u64 {
+        0
+    }
 }
 
 /// Consumes stereo frames: speakers, or a recorder for tests.
@@ -67,6 +73,12 @@ pub trait FrameSink: Send {
     fn failure(&self) -> Option<String> {
         None
     }
+
+    /// Times the device ran out of audio to play (underruns), for
+    /// diagnostics. Sinks without a device report 0.
+    fn glitches(&self) -> u64 {
+        0
+    }
 }
 
 /// Lets callers choose a source at runtime.
@@ -77,6 +89,10 @@ impl FrameSource for Box<dyn FrameSource> {
 
     fn failure(&self) -> Option<String> {
         (**self).failure()
+    }
+
+    fn glitches(&self) -> u64 {
+        (**self).glitches()
     }
 }
 
@@ -92,6 +108,10 @@ impl FrameSink for Box<dyn FrameSink> {
 
     fn failure(&self) -> Option<String> {
         (**self).failure()
+    }
+
+    fn glitches(&self) -> u64 {
+        (**self).glitches()
     }
 }
 

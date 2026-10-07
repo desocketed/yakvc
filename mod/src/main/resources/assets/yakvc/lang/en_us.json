@@ -4,6 +4,7 @@
 	"key.yakvc.mute": "Toggle Mute",
 	"key.yakvc.deafen": "Toggle Deafen",
 	"key.yakvc.open_menu": "Open Voice Menu",
+	"key.yakvc.debug_overlay": "Toggle Debug Overlay",
 
 	"yakvc.hud.stopped": "Voice off: the engine stopped",
 	"yakvc.hud.off": "Voice off: %s",
@@ -58,6 +59,9 @@
 	"yakvc.settings.account.not_connected": "Not connected to Yak VC yet.",
 	"yakvc.settings.verified_only": "Only Verified Players",
 	"yakvc.settings.verified_only.tooltip": "Only talk with players whose Minecraft account is verified (they have a badge next to their name). Players without an account, as on offline-mode servers, can't hear you and you don't hear them.",
+	"yakvc.settings.troubleshooting": "Troubleshooting",
+	"yakvc.settings.debug_overlay": "Debug Overlay",
+	"yakvc.settings.debug_overlay.tooltip": "Shows connection and audio details in the top right, for testing and bug reports. Also has a key in Controls; not saved.",
 
 	"yakvc.toast.title": "Yak VC voice chat",
 	"yakvc.toast.unsupported": "Voice chat doesn't support this system yet.",
