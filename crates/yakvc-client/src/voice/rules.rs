@@ -116,7 +116,7 @@ impl VoiceState {
 
     pub(crate) fn input_device(&self) -> DeviceChoice {
         match &self.audio.input_device {
-            Some(name) => DeviceChoice::Named(name.clone()),
+            Some(id) => DeviceChoice::Id(id.clone()),
             None => DeviceChoice::Default,
         }
     }
@@ -124,7 +124,7 @@ impl VoiceState {
     /// The configured output device, else the one closest to the game's.
     pub(crate) fn output_device(&self) -> DeviceChoice {
         match (&self.audio.output_device, &self.game_device) {
-            (Some(name), _) => DeviceChoice::Named(name.clone()),
+            (Some(id), _) => DeviceChoice::Id(id.clone()),
             (None, Some(game)) => DeviceChoice::ClosestTo(game.clone()),
             (None, None) => DeviceChoice::Default,
         }
@@ -474,10 +474,7 @@ mod tests {
             DeviceChoice::ClosestTo("OpenAL Soft on Headphones".into())
         );
         state.audio.output_device = Some("Speakers".into());
-        assert_eq!(
-            state.output_device(),
-            DeviceChoice::Named("Speakers".into())
-        );
+        assert_eq!(state.output_device(), DeviceChoice::Id("Speakers".into()));
     }
 
     #[test]

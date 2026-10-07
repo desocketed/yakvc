@@ -180,8 +180,8 @@ The keys that the settings screen shows:
 | `verified_only` | `false` | Only Verified Players |
 | `[audio]` `activation` | `"push_to_talk"` | Activation (`"push_to_talk"` or `"voice"`) |
 | `[audio]` `bitrate` | `24000` | Bitrate, in bits per second |
-| `[audio]` `input_device` | unset | Microphone, by name |
-| `[audio]` `output_device` | unset | Speakers, by name |
+| `[audio]` `input_device` | unset | Microphone, by device id (a name also works) |
+| `[audio]` `output_device` | unset | Speakers, by device id (a name also works) |
 
 A few more are only in the file:
 
