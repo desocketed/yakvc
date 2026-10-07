@@ -1,6 +1,9 @@
 package io.github.desocketed.yakvc.gametest;
 
 import com.mojang.authlib.GameProfile;
+import com.terraformersmc.modmenu.gui.ModsScreen;
+import com.terraformersmc.modmenu.gui.widget.ModListWidget;
+import com.terraformersmc.modmenu.gui.widget.entries.ModListEntry;
 import io.github.desocketed.yakvc.GameStateFeeder;
 import io.github.desocketed.yakvc.YakVcClient;
 import io.github.desocketed.yakvc.config.ClientConfig;
@@ -79,6 +82,7 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 			mc.options.showAutosaveIndicator().set(false);
 		});
 		checkSettingsWithoutWorld(context, feeder);
+		checkModMenu(context);
 		try (TestSingleplayerContext singleplayer = context.worldBuilder().create()) {
 			// The world builder already fixes the seed and weather and stops time; this fixes the time and view.
 			singleplayer.getServer().runCommand("time set noon");
@@ -233,6 +237,44 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		} catch (IOException e) {
 			throw new UncheckedIOException(e);
 		}
+	}
+
+	/**
+	 * Mod Menu (in dev runs only) lists Yak VC with a config button that opens the settings; Done goes back to the
+	 * mods list. Clicked through as a player would, from the title screen's Mods button.
+	 */
+	private static void checkModMenu(ClientGameTestContext context) {
+		context.waitForScreen(TitleScreen.class);
+		context.clickScreenButton("modmenu.title");
+		context.waitForScreen(ModsScreen.class);
+		context.runOnClient(mc -> {
+			ModListWidget list = null;
+			for (GuiEventListener widget : mc.gui.screen().children()) {
+				if (widget instanceof ModListWidget modList) list = modList;
+			}
+			if (list == null) throw new AssertionError("no mod list in " + mc.gui.screen());
+			ModListEntry yakvc = list.children().stream().filter(entry -> entry.getMod().getId().equals("yakvc"))
+					.findFirst().orElseThrow(() -> new AssertionError("Yak VC is not in Mod Menu's list"));
+			list.select(yakvc);
+			// As if clicked; the search box would otherwise keep the focus, and its cursor blinks.
+			mc.gui.screen().setFocused(list);
+		});
+		screenshotScreen(context, "mod-menu");
+		// The gear by the selected mod's name; Mod Menu shows it only when the modmenu entrypoint gives a screen.
+		String configure = Component.translatable("modmenu.configure").getString();
+		context.runOnClient(mc -> {
+			AbstractButton gear = findButton(mc.gui.screen().children(), message -> message.equals(configure));
+			if (gear == null || !gear.visible || !gear.active) {
+				throw new AssertionError("Mod Menu shows no config button for Yak VC; check the log for the modmenu "
+						+ "entrypoint");
+			}
+			gear.onPress(new KeyEvent(InputConstants.KEY_RETURN, 0, 0));
+		});
+		context.waitForScreen(VoiceSettingsScreen.class);
+		context.clickScreenButton("gui.done");
+		context.waitForScreen(ModsScreen.class);
+		context.clickScreenButton("gui.done");
+		context.waitForScreen(TitleScreen.class);
 	}
 
 	/** The game's own key binds screen, scrolled to the Yak VC keys at the end. */
