@@ -90,9 +90,11 @@ The game's own Voice/Speech slider (Options → Music & Sounds) sets the volume 
 
 ## Settings
 
-Open the settings from **Options → Music & Sounds → Voice Chat…**, at the end of the sound options, which works on the title screen as well as in game. **Settings…** in the voice menu opens them too, and so does the config button on Yak VC's entry in [Mod Menu](https://modrinth.com/mod/modmenu)'s mods list if you have it installed. **Done** goes back to where you came from. Changes apply and are saved when you leave the screen.
+Open the settings from **Options → Music & Sounds → Voice Chat…**, at the end of the sound options, which works on the title screen as well as in game. **Settings…** in the voice menu opens them too, and so does [Mod Menu](https://modrinth.com/mod/modmenu) if you have it installed: in its **Mods** list, select Yak VC and press the small settings button at the right of its name. **Done** goes back to where you came from. Changes apply and are saved when you leave the screen.
 
 ![Voice Chat… in the Music & Sounds options](guide/sound-options.png)
+
+![Yak VC selected in Mod Menu, with the settings button top right](guide/mod-menu.png)
 
 ![The voice settings](guide/voice-settings.png)
 
