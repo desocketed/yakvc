@@ -245,7 +245,7 @@ public record ClientConfig(String toml) {
 			# Opus bitrate in bits per second (16000 to 64000).
 			bitrate = 24000
 			noise_suppression = true
-			# Device ids, as the voice settings or `yakvc audio devices` list them (a device name works too).
+			# Device ids, as the voice settings or `yakvc audio devices` list them.
 			# Unset means the system default microphone, and speakers matching the game's sound device.
 			# input_device = "..."
 			# output_device = "..."

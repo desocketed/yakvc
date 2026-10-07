@@ -100,7 +100,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 
 	/**
 	 * A device picker over the listed devices' ids, shown by name, plus the configured one if it is unplugged right
-	 * now. The engine also accepts a name there, as configs from before device ids hold.
+	 * now.
 	 */
 	private static Dropdown device(String caption, Map<String, String> devices, @Nullable String current,
 			String defaultLabel) {
