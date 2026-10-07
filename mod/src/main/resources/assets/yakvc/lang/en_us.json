@@ -31,6 +31,7 @@
 	"yakvc.menu.peer.gone": "No voice",
 	"yakvc.menu.peer.blocked": "Blocked: muted both ways",
 
+	"yakvc.sound_options.voice_chat": "Voice Chat…",
 	"yakvc.settings.title": "Voice Settings",
 	"yakvc.settings.activation": "Activation",
 	"yakvc.settings.activation.push_to_talk": "Push to Talk",

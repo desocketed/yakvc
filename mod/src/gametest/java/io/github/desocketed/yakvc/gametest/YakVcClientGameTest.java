@@ -36,6 +36,7 @@ import net.minecraft.client.gui.components.AbstractButton;
 import net.minecraft.client.gui.components.events.ContainerEventHandler;
 import net.minecraft.client.gui.components.events.GuiEventListener;
 import net.minecraft.client.gui.screens.TitleScreen;
+import net.minecraft.client.gui.screens.options.SoundOptionsScreen;
 import net.minecraft.client.gui.screens.options.controls.KeyBindsScreen;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.network.chat.Component;
@@ -174,14 +175,21 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 	}
 
 	/**
-	 * Mod Menu opens the settings from the title screen, with no world or voice session, so they must work there too.
-	 * Mod Menu isn't on the test classpath, so the screen is opened directly, as its entry does.
+	 * The game's Music &amp; Sounds options open the settings from the title screen too, with no world or voice
+	 * session, so they must work there. Done goes back to the sound options.
 	 */
 	private static void checkSettingsWithoutWorld(ClientGameTestContext context, GameStateFeeder feeder) {
-		context.setScreen(() -> new VoiceSettingsScreen(new TitleScreen(), Minecraft.getInstance().options, feeder));
+		context.setScreen(() -> new SoundOptionsScreen(new TitleScreen(), Minecraft.getInstance().options));
+		context.waitForScreen(SoundOptionsScreen.class);
+		// The button is last in the list, below the fold at the test's small window size.
+		scrollDown(context);
+		screenshotScreen(context, "sound-options");
+		pressNestedButton(context, "yakvc.sound_options.voice_chat");
 		context.waitForScreen(VoiceSettingsScreen.class);
 		// The level meter needs the microphone (here the dev test tone) without a world or push-to-talk.
 		context.waitFor(mc -> feeder.micLevelDb() > GameStateFeeder.SILENCE_DB);
+		context.clickScreenButton("gui.done");
+		context.waitForScreen(SoundOptionsScreen.class);
 		context.clickScreenButton("gui.done");
 		context.waitForScreen(TitleScreen.class);
 	}

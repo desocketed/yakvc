@@ -7,6 +7,7 @@ import io.github.desocketed.yakvc.input.VoiceKeys;
 import io.github.desocketed.yakvc.natives.NativeBridge;
 import io.github.desocketed.yakvc.natives.NativeLoader;
 import io.github.desocketed.yakvc.ui.DebugOverlay;
+import io.github.desocketed.yakvc.ui.SoundOptionsButton;
 import io.github.desocketed.yakvc.ui.TalkingIndicator;
 import io.github.desocketed.yakvc.ui.VoiceHud;
 import io.github.desocketed.yakvc.ui.VoiceToasts;
@@ -46,6 +47,8 @@ public final class YakVcClient implements ClientModInitializer {
 
 	@Override
 	public void onInitializeClient() {
+		// Registered before the engine starts, so if it fails the button still explains why voice is off.
+		SoundOptionsButton.register();
 		Path configDir = configDir();
 		NativeBridge bridge;
 		try {
