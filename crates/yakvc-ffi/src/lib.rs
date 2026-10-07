@@ -41,7 +41,8 @@ use crate::guard::{
 /// Version of this C ABI. Java refuses to use a library whose version differs
 /// from the one it was built against. Bump on any incompatible change.
 /// 2: verified flags in the rendezvous and peer state events.
-pub const YAKVC_ABI_VERSION: u32 = 2;
+/// 3: `yakvc_stats`.
+pub const YAKVC_ABI_VERSION: u32 = 3;
 
 pub const YAKVC_OK: i32 = 0;
 /// A null pointer, bad UUID, invalid UTF-8 or out-of-range value.
@@ -463,6 +464,76 @@ pub unsafe extern "C" fn yakvc_list_devices(
             Ok(())
         })
     }
+}
+
+/// Writes a diagnostics snapshot as JSON, for the in-game debug overlay. Same
+/// buffer protocol as [`yakvc_list_devices`]. Cheap enough for a few calls a
+/// second, not for every frame. Fields:
+///
+/// - `endpoint_id`: our Iroh endpoint ID, hex
+/// - `audio`: `microphone_open`, `speakers_open`, `transmitting` (bools);
+///   `bitrate` (bit/s in use); `overruns`, `underruns` (counts since the
+///   device opened)
+/// - `peers`: per connected peer, `uuid` (hyphenated), `rtt_ms` (number or
+///   null), and once audio has arrived `received`, `late`, `fec_recovered`,
+///   `concealed` (frame counts) and `playout_delay_ms`
+///
+/// # Safety
+/// `engine` must be live; `buf` must be writable for `cap` bytes; `needed`
+/// must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn yakvc_stats(
+    engine: *mut YakVcEngine,
+    buf: *mut u8,
+    cap: usize,
+    needed: *mut usize,
+) -> i32 {
+    // SAFETY: the caller guarantees `engine` is live.
+    unsafe {
+        with_engine(engine, |e| {
+            // SAFETY: the caller guarantees `needed` is writable.
+            let needed = out_arg(needed, "needed")?;
+            // SAFETY: the caller guarantees `buf` is writable for `cap` bytes.
+            let buf = buf_arg(buf, cap, "buf")?;
+            let json = serde_json::to_vec(&stats_json(&e.engine)).expect("stats serialize");
+            *needed = write_if_fits(&json, buf);
+            Ok(())
+        })
+    }
+}
+
+fn stats_json(engine: &Engine) -> serde_json::Value {
+    let audio = engine.audio_stats();
+    let peers: Vec<_> = engine
+        .peers()
+        .into_iter()
+        .map(|peer| {
+            let mut json = serde_json::json!({
+                "uuid": peer.uuid.to_string(),
+                "rtt_ms": peer.rtt.map(|rtt| rtt.as_secs_f64() * 1000.0),
+            });
+            if let Some(stream) = peer.stream {
+                json["received"] = stream.received.into();
+                json["late"] = stream.late.into();
+                json["fec_recovered"] = stream.fec_recovered.into();
+                json["concealed"] = stream.concealed.into();
+                json["playout_delay_ms"] = (stream.playout_delay.as_secs_f64() * 1000.0).into();
+            }
+            json
+        })
+        .collect();
+    serde_json::json!({
+        "endpoint_id": engine.endpoint_id(),
+        "audio": {
+            "microphone_open": audio.microphone_open,
+            "speakers_open": audio.speakers_open,
+            "transmitting": audio.transmitting,
+            "bitrate": audio.bitrate,
+            "overruns": audio.overruns,
+            "underruns": audio.underruns,
+        },
+        "peers": peers,
+    })
 }
 
 /// Copies this thread's last error message into `buf` (truncated to `cap`)

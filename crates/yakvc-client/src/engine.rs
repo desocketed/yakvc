@@ -11,7 +11,7 @@ use yakvc_shared::{IssuerKey, TicketBody, TicketVerifier, Uuid};
 use crate::config::{Config, ConfigError};
 use crate::event::{self, Event, Events, JoinId, PeerState, RendezvousState};
 use crate::net::{Identity, Net, Trust};
-use crate::voice::{AudioIo, Voice};
+use crate::voice::{AudioIo, AudioStats, Voice};
 use crate::world::{Input, World, distance};
 
 /// A running voice engine. Dropping it shuts down gracefully, waiting at most
@@ -262,6 +262,16 @@ impl Engine {
                 rtt: peer.rtt,
             })
             .collect()
+    }
+
+    /// The audio thread's devices, bitrate and glitch counts.
+    pub fn audio_stats(&self) -> AudioStats {
+        self.voice.audio_stats()
+    }
+
+    /// Our Iroh endpoint ID, which peers and the rendezvous know us by.
+    pub fn endpoint_id(&self) -> String {
+        self.net.endpoint_id().to_string()
     }
 
     /// Switches to direct-call mode for `yakvc-cli call` (M2): no

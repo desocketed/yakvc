@@ -40,6 +40,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	private final OptionInstance<Boolean> respectChatRestrictions;
 	private final OptionInstance<Boolean> muteBlockedPlayers;
 	private final OptionInstance<Boolean> verifiedOnly;
+	private final OptionInstance<Boolean> debugOverlay;
 
 	public VoiceSettingsScreen(@Nullable Screen lastScreen, Options options, GameStateFeeder feeder) {
 		super(lastScreen, options, Component.translatable("yakvc.settings.title"));
@@ -74,6 +75,10 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		verifiedOnly = OptionInstance.createBoolean("yakvc.settings.verified_only",
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.verified_only.tooltip")),
 				initial.verifiedOnly());
+		// Takes effect at once and isn't saved, unlike the settings above.
+		debugOverlay = OptionInstance.createBoolean("yakvc.settings.debug_overlay",
+				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.debug_overlay.tooltip")),
+				feeder.debugOverlay(), feeder::setDebugOverlay);
 	}
 
 	/** A device picker over the listed names, plus the configured one if it is unplugged right now. */
@@ -102,6 +107,8 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		list.addHeader(Component.translatable("yakvc.settings.account"));
 		list.addBig(new MultiLineTextWidget(accountState(), font).setMaxWidth(310).setCentered(true));
 		list.addSmall(verifiedOnly);
+		list.addHeader(Component.translatable("yakvc.settings.troubleshooting"));
+		list.addSmall(debugOverlay);
 	}
 
 	/** Whether the rendezvous verified our Mojang account. */

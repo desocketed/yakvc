@@ -7,6 +7,7 @@ import io.github.desocketed.yakvc.config.PlayerVolumes;
 import io.github.desocketed.yakvc.input.VoiceKeys;
 import io.github.desocketed.yakvc.natives.EngineEvent;
 import io.github.desocketed.yakvc.natives.NativeBridge;
+import io.github.desocketed.yakvc.natives.VoiceStats;
 import io.github.desocketed.yakvc.natives.YakVcException;
 import io.github.desocketed.yakvc.ui.VoiceMenuScreen;
 import io.github.desocketed.yakvc.ui.VoiceToasts;
@@ -42,6 +43,8 @@ public final class GameStateFeeder {
 	private static final int EVENT_BUFFER_BYTES = 65_540;
 	/** How often the Social Interactions block list is checked again. */
 	private static final int BLOCKED_REFRESH_TICKS = 20;
+	/** How often the debug overlay's snapshot is refreshed: four times a second. */
+	private static final int STATS_REFRESH_TICKS = 5;
 	/** The engine's level for a silent frame. */
 	public static final float SILENCE_DB = -100;
 
@@ -81,6 +84,8 @@ public final class GameStateFeeder {
 
 	// Shown by the HUD and the voice menu.
 	private EngineEvent.@Nullable RendezvousState rendezvous;
+	/** The rendezvous event's value: ticket expiry (Unix seconds) when registered, retry delay (ms) when retrying. */
+	private long rendezvousValue;
 	/** Registered with a verified ticket. */
 	private boolean verified;
 	private final Map<UUID, EngineEvent.PeerState> peers = new HashMap<>();
@@ -91,6 +96,10 @@ public final class GameStateFeeder {
 	/** The last microphone level and when it came, for the meter in the settings. */
 	private float micLevelDb = SILENCE_DB;
 	private long micLevelNanos;
+	/** Whether the debug overlay shows, and its latest snapshot (null until the first refresh). */
+	private boolean debugOverlay;
+	private @Nullable VoiceStats stats;
+	private int ticksUntilStats;
 
 	public GameStateFeeder(NativeBridge bridge, MemorySegment engine, ClientConfig config, VoiceKeys keys,
 			SessionJoiner joiner, PlayerVolumes volumes) {
@@ -130,10 +139,19 @@ public final class GameStateFeeder {
 		step(() -> feedGame(minecraft));
 		step(this::drainEvents);
 		step(this::answerJoins);
+		step(this::refreshStats);
+	}
+
+	/** Polls the engine's snapshot a few times a second, and only while the overlay shows it. */
+	private void refreshStats() {
+		if (!debugOverlay || --ticksUntilStats > 0) return;
+		ticksUntilStats = STATS_REFRESH_TICKS;
+		stats = VoiceStats.parse(bridge.stats(engine));
 	}
 
 	private void feedGame(Minecraft minecraft) {
 		keys.tick();
+		if (keys.debugOverlayPressed()) setDebugOverlay(!debugOverlay);
 		if (keys.menuPressed() && minecraft.gui.screen() == null) {
 			minecraft.gui.setScreen(new VoiceMenuScreen(null, this));
 		}
@@ -325,6 +343,7 @@ public final class GameStateFeeder {
 					pendingJoins.add(new PendingJoin(id, joiner.joinAsync(serverId)));
 			case EngineEvent.Rendezvous(EngineEvent.RendezvousState state, long value, boolean isVerified) -> {
 				rendezvous = state;
+				rendezvousValue = value;
 				verified = state == EngineEvent.RendezvousState.REGISTERED && isVerified;
 				YakVcClient.LOGGER.info("Rendezvous {} ({}){}", state, value, verified ? " verified" : "");
 			}
@@ -418,6 +437,11 @@ public final class GameStateFeeder {
 		return rendezvous;
 	}
 
+	/** Ticket expiry in Unix seconds when registered, the retry delay in ms when retrying, else 0. */
+	public long rendezvousValue() {
+		return rendezvousValue;
+	}
+
 	/** Whether we are registered with a verified ticket, i.e. our Mojang account is proven. */
 	public boolean verified() {
 		return verified;
@@ -448,7 +472,27 @@ public final class GameStateFeeder {
 		return inputFlags;
 	}
 
-	/** Engine {@code Error} events so far. For tests. */
+	public boolean debugOverlay() {
+		return debugOverlay;
+	}
+
+	/** Shows or hides the debug overlay. Not saved: it is for a test or a bug report, not for every game. */
+	public void setDebugOverlay(boolean on) {
+		debugOverlay = on;
+		ticksUntilStats = 0;
+		if (!on) stats = null;
+	}
+
+	/** The debug overlay's latest engine snapshot, or null while it is off or not fetched yet. */
+	public @Nullable VoiceStats stats() {
+		return stats;
+	}
+
+	/** Engine {@code Error} events so far. */
+	public int errorEvents() {
+		return errorEvents;
+	}
+
 	/**
 	 * The microphone's level in dBFS. The engine reports it about ten times a second whether or not we transmit, so a
 	 * level that stopped coming means no working microphone, and reads as silence.
@@ -456,9 +500,5 @@ public final class GameStateFeeder {
 	public float micLevelDb() {
 		boolean stale = System.nanoTime() - micLevelNanos > 500_000_000L;
 		return stale ? SILENCE_DB : micLevelDb;
-	}
-
-	public int errorEvents() {
-		return errorEvents;
 	}
 }

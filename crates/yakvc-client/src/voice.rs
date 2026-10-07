@@ -40,6 +40,21 @@ const LEVEL_EVERY_FRAMES: u32 = 5;
 /// A remote speaker counts as stopped after this many silent frames.
 const TALKING_HANGOVER_FRAMES: u32 = 10;
 
+/// The audio thread's own state, for the in-game debug overlay.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AudioStats {
+    pub microphone_open: bool,
+    pub speakers_open: bool,
+    /// The Opus bitrate in use, which drops below the configured one when
+    /// the relay budget is tight.
+    pub bitrate: u32,
+    pub transmitting: bool,
+    /// Microphone overruns since it was last opened.
+    pub overruns: u64,
+    /// Speaker underruns since they were last opened.
+    pub underruns: u64,
+}
+
 /// The voice engine half: the [`Protocol`] for peers plus the audio thread.
 #[derive(Debug)]
 pub(crate) struct Voice {
@@ -67,6 +82,7 @@ struct Shared {
     /// task re-sends `ReceiveState` if needed.
     receive_policy: watch::Sender<()>,
     stats: Mutex<HashMap<Uuid, StreamStats>>,
+    audio_stats: Mutex<AudioStats>,
     events: EventSender,
     #[cfg(feature = "sim")]
     impairment: Option<crate::sim::Impairment>,
@@ -103,6 +119,7 @@ impl Voice {
             to_audio: Mutex::new(to_audio),
             receive_policy: watch::Sender::new(()),
             stats: Mutex::new(HashMap::new()),
+            audio_stats: Mutex::new(AudioStats::default()),
             events,
             #[cfg(feature = "sim")]
             impairment: io.impairment.clone(),
@@ -180,6 +197,10 @@ impl Voice {
 
     pub(crate) fn stats(&self, uuid: Uuid) -> Option<StreamStats> {
         self.shared.stats.lock().unwrap().get(&uuid).cloned()
+    }
+
+    pub(crate) fn audio_stats(&self) -> AudioStats {
+        self.shared.audio_stats.lock().unwrap().clone()
     }
 
     /// Stops the audio thread and waits for it.
@@ -414,7 +435,19 @@ impl AudioLoop {
             while self.sink.io.as_ref().is_some_and(|sink| sink.wants_frame()) {
                 self.play();
             }
+            *self.shared.audio_stats.lock().unwrap() = self.audio_stats();
             std::thread::sleep(AUDIO_TICK);
+        }
+    }
+
+    fn audio_stats(&self) -> AudioStats {
+        AudioStats {
+            microphone_open: self.source.io.is_some(),
+            speakers_open: self.sink.io.is_some(),
+            bitrate: self.bitrate,
+            transmitting: self.transmitting,
+            overruns: self.source.io.as_ref().map_or(0, |s| s.glitches()),
+            underruns: self.sink.io.as_ref().map_or(0, |s| s.glitches()),
         }
     }
 
