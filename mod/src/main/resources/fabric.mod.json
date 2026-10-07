@@ -5,6 +5,12 @@
 	"name": "Yak VC",
 	"description": "Peer-to-peer proximity voice chat for online-mode servers. No server mod required.",
 	"license": "MIT OR Apache-2.0",
+	"icon": "assets/yakvc/icon.png",
+	"contact": {
+		"homepage": "https://github.com/desocketed/yakvc",
+		"sources": "https://github.com/desocketed/yakvc",
+		"issues": "https://github.com/desocketed/yakvc/issues"
+	},
 	"environment": "client",
 	"entrypoints": {
 		"client": [
