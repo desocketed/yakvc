@@ -8,7 +8,7 @@ Yak VC is in development and has no release yet.
 
 - **Requirements:** Minecraft 26.3 with Fabric Loader and Fabric API, on Windows, macOS or Linux. Everyone who wants to talk needs the mod.
 - **Installing:** put the jar in your `mods` folder and add `--enable-native-access=ALL-UNNAMED` to your launcher's JVM arguments.
-- **Using it:** hold `V` to talk. Settings are in the voice menu, or in Mod Menu if you have it.
+- **Using it:** hold `V` to talk. Settings are under **Voice Chat…** in Options → Music & Sounds, in the voice menu, or in Mod Menu if you have it.
 - **Privacy:** other Yak VC players on the same server learn your IP address, because voice is peer to peer. The **Relay Only** setting hides it by sending everything through the Yak VC relay. Voice is encrypted from player to player.
 
 The [user guide](docs/USER_GUIDE.md) covers all of this with screenshots, plus the settings, troubleshooting and the config file.

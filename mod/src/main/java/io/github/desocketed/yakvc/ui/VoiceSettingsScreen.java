@@ -9,12 +9,14 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.OptionInstance;
 import net.minecraft.client.Options;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.MultiLineTextWidget;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.gui.screens.AlertScreen;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.options.OptionsSubScreen;
 import net.minecraft.network.chat.Component;
@@ -41,6 +43,20 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	private final OptionInstance<Boolean> muteBlockedPlayers;
 	private final OptionInstance<Boolean> verifiedOnly;
 	private final OptionInstance<Boolean> debugOverlay;
+
+	/**
+	 * The settings over {@code parent}, or an alert if the engine isn't running: the settings need it to check and
+	 * apply changes.
+	 */
+	public static Screen open(Screen parent) {
+		Minecraft minecraft = Minecraft.getInstance();
+		GameStateFeeder feeder = YakVcClient.feeder();
+		if (feeder == null) {
+			return new AlertScreen(() -> minecraft.gui.setScreen(parent), Component.translatable("yakvc.settings.title"),
+					Component.translatable("yakvc.settings.unavailable"));
+		}
+		return new VoiceSettingsScreen(parent, minecraft.options, feeder);
+	}
 
 	public VoiceSettingsScreen(@Nullable Screen lastScreen, Options options, GameStateFeeder feeder) {
 		super(lastScreen, options, Component.translatable("yakvc.settings.title"));
