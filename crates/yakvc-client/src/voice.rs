@@ -814,7 +814,7 @@ mod tests {
         let start = Instant::now();
         let later = start + REOPEN_INTERVAL;
         let mut sink = Device::new("speakers", Some("recorder"), DeviceChoice::Default);
-        let other = DeviceChoice::Named("other".into());
+        let other = DeviceChoice::Id("other".into());
         assert_eq!(sink.maintain(None, &other, start, |_| panic!()), None);
         assert!(
             sink.maintain(Some("broke".into()), &other, start, |_| panic!())

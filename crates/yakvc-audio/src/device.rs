@@ -34,6 +34,9 @@ pub struct Devices {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DeviceInfo {
+    /// What to store in the config and open with [`DeviceChoice::Id`].
+    pub id: String,
+    /// For people to read. Unique within its list.
     pub name: String,
     pub is_default: bool,
 }
@@ -43,8 +46,9 @@ pub struct DeviceInfo {
 pub enum DeviceChoice {
     #[default]
     Default,
-    /// Exactly this device name.
-    Named(String),
+    /// The device with this [`DeviceInfo::id`]. Configs written before ids
+    /// hold a name instead, so a name matches too.
+    Id(String),
     /// The device whose name best matches, else the default. Used to follow
     /// Minecraft's selected sound device, whose name differs from cpal's.
     ClosestTo(String),
@@ -64,14 +68,22 @@ pub fn devices() -> Result<Devices, AudioError> {
     })
 }
 
-fn list(devices: Vec<(String, cpal::Device)>, default: Option<cpal::Device>) -> Vec<DeviceInfo> {
+fn list(devices: Vec<Listed>, default: Option<cpal::Device>) -> Vec<DeviceInfo> {
     devices
         .into_iter()
-        .map(|(name, device)| DeviceInfo {
-            name,
-            is_default: Some(&device) == default.as_ref(),
+        .map(|listed| DeviceInfo {
+            is_default: Some(&listed.device) == default.as_ref(),
+            id: listed.id,
+            name: listed.name,
         })
         .collect()
+}
+
+/// A device as [`Direction::devices`] lists it.
+struct Listed {
+    id: String,
+    name: String,
+    device: cpal::Device,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -81,15 +93,32 @@ enum Direction {
 }
 
 impl Direction {
-    /// Named devices; ones that fail to report a name are left out.
-    fn devices(self, host: &cpal::Host) -> Result<Vec<(String, cpal::Device)>, AudioError> {
+    /// The devices, with unique names. Ones that fail to report an id or a
+    /// name are left out.
+    fn devices(self, host: &cpal::Host) -> Result<Vec<Listed>, AudioError> {
         let devices: Vec<cpal::Device> = match self {
             Direction::Input => host.input_devices().map_err(device_error)?.collect(),
             Direction::Output => host.output_devices().map_err(device_error)?.collect(),
         };
-        Ok(devices
+        let mut found = Vec::new();
+        let mut names = Vec::new();
+        for device in devices {
+            let (Ok(id), Ok(description)) = (device.id(), device.description()) else {
+                continue;
+            };
+            names.push(Name {
+                name: description.name().to_owned(),
+                // ALSA puts the card on the first line and what the PCM is
+                // for (raw hardware, with conversions...) on the next.
+                detail: description.extended().nth(1).map(str::to_owned),
+                id: id.id().to_owned(),
+            });
+            found.push((id.to_string(), device));
+        }
+        Ok(found
             .into_iter()
-            .filter_map(|device| Some((device.description().ok()?.name().to_owned(), device)))
+            .zip(unique_names(&names))
+            .map(|((id, device), name)| Listed { id, name, device })
             .collect())
     }
 
@@ -105,21 +134,59 @@ impl Direction {
         let no_device = |name: &str| AudioError::NoDevice(name.to_owned());
         match choice {
             DeviceChoice::Default => self.default(&host).ok_or_else(|| no_device("default")),
-            DeviceChoice::Named(wanted) => self
-                .devices(&host)?
-                .into_iter()
-                .find(|(name, _)| name == wanted)
-                .map(|(_, device)| device)
-                .ok_or_else(|| no_device(wanted)),
+            DeviceChoice::Id(wanted) => {
+                let mut devices = self.devices(&host)?;
+                let index = devices
+                    .iter()
+                    .position(|d| d.id == *wanted)
+                    .or_else(|| devices.iter().position(|d| d.name == *wanted))
+                    .ok_or_else(|| no_device(wanted))?;
+                Ok(devices.swap_remove(index).device)
+            }
             DeviceChoice::ClosestTo(wanted) => {
                 let mut devices = self.devices(&host)?;
-                match closest_name(wanted, devices.iter().map(|(name, _)| name.as_str())) {
-                    Some(index) => Ok(devices.swap_remove(index).1),
+                match closest_name(wanted, devices.iter().map(|d| d.name.as_str())) {
+                    Some(index) => Ok(devices.swap_remove(index).device),
                     None => self.default(&host).ok_or_else(|| no_device(wanted)),
                 }
             }
         }
     }
+}
+
+/// What a device calls itself.
+struct Name {
+    name: String,
+    /// More about the device, if the host says more.
+    detail: Option<String>,
+    /// The host's id for it, without the host prefix.
+    id: String,
+}
+
+/// One name per device, telling apart devices that share one: ALSA gives
+/// every PCM of a card (`hw:`, `plughw:`, `sysdefault:`, `front:`...) the
+/// card's name. A shared name gets the detail added, and if that isn't
+/// enough, the id.
+fn unique_names(names: &[Name]) -> Vec<String> {
+    fn shared(labels: &[String], label: &str) -> bool {
+        labels.iter().filter(|l| *l == label).count() > 1
+    }
+    let plain: Vec<String> = names.iter().map(|n| n.name.clone()).collect();
+    let detailed: Vec<String> = names
+        .iter()
+        .map(|n| match &n.detail {
+            Some(detail) if shared(&plain, &n.name) => format!("{} ({detail})", n.name),
+            _ => n.name.clone(),
+        })
+        .collect();
+    names
+        .iter()
+        .zip(&detailed)
+        .map(|(n, label)| match shared(&detailed, label) {
+            true => format!("{label} [{}]", n.id),
+            false => label.clone(),
+        })
+        .collect()
 }
 
 /// Index of the name sharing the most words with `wanted`, counting only
@@ -504,6 +571,42 @@ mod tests {
     fn closest_name_prefers_fewer_extra_words() {
         let names = ["Speakers Digital Output", "Speakers"];
         assert_eq!(closest("Speakers", &names), Some(1));
+    }
+
+    fn name(name: &str, detail: Option<&str>, id: &str) -> Name {
+        Name {
+            name: name.into(),
+            detail: detail.map(Into::into),
+            id: id.into(),
+        }
+    }
+
+    #[test]
+    fn unique_names_tell_apart_one_cards_pcms() {
+        let card = "Yeti Stereo Microphone, USB Audio";
+        let raw = "Direct hardware device without any conversions";
+        let plug = "Hardware device with all software conversions";
+        let names = unique_names(&[
+            name(card, Some(raw), "hw:CARD=Microphone,DEV=0"),
+            name(card, Some(plug), "plughw:CARD=Microphone,DEV=0"),
+            name(card, Some(plug), "plughw:CARD=1,DEV=0"),
+            name("PipeWire Sound Server", None, "pipewire"),
+        ]);
+        assert_eq!(
+            names,
+            [
+                format!("{card} ({raw})"),
+                format!("{card} ({plug}) [plughw:CARD=Microphone,DEV=0]"),
+                format!("{card} ({plug}) [plughw:CARD=1,DEV=0]"),
+                "PipeWire Sound Server".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn unique_names_fall_back_to_the_id() {
+        let names = unique_names(&[name("USB Audio", None, "a"), name("USB Audio", None, "b")]);
+        assert_eq!(names, ["USB Audio [a]", "USB Audio [b]"]);
     }
 
     #[test]

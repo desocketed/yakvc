@@ -1,6 +1,7 @@
 package io.github.desocketed.yakvc;
 
 import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import io.github.desocketed.yakvc.config.ClientConfig;
 import io.github.desocketed.yakvc.config.PlayerVolumes;
@@ -16,6 +17,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -214,20 +216,24 @@ public final class GameStateFeeder {
 		return null;
 	}
 
-	/** The audio devices' names, inputs or outputs. Empty if the system can't list them. */
-	public List<String> deviceNames(boolean inputs) {
-		if (closed) return List.of();
-		List<String> names = new ArrayList<>();
+	/**
+	 * The audio devices, inputs or outputs, as id to name in the system's order. The id goes in the config, the name
+	 * is for the player. Empty if the system can't list them.
+	 */
+	public Map<String, String> devices(boolean inputs) {
+		if (closed) return Map.of();
+		Map<String, String> devices = new LinkedHashMap<>();
 		try {
-			JsonElement devices = JsonParser.parseString(bridge.listDevices(engine));
-			for (JsonElement device : devices.getAsJsonObject().getAsJsonArray(inputs ? "inputs" : "outputs")) {
-				names.add(device.getAsJsonObject().get("name").getAsString());
+			JsonElement listed = JsonParser.parseString(bridge.listDevices(engine));
+			for (JsonElement device : listed.getAsJsonObject().getAsJsonArray(inputs ? "inputs" : "outputs")) {
+				JsonObject fields = device.getAsJsonObject();
+				devices.put(fields.get("id").getAsString(), fields.get("name").getAsString());
 			}
 		} catch (YakVcException e) {
 			if (e.poisoned()) fail(e);
 			else YakVcClient.LOGGER.warn("Could not list audio devices: {}", e.getMessage());
 		}
-		return names;
+		return devices;
 	}
 
 	private void refreshBlocked(Minecraft minecraft, Set<UUID> players) {

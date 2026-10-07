@@ -109,6 +109,7 @@ fn devices(json: bool) -> anyhow::Result<()> {
         for device in list {
             let default = if device.is_default { " (default)" } else { "" };
             println!("  {}{default}", device.name);
+            println!("    id: {}", device.id);
         }
     };
     print("Inputs", &devices.inputs);

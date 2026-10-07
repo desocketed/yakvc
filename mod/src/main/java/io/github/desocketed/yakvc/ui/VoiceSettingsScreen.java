@@ -8,6 +8,7 @@ import io.github.desocketed.yakvc.natives.EngineEvent;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.OptionInstance;
@@ -28,7 +29,7 @@ import org.jspecify.annotations.Nullable;
 public final class VoiceSettingsScreen extends OptionsSubScreen {
 	private static final String PUSH_TO_TALK = "push_to_talk";
 	private static final String VOICE = "voice";
-	/** Stands for an unset device name: the system default microphone, or speakers that follow the game. */
+	/** Stands for an unset device: the system default microphone, or speakers that follow the game. */
 	private static final String DEFAULT_DEVICE = "";
 
 	private final GameStateFeeder feeder;
@@ -75,9 +76,9 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.bitrate.tooltip")),
 				(caption, value) -> Options.genericValueLabel(caption, Component.translatable("yakvc.settings.bitrate.kbps", value)),
 				new OptionInstance.IntRange(16, 64), Math.clamp(initial.bitrate() / 1000, 16, 64), OptionInstance.NO_ACTION);
-		inputDevice = device("yakvc.settings.input_device", feeder.deviceNames(true), initial.inputDevice(),
+		inputDevice = device("yakvc.settings.input_device", feeder.devices(true), initial.inputDevice(),
 				"yakvc.settings.input_device.default");
-		outputDevice = device("yakvc.settings.output_device", feeder.deviceNames(false), initial.outputDevice(),
+		outputDevice = device("yakvc.settings.output_device", feeder.devices(false), initial.outputDevice(),
 				"yakvc.settings.output_device.default");
 		relayOnly = OptionInstance.createBoolean("yakvc.settings.relay_only",
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.relay_only.tooltip")),
@@ -97,15 +98,19 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 				feeder.debugOverlay(), feeder::setDebugOverlay);
 	}
 
-	/** A device picker over the listed names, plus the configured one if it is unplugged right now. */
-	private static Dropdown device(String caption, List<String> names, @Nullable String current,
+	/**
+	 * A device picker over the listed devices' ids, shown by name, plus the configured one if it is unplugged right
+	 * now. The engine also accepts a name there, as configs from before device ids hold.
+	 */
+	private static Dropdown device(String caption, Map<String, String> devices, @Nullable String current,
 			String defaultLabel) {
 		List<String> values = new ArrayList<>();
 		values.add(DEFAULT_DEVICE);
-		values.addAll(names);
+		values.addAll(devices.keySet());
 		if (current != null && !values.contains(current)) values.add(current);
 		return new Dropdown(Component.translatable(caption), values, current == null ? DEFAULT_DEVICE : current,
-				value -> value.isEmpty() ? Component.translatable(defaultLabel) : Component.literal(value));
+				value -> value.isEmpty() ? Component.translatable(defaultLabel)
+						: Component.literal(devices.getOrDefault(value, value)));
 	}
 
 	@Override
@@ -216,7 +221,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		}
 	}
 
-	private static @Nullable String deviceValue(String name) {
-		return name.equals(DEFAULT_DEVICE) ? null : ClientConfig.quote(name);
+	private static @Nullable String deviceValue(String id) {
+		return id.equals(DEFAULT_DEVICE) ? null : ClientConfig.quote(id);
 	}
 }
