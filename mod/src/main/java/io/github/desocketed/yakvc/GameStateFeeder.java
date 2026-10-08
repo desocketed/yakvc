@@ -431,7 +431,8 @@ public final class GameStateFeeder {
 		}
 	}
 
-	private void handle(EngineEvent event) {
+	/** Acts on one engine event. Public for the client gametest, which feeds it errors; must run on the client thread. */
+	public void handle(EngineEvent event) {
 		switch (event) {
 			case EngineEvent.JoinRequest(int id, String serverId) ->
 					pendingJoins.add(new PendingJoin(id, joiner.joinAsync(serverId)));
