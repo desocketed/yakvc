@@ -160,6 +160,41 @@ async fn the_newest_link_is_still_heard_once_an_older_one_closes() {
     assert!(alice.recording().audible_frames() > before + 10);
 }
 
+/// When the newest link closes, the older one still up takes over, so the
+/// player is heard again rather than lost (#114).
+#[tokio::test(flavor = "multi_thread")]
+async fn an_older_link_is_heard_once_the_newest_closes() {
+    let net = TestNet::start_without_accounts(DAY).await;
+    let alice = net.client().name("alice").offline().start().await;
+    let first = net.client().name("bob").offline().tone(440.0).start().await;
+    let bob = first.uuid();
+    see_each_other(&[&alice, &first]);
+    alice.move_to(Vec3::new(0.0, 64.0, 0.0));
+    first.move_to(Vec3::new(5.0, 64.0, 0.0));
+    links_to(&alice, bob, 1).await;
+
+    // A second, silent "bob" links up after the first, which then talks
+    // unheard (as `only_the_newest_link_for_a_player_is_heard` checks).
+    let second = net.client().name("bob").offline().start().await;
+    second.sees(&[&alice]);
+    second.move_to(Vec3::new(5.0, 64.0, 0.0));
+    links_to(&alice, bob, 2).await;
+    first.talk(true);
+    sleep(Duration::from_millis(500)).await;
+
+    let before = alice.recording().audible_frames();
+    let closed = std::time::Instant::now();
+    drop(second);
+    while alice.recording().audible_frames() < before + 10 {
+        assert!(
+            closed.elapsed() < Duration::from_secs(1),
+            "the first bob not heard: {:?}",
+            alice.engine().peers()
+        );
+        sleep(Duration::from_millis(20)).await;
+    }
+}
+
 /// Waits until `listener` has `n` direct links to the player `to`.
 async fn links_to(listener: &TestClient, to: Uuid, n: usize) {
     for _ in 0..500 {
