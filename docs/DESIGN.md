@@ -492,10 +492,12 @@ libopus is built from source by the `opus` crate (via `opusic-sys`, feature `bun
 
 While the repository is private, Actions minutes are limited, so CI runs on version tags, pull requests and manual dispatch, not on every push to `main`; `scripts/ci-local.sh` runs the Linux checks before each push instead. A `nix` job runs `nix flake check`.
 
-1. `rust`: `cargo fmt --check`, `cargo clippy --workspace --all-targets -D warnings`, `cargo xtask header --check`, `cargo deny check`, `cargo test --workspace` (includes `yakvc-testkit` integration tests with dev auth and null audio).
+1. `rust`: `cargo fmt --check`, `cargo clippy --workspace --all-targets -D warnings`, the same for `yakvc-client`, `yakvc-ffi` and `yakvc-cli` alone (in a workspace build `yakvc-testkit` turns on their `sim` feature, so this checks them as they ship), `cargo xtask header --check`, `cargo deny check` (every release target, the musl server build included), `cargo test --workspace` (includes `yakvc-testkit` integration tests with dev auth and null audio).
 2. `natives` (matrix: ubuntu, windows, macos): `cargo xtask natives --target <list>`, upload artifacts.
 3. `mod`: download natives, `cargo xtask dist --from artifacts/`, run Fabric client gametests (load mod, create engine, destroy). Loom runs them under Xvfb on Linux when `CI` is set.
 4. `release` (on a `v<version>` tag): a GitHub release (prerelease when the version has a `-`) with the jar, the `yakvc-cli` binaries (for `net report` in bug reports, built in the `natives` jobs) and the static server binary; the server image to GHCR; the jar to Modrinth and CurseForge with `mc-publish`, each skipped until its token secret and project ID variable exist.
+
+Third-party actions (anything not under `actions/`) are pinned to full commit SHAs, with the release named in a comment, so a moved tag can't change what runs with the release secrets.
 
 **Licensing**
 
