@@ -5,6 +5,7 @@ use std::sync::Mutex;
 
 use iroh::endpoint::Connection;
 use tokio::sync::mpsc;
+use tokio::sync::mpsc::error::TrySendError;
 use yakvc_shared::rdv::{CloseCode, ServerMsg};
 use yakvc_shared::{EndpointAddr, EndpointId, PairToken, SignedTicket, Uuid};
 
@@ -24,7 +25,7 @@ struct Inner {
 struct Client {
     conn: Connection,
     /// Messages for the connection's writer task.
-    outbox: mpsc::UnboundedSender<ServerMsg>,
+    outbox: Outbox,
     uuid: Uuid,
     /// Whether the current ticket is verified.
     verified: bool,
@@ -43,7 +44,7 @@ impl Sessions {
         verified: bool,
         ticket: SignedTicket,
         addr: EndpointAddr,
-        outbox: mpsc::UnboundedSender<ServerMsg>,
+        outbox: Outbox,
     ) -> bool {
         let id = conn.remote_id();
         let mut inner = self.0.lock().unwrap();
@@ -179,10 +180,21 @@ impl Inner {
     fn deliver(&self, notices: Vec<Notice>) {
         for notice in notices {
             if let Some(client) = self.clients.get(&notice.to) {
-                // A send only fails while that connection is shutting down.
-                let _ = client.outbox.send(notice.msg);
+                push(&client.conn, &client.outbox, notice.msg);
             }
         }
+    }
+}
+
+/// Messages for a connection's writer task.
+pub(crate) type Outbox = mpsc::Sender<ServerMsg>;
+
+/// Queues `msg` for `conn`'s writer. A full outbox means the client stopped
+/// reading; it is closed rather than queued for without limit.
+pub(crate) fn push(conn: &Connection, outbox: &Outbox, msg: ServerMsg) {
+    // A closed outbox only happens while that connection is shutting down.
+    if let Err(TrySendError::Full(_)) = outbox.try_send(msg) {
+        close(conn, CloseCode::LimitExceeded, "not reading");
     }
 }
 
