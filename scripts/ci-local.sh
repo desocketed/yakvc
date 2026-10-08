@@ -21,6 +21,8 @@ step "rust: fmt"
 cargo fmt --all --check
 step "rust: clippy"
 cargo clippy --workspace --all-targets --all-features -- -D warnings
+step "rust: clippy on the client crates as they ship (no sim feature)"
+cargo clippy -p yakvc-client -p yakvc-ffi -p yakvc-cli --all-targets -- -D warnings
 step "rust: header"
 cargo xtask header --check
 step "rust: test"
