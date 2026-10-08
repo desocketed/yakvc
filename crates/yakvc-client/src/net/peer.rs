@@ -653,11 +653,13 @@ impl FloodGuard {
 mod tests {
     use std::collections::HashSet;
 
+    use iroh::Endpoint;
     use iroh::endpoint::{ConnectionError, VarInt};
     use yakvc_shared::{IssuerKey, TicketVerifier, offline_uuid};
 
     use super::super::test_util::{
-        connect, eventually, loopback_addr, loopback_endpoint, probe, signed_ticket, ticket, uuid,
+        connect, eventually, loopback_addr, loopback_endpoint, probe, signed_ticket, ticket,
+        ticket_lasting, uuid,
     };
     use super::*;
     use crate::event::{self, Event, Events, PeerState};
@@ -1147,6 +1149,77 @@ mod tests {
         .await;
         let no_event = tokio::time::timeout(Duration::from_millis(300), bob.next_peer_state());
         assert!(no_event.await.is_err(), "bob never accepted alice");
+    }
+
+    /// Alice and Bob linked, Bob holding `bob_ticket`.
+    async fn linked(
+        issuer: &IssuerKey,
+        bob_ticket: impl FnOnce(&Endpoint) -> SignedTicket,
+    ) -> (Side, Side) {
+        let alice = side(1, issuer, issuer).await;
+        let bob = side(2, issuer, issuer).await;
+        let ticket = bob_ticket(&bob.net.inner().endpoint);
+        bob.net.inner().own_ticket.send_replace(Some(ticket));
+        alice.sees(&[2]);
+        bob.sees(&[1]);
+        alice.dial(&bob).await.unwrap();
+        eventually("both sides link", || {
+            alice.net.peers().len() == 1 && bob.net.peers().len() == 1
+        })
+        .await;
+        (alice, bob)
+    }
+
+    fn links_bob(alice: &Side) -> bool {
+        let peers = alice.net.peers();
+        peers.len() == 1 && peers[0].state == PeerState::Direct
+    }
+
+    #[tokio::test]
+    async fn a_peer_whose_ticket_runs_out_is_closed() {
+        let issuer = IssuerKey::generate();
+        let (alice, _bob) = linked(&issuer, |endpoint| {
+            ticket_lasting(&issuer, uuid(2), endpoint, Duration::from_secs(2))
+        })
+        .await;
+        // The ticket has at most two seconds left; `eventually` waits five.
+        eventually("alice closes the expired link", || {
+            alice.net.peers().is_empty()
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn a_ticket_update_keeps_the_link_past_the_old_expiry() {
+        let issuer = IssuerKey::generate();
+        let (alice, bob) = linked(&issuer, |endpoint| {
+            ticket_lasting(&issuer, uuid(2), endpoint, Duration::from_secs(2))
+        })
+        .await;
+        let renewed = ticket(&issuer, uuid(2), &bob.net.inner().endpoint);
+        bob.net.inner().own_ticket.send_replace(Some(renewed));
+
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        assert!(links_bob(&alice), "{:?}", alice.net.peers());
+    }
+
+    /// A `TicketUpdate` gets the handshake's checks: another issuer or
+    /// another player closes the link.
+    #[tokio::test]
+    async fn a_ticket_update_that_fails_the_checks_closes_the_link() {
+        let issuer = IssuerKey::generate();
+        let updates: [fn(&IssuerKey, &Endpoint) -> SignedTicket; 2] = [
+            |_, endpoint| ticket(&IssuerKey::generate(), uuid(2), endpoint),
+            |issuer, endpoint| ticket(issuer, uuid(3), endpoint),
+        ];
+        for update in updates {
+            let (alice, bob) = linked(&issuer, |endpoint| ticket(&issuer, uuid(2), endpoint)).await;
+            // Player 3 is visible too, so only the change of player fails.
+            alice.sees(&[2, 3]);
+            let bad = update(&issuer, &bob.net.inner().endpoint);
+            bob.net.inner().own_ticket.send_replace(Some(bad));
+            eventually("alice closes the link", || alice.net.peers().is_empty()).await;
+        }
     }
 
     #[test]

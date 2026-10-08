@@ -100,6 +100,19 @@ pub(crate) fn ticket(issuer: &IssuerKey, uuid: Uuid, endpoint: &Endpoint) -> Sig
     signed_ticket(issuer, uuid, &name, endpoint, true)
 }
 
+/// Like [`ticket`], but lasting `lifetime` (whole seconds, counted from the
+/// start of the current second) instead of an hour.
+pub(crate) fn ticket_lasting(
+    issuer: &IssuerKey,
+    uuid: Uuid,
+    endpoint: &Endpoint,
+    lifetime: Duration,
+) -> SignedTicket {
+    let name = format!("player{}", uuid.as_bytes()[0]);
+    let body = TicketBody::new(uuid, name, endpoint.id(), true, SystemTime::now(), lifetime);
+    issuer.sign(&body)
+}
+
 /// A ticket for `endpoint` as `uuid` and `name`, signed by `issuer`.
 pub(crate) fn signed_ticket(
     issuer: &IssuerKey,
