@@ -10,7 +10,7 @@ use yakvc_shared::rdv::{self, CloseCode};
 use yakvc_shared::{EndpointAddr, EndpointId, IssuerId, IssuerKey, RelayUrl, SecretKey};
 
 use crate::auth::Auth;
-use crate::limits::{RateLimiter, Slots, TokenBucket};
+use crate::limits::{IpSlots, RateLimiter, Slots, TokenBucket};
 use crate::metrics::Metrics;
 use crate::mojang::SessionServer;
 use crate::relay::RelayGate;
@@ -100,6 +100,10 @@ pub struct Limits {
     pub unknown_ip_challenges_per_min: u32,
     /// Connections that may be open at once without being registered yet.
     pub max_unregistered: usize,
+    /// The same, per source IP (IPv6: per /64), so that one host can't take
+    /// every slot. Connections through the relay only count against
+    /// `max_unregistered`, since their IP is unknown.
+    pub max_unregistered_per_ip: usize,
 }
 
 /// Live counters, for metrics and tests.
@@ -134,6 +138,7 @@ pub(crate) struct Shared {
     pub mojang_checks: Mutex<TokenBucket>,
     pub unknown_ip_challenges: Mutex<TokenBucket>,
     pub unregistered: Slots,
+    pub unregistered_per_ip: IpSlots,
     pub metrics: Metrics,
 }
 
@@ -302,6 +307,7 @@ impl ServerBuilder {
                 Instant::now(),
             )),
             unregistered: Slots::new(self.limits.max_unregistered),
+            unregistered_per_ip: IpSlots::new(self.limits.max_unregistered_per_ip),
             limits: self.limits,
             sessions,
             relay_gate,
@@ -404,6 +410,7 @@ impl Default for Limits {
             mojang_checks_per_min: 50,
             unknown_ip_challenges_per_min: 20,
             max_unregistered: 500,
+            max_unregistered_per_ip: 10,
         }
     }
 }

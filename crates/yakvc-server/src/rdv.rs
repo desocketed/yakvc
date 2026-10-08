@@ -17,11 +17,11 @@ use iroh::endpoint::{Connection, Incoming, IncomingAddr, RecvStream, SendStream}
 use tokio::sync::mpsc;
 use yakvc_shared::auth::Nonce;
 use yakvc_shared::rdv::{ClientMsg, CloseCode, Hello, ServerMsg, addr_fits};
-use yakvc_shared::wire::{WireError, read_msg, write_msg};
+use yakvc_shared::wire::{MAX_MESSAGE_LEN, WireError, read_msg_max, write_msg};
 use yakvc_shared::{EndpointId, Ticket, Uuid, is_offline_player};
 
 use crate::auth::{JoinCheck, proves};
-use crate::limits::{Slot, TokenBucket, ip_key};
+use crate::limits::{IpSlot, Slot, TokenBucket, ip_key};
 use crate::server::Limits;
 use crate::server::Shared;
 use crate::sessions::{Outbox, close, push};
@@ -35,6 +35,10 @@ const FLUSH_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// How long one message may wait for the client to make room for it.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Largest message accepted before registering. A `Hello` with the largest
+/// address `addr_fits` allows and a cached ticket is about 1 KiB.
+const MAX_UNREGISTERED_MSG_LEN: usize = 4096;
 
 /// Minecraft names are at most 16 characters.
 const MAX_NAME_LEN: usize = 16;
@@ -54,6 +58,16 @@ pub(crate) async fn serve(shared: Arc<Shared>, incoming: Incoming) {
     let Some(unregistered) = shared.unregistered.take() else {
         incoming.refuse();
         return;
+    };
+    let unregistered_ip = match ip {
+        Some(ip) => match shared.unregistered_per_ip.take(ip) {
+            Some(slot) => Some(slot),
+            None => {
+                incoming.refuse();
+                return;
+            }
+        },
+        None => None,
     };
     let Ok(conn) = incoming.await else {
         return;
@@ -82,7 +96,7 @@ pub(crate) async fn serve(shared: Arc<Shared>, incoming: Incoming) {
         hello: None,
         challenge: None,
         pair_updates: None,
-        unregistered: Some(unregistered),
+        unregistered: Some((unregistered, unregistered_ip)),
     };
     let code = match client.run().await {
         Ok(()) => CloseCode::Normal,
@@ -139,8 +153,9 @@ struct Client {
     challenge: Option<Nonce>,
     /// Present once registered.
     pair_updates: Option<TokenBucket>,
-    /// Held until registered, against `Limits::max_unregistered`.
-    unregistered: Option<Slot>,
+    /// Held until registered, against `Limits::max_unregistered` and (with
+    /// a known IP) `max_unregistered_per_ip`.
+    unregistered: Option<(Slot, Option<IpSlot>)>,
 }
 
 impl Client {
@@ -155,7 +170,14 @@ impl Client {
             } else {
                 (self.auth_deadline, CloseCode::ProtocolError)
             };
-            let msg = tokio::time::timeout_at(deadline, read_msg(&mut self.recv))
+            // Before registering only `Hello` is large, so a small limit keeps
+            // unauthenticated connections from making us allocate much.
+            let max_len = if self.is_registered() {
+                MAX_MESSAGE_LEN
+            } else {
+                MAX_UNREGISTERED_MSG_LEN
+            };
+            let msg = tokio::time::timeout_at(deadline, read_msg_max(&mut self.recv, max_len))
                 .await
                 .map_err(|_| code)?;
             let msg = match msg {

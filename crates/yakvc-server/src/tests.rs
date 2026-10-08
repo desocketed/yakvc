@@ -437,6 +437,44 @@ async fn unregistered_connections_are_capped() {
 }
 
 #[tokio::test]
+async fn unregistered_connections_are_capped_per_ip() {
+    let limits = Limits {
+        max_unregistered_per_ip: 1,
+        ..Limits::default()
+    };
+    let server = builder()
+        .insecure_dev_auth()
+        .limits(limits)
+        .spawn()
+        .await
+        .unwrap();
+    let mut alice = Client::connect(&server, "alice").await;
+
+    let endpoint = loopback_endpoint().await;
+    let connect = endpoint.connect(server.endpoint_addr(), rdv::ALPN);
+    let refused = tokio::time::timeout(TIMEOUT, connect)
+        .await
+        .expect("connect timed out");
+    assert!(refused.is_err());
+
+    alice.register().await;
+    let mut bob = Client::connect(&server, "bob").await;
+    bob.register().await;
+}
+
+#[tokio::test]
+async fn large_messages_before_registering_are_a_protocol_error() {
+    let server = dev_server().await;
+    let mut client = Client::connect(&server, "alice").await;
+    let ClientMsg::Hello(mut hello) = client.hello(None) else {
+        unreachable!()
+    };
+    hello.mod_version = "x".repeat(5000);
+    client.send(ClientMsg::Hello(hello)).await;
+    assert_eq!(client.close_code().await, code(CloseCode::ProtocolError));
+}
+
+#[tokio::test]
 async fn too_many_pairs_closes_the_session() {
     let limits = Limits {
         max_pairs: 2,
