@@ -21,7 +21,7 @@ use yakvc_shared::wire::{WireError, read_msg, write_msg};
 use yakvc_shared::{EndpointId, Ticket, Uuid, is_offline_player};
 
 use crate::auth::{JoinCheck, proves};
-use crate::limits::{Slot, TokenBucket};
+use crate::limits::{Slot, TokenBucket, ip_key};
 use crate::server::Limits;
 use crate::server::Shared;
 use crate::sessions::{Outbox, close, push};
@@ -426,7 +426,7 @@ impl Client {
         let shared = &self.shared;
         let endpoint_ok = shared.auth_per_endpoint.lock().unwrap().allow(self.id, now);
         let ip_ok = match self.ip {
-            Some(ip) => shared.auth_per_ip.lock().unwrap().allow(ip, now),
+            Some(ip) => shared.auth_per_ip.lock().unwrap().allow(ip_key(ip), now),
             None => true,
         };
         if endpoint_ok && ip_ok {
