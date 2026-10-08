@@ -81,6 +81,8 @@ pub struct TestClient {
     engine: Arc<Engine>,
     /// The engine's events, less the `JoinRequest`s [`answer_joins`] took.
     events: mpsc::UnboundedReceiver<Event>,
+    /// Whether [`answer_joins`] still answers `JoinRequest`s.
+    answering_joins: Arc<AtomicBool>,
     recording: Recording,
     players: Players,
     /// The last input sent to the engine, so [`TestClient::talk`] and
@@ -350,7 +352,8 @@ impl<'a> ClientBuilder<'a> {
         engine.set_identity(uuid, &name);
 
         let engine = Arc::new(engine);
-        let events = answer_joins(&engine, events);
+        let answering_joins = Arc::new(AtomicBool::new(true));
+        let events = answer_joins(&engine, events, answering_joins.clone());
         self.net.players.lock().expect("players lock").push(Player {
             uuid,
             pos: Vec3::default(),
@@ -362,6 +365,7 @@ impl<'a> ClientBuilder<'a> {
             uuid,
             engine,
             events,
+            answering_joins,
             recording,
             players: self.net.players.clone(),
             input: Mutex::new(Input::default()),
@@ -372,6 +376,12 @@ impl<'a> ClientBuilder<'a> {
 impl TestClient {
     pub fn uuid(&self) -> Uuid {
         self.uuid
+    }
+
+    /// Leaves every later `JoinRequest` unanswered, so this client can no
+    /// longer renew its ticket (or register again) and its ticket runs out.
+    pub fn stop_renewing(&self) {
+        self.answering_joins.store(false, Ordering::Relaxed);
     }
 
     pub fn engine(&self) -> &Engine {
@@ -486,13 +496,21 @@ impl TestClient {
 /// players have no Mojang account) and passes the other events on. Answering
 /// only while a test waits would leave a client that isn't waiting unable to
 /// renew its ticket, and its links would drop when the ticket ran out.
-fn answer_joins(engine: &Arc<Engine>, mut events: Events) -> mpsc::UnboundedReceiver<Event> {
+/// Once `answering` is cleared, requests are left unanswered.
+fn answer_joins(
+    engine: &Arc<Engine>,
+    mut events: Events,
+    answering: Arc<AtomicBool>,
+) -> mpsc::UnboundedReceiver<Event> {
     let (tx, rx) = mpsc::unbounded_channel();
     // Weak, so dropping the client still shuts the engine down.
     let engine = Arc::downgrade(engine);
     tokio::spawn(async move {
         while let Some(event) = events.next().await {
             if let Event::JoinRequest { id, .. } = event {
+                if !answering.load(Ordering::Relaxed) {
+                    continue;
+                }
                 match engine.upgrade() {
                     Some(engine) => engine.complete_join(id, false),
                     None => break,
