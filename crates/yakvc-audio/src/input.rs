@@ -119,7 +119,7 @@ fn denoise(denoiser: &mut DenoiseState<'static>, frame: &mut MonoFrame) {
 }
 
 /// RMS level in dBFS.
-pub(crate) fn level_db(frame: &[f32]) -> f32 {
+pub fn level_db(frame: &[f32]) -> f32 {
     let mean_square = frame.iter().map(|s| s * s).sum::<f32>() / frame.len() as f32;
     if mean_square <= 0.0 {
         return SILENCE_DB;
