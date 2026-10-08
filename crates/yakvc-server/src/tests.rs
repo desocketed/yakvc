@@ -333,14 +333,14 @@ async fn a_client_that_stops_reading_is_closed() {
     }
 }
 
+/// Only our relay's URL reaches peers: dialling any other relay would show
+/// a `relay_only` client's IP to whoever runs it.
 #[tokio::test]
-async fn only_known_relays_are_forwarded() {
-    let extra: RelayUrl = "https://extra.example.com".parse().unwrap();
+async fn only_our_relay_is_forwarded() {
     let evil: RelayUrl = "https://evil.example.com".parse().unwrap();
     let server = builder()
         .insecure_dev_auth()
         .relay(relay_options())
-        .extra_relays(vec![extra.clone()])
         .spawn()
         .await
         .unwrap();
@@ -372,11 +372,9 @@ async fn only_known_relays_are_forwarded() {
         next_addr().await,
         EndpointAddr::new(alice.id()).with_ip_addr(ip)
     );
-    for relay in [extra, own] {
-        let addr = EndpointAddr::new(alice.id()).with_relay_url(relay);
-        alice.send(ClientMsg::UpdateAddr(addr.clone())).await;
-        assert_eq!(next_addr().await, addr);
-    }
+    let addr = EndpointAddr::new(alice.id()).with_relay_url(own);
+    alice.send(ClientMsg::UpdateAddr(addr.clone())).await;
+    assert_eq!(next_addr().await, addr);
     let addr = EndpointAddr::new(alice.id()).with_relay_url(evil);
     alice.send(ClientMsg::UpdateAddr(addr)).await;
     assert_eq!(next_addr().await, EndpointAddr::new(alice.id()));
@@ -1375,6 +1373,42 @@ async fn shutdown_closes_sessions() {
     alice.register().await;
     server.shutdown().await;
     assert_eq!(alice.close_code().await, code(CloseCode::ShuttingDown));
+}
+
+/// A shut down server lets go of its port, even with the relay's gate
+/// and a live session to keep it, so a restart in the same process works.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_new_server_binds_the_port_after_shutdown() {
+    let port = std::net::UdpSocket::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let bind: std::net::SocketAddr = ([127, 0, 0, 1], port).into();
+    let spawn = || {
+        builder()
+            .bind(bind)
+            .insecure_dev_auth()
+            .relay(relay_options())
+            .spawn()
+    };
+    let server = spawn().await.unwrap();
+    let mut alice = Client::connect(&server, "alice").await;
+    alice.register().await;
+    server.shutdown().await;
+    assert_eq!(alice.close_code().await, code(CloseCode::ShuttingDown));
+
+    // The socket closes in the background, so give it a moment.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    let again = loop {
+        match spawn().await {
+            Ok(server) => break server,
+            Err(e) if tokio::time::Instant::now() >= deadline => panic!("{e}"),
+            Err(_) => tokio::time::sleep(Duration::from_millis(50)).await,
+        }
+    };
+    let mut bob = Client::connect(&again, "bob").await;
+    bob.register().await;
 }
 
 /// A `[::]` bind serves IPv4 too, for the rendezvous (where iroh needs a

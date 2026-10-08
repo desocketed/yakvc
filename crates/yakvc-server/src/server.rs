@@ -44,7 +44,6 @@ pub struct ServerBuilder {
     ticket_lifetime: Duration,
     limits: Limits,
     metrics: Option<SocketAddr>,
-    extra_relays: Vec<RelayUrl>,
 }
 
 /// Embedded relay settings.
@@ -150,8 +149,8 @@ pub(crate) struct Shared {
     pub unregistered: Slots,
     pub unregistered_per_ip: IpSlots,
     pub sessions_per_ip: IpSlots,
-    /// The relays clients may advertise: ours and `extra_relays`.
-    pub relays: Vec<RelayUrl>,
+    /// Our relay, the only one clients may advertise.
+    pub relay_url: Option<RelayUrl>,
     pub metrics: Metrics,
 }
 
@@ -167,7 +166,6 @@ impl Server {
             ticket_lifetime: Duration::from_secs(24 * 3600),
             limits: Limits::default(),
             metrics: None,
-            extra_relays: Vec::new(),
         }
     }
 
@@ -199,22 +197,15 @@ impl Server {
         self.shared.sessions.stats()
     }
 
-    /// Closes every session as a restart would, and keeps serving. For tests
-    /// of clients reconnecting; a restart in the same process can't bind the
-    /// same ports again.
-    #[doc(hidden)]
-    pub fn close_sessions(&self) {
-        self.shared
-            .sessions
-            .close_all(CloseCode::ShuttingDown, "server restarting");
-    }
-
-    /// Closes all sessions and stops the relay.
+    /// Closes all sessions and stops the relay, letting go of every port.
     pub async fn shutdown(mut self) {
-        self.tasks.shutdown().await;
+        // Before the tasks stop: aborting a connection handler skips its
+        // cleanup, so its session would hold the connection, and with it
+        // the endpoint's socket, for as long as the sessions live.
         self.shared
             .sessions
             .close_all(CloseCode::ShuttingDown, "server shutting down");
+        self.tasks.shutdown().await;
         self.endpoint.close().await;
         if let Some(relay) = self.relay {
             let _ = relay.shutdown().await;
@@ -257,15 +248,6 @@ impl ServerBuilder {
 
     pub fn limits(mut self, limits: Limits) -> Self {
         self.limits = limits;
-        self
-    }
-
-    /// Relays besides our own that clients may advertise to each other, for
-    /// a relay run apart from the rendezvous. Any other relay URL is dropped
-    /// from clients' addresses: a peer dialling an arbitrary relay would
-    /// reveal its IP to whoever runs it.
-    pub fn extra_relays(mut self, relays: Vec<RelayUrl>) -> Self {
-        self.extra_relays = relays;
         self
     }
 
@@ -342,7 +324,7 @@ impl ServerBuilder {
             unregistered: Slots::new(self.limits.max_unregistered),
             unregistered_per_ip: IpSlots::new(self.limits.max_unregistered_per_ip),
             sessions_per_ip: IpSlots::new(self.limits.max_sessions_per_ip),
-            relays: relay_url.iter().cloned().chain(self.extra_relays).collect(),
+            relay_url: relay_url.clone(),
             limits: self.limits,
             sessions,
             relay_gate,
