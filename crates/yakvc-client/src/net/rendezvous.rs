@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use iroh::endpoint::{Connection, SendStream};
-use iroh::{EndpointAddr, TransportAddr, Watcher};
+use iroh::{EndpointAddr, EndpointId, RelayUrl, TransportAddr, Watcher};
 use rand::RngExt;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
@@ -31,6 +31,12 @@ const RENEW_WINDOW: Duration = Duration::from_secs(2 * 60 * 60);
 /// [`PAIR_UPDATES_PER_SEC`](yakvc_shared::rdv::PAIR_UPDATES_PER_SEC) with
 /// room left for `UpdateAddr`.
 const PAIR_BATCH_INTERVAL: Duration = Duration::from_millis(250);
+/// How long a new session waits for the rendezvous to list our peers again
+/// before dropping the ones it doesn't. It lists current matches as soon as
+/// it has our pair tokens.
+const RELIST_GRACE: Duration = Duration::from_secs(10);
+/// The longest wait after a rate limit or an auth failure.
+const MAX_AUTH_BACKOFF: Duration = Duration::from_secs(600);
 
 /// Why a session ended.
 #[derive(Debug)]
@@ -57,7 +63,7 @@ pub(super) async fn run(inner: Arc<Inner>, config: RendezvousConfig, ticket_cach
     // Network trouble retries quickly; rate limits and auth failures back off
     // as DESIGN.md "Limits" asks: 10 s doubling to 10 min.
     let mut network_backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(60));
-    let mut auth_backoff = Backoff::new(Duration::from_secs(10), Duration::from_secs(600));
+    let mut auth_backoff = Backoff::new(Duration::from_secs(10), MAX_AUTH_BACKOFF);
     let mut identity = inner.identity.subscribe();
     loop {
         let current = match identity.wait_for(Option::is_some).await {
@@ -198,7 +204,10 @@ impl Session<'_> {
         let mut ticket: Option<Ticket> = None;
         let mut renew_at: Option<Instant> = None;
         // A failed renewal keeps the current ticket and tries again later.
-        let mut renew_backoff = Backoff::new(Duration::from_secs(10), Duration::from_secs(600));
+        let mut renew_backoff = Backoff::new(Duration::from_secs(10), MAX_AUTH_BACKOFF);
+        // Peers listed since registering, and when to drop the others.
+        let mut relisted: HashSet<EndpointId> = HashSet::new();
+        let mut unlist_at: Option<Instant> = None;
 
         loop {
             tokio::select! {
@@ -229,11 +238,12 @@ impl Session<'_> {
                                 let msg = ClientMsg::SetPairs(pairs.iter().copied().collect());
                                 wire::write_msg(send, &msg).await?;
                                 sent_pairs = Some(pairs);
+                                unlist_at = Some(Instant::now() + RELIST_GRACE);
                                 next_batch = Instant::now() + PAIR_BATCH_INTERVAL;
                             }
                         }
                         ServerMsg::RetryAfter { secs } => {
-                            let delay = Duration::from_secs(secs.into());
+                            let delay = retry_after(secs.into());
                             let Some(current) = &ticket else {
                                 // The rendezvous closes the connection next.
                                 return Err(Ended::RetryAfter(delay));
@@ -244,6 +254,8 @@ impl Session<'_> {
                             renew_at = Some(retry_renewal(current, delay));
                         }
                         ServerMsg::PeerAvailable { ticket, addr } => {
+                            relisted.insert(addr.id);
+                            let addr = only_our_relay(addr, self.config.relay.as_ref());
                             self.inner.peer_available(ticket, addr);
                         }
                         ServerMsg::PeerGone(remote) => self.inner.peer_gone(remote),
@@ -295,6 +307,10 @@ impl Session<'_> {
                         wire::write_msg(send, &ClientMsg::AddPairs(added)).await?;
                     }
                     *sent = pairs;
+                }
+                () = sleep_until(unlist_at), if unlist_at.is_some() => {
+                    unlist_at = None;
+                    self.inner.unlist_except(&std::mem::take(&mut relisted));
                 }
                 () = sleep_until(renew_at), if renew_at.is_some() => {
                     renew_at = None;
@@ -375,6 +391,24 @@ fn pair_tokens(me: Uuid, tab_list: &HashSet<Uuid>) -> HashSet<PairToken> {
     tokens.into_iter().collect()
 }
 
+/// The wait a `RetryAfter` asks for, at most the auth backoff's longest, so
+/// a bad value can't stop us from ever coming back.
+fn retry_after(secs: u64) -> Duration {
+    Duration::from_secs(secs).min(MAX_AUTH_BACKOFF)
+}
+
+/// A peer's address with only its direct addresses and our own relay. The
+/// rendezvous passes on what peers advertise, and dialing another relay
+/// would show whoever runs it our IP, even in relay-only mode.
+fn only_our_relay(addr: EndpointAddr, relay: Option<&RelayUrl>) -> EndpointAddr {
+    let addrs = addr.addrs.into_iter().filter(|addr| match addr {
+        TransportAddr::Ip(_) => true,
+        TransportAddr::Relay(url) => Some(url) == relay,
+        _ => false,
+    });
+    EndpointAddr::from_parts(addr.id, addrs)
+}
+
 /// A random point in the ticket's last [`RENEW_WINDOW`], leaving a little
 /// slack before it actually expires.
 fn renewal_time(ticket: &Ticket) -> Instant {
@@ -426,8 +460,10 @@ fn closed_by_rendezvous(code: iroh::endpoint::VarInt) -> Option<Ended> {
             "the rendezvous did not accept the Minecraft session".into(),
         ))
     } else if code == rdv_close(CloseCode::Superseded) {
+        // Either a signed-in player took over this unverified identity, or
+        // the same player started voice chat on more machines than allowed.
         Some(Ended::AuthFailed(
-            "another player, signed in to the Minecraft account, is using this identity".into(),
+            "this player signed in to voice chat somewhere else".into(),
         ))
     } else if code == rdv_close(CloseCode::RateLimited)
         || code == rdv_close(CloseCode::LimitExceeded)
@@ -515,6 +551,35 @@ mod tests {
         // Two messages per batch, with a token a second to spare.
         let batches_per_sec = Duration::from_secs(1).div_duration_f64(PAIR_BATCH_INTERVAL);
         assert!(2.0 * batches_per_sec < f64::from(PAIR_UPDATES_PER_SEC) - 1.0);
+    }
+
+    #[test]
+    fn retry_after_is_capped() {
+        assert_eq!(retry_after(60), Duration::from_secs(60));
+        assert_eq!(retry_after(u32::MAX.into()), MAX_AUTH_BACKOFF);
+    }
+
+    #[test]
+    fn peer_addresses_keep_only_our_relay() {
+        let ours: RelayUrl = "https://relay.example.org".parse().unwrap();
+        let theirs: RelayUrl = "https://attacker.example.com".parse().unwrap();
+        let ip = TransportAddr::Ip("192.0.2.1:4000".parse().unwrap());
+        let id = iroh::SecretKey::generate().public();
+        let addr = EndpointAddr::from_parts(
+            id,
+            [
+                ip.clone(),
+                TransportAddr::Relay(ours.clone()),
+                TransportAddr::Relay(theirs),
+            ],
+        );
+        let expected =
+            EndpointAddr::from_parts(id, [ip.clone(), TransportAddr::Relay(ours.clone())]);
+        assert_eq!(only_our_relay(addr.clone(), Some(&ours)), expected);
+        assert_eq!(
+            only_our_relay(addr, None),
+            EndpointAddr::from_parts(id, [ip])
+        );
     }
 
     #[test]

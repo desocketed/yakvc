@@ -1,3 +1,6 @@
+use std::cell::RefCell;
+use std::panic;
+use std::sync::{Arc, Mutex, Once};
 use std::time::{Duration, SystemTime};
 
 use tokio::sync::mpsc;
@@ -85,15 +88,63 @@ impl Events {
 #[derive(Debug, Clone)]
 pub(crate) struct EventSender {
     tx: mpsc::UnboundedSender<Event>,
+    /// Why the engine failed, shared by every clone. See [`EventSender::fail`].
+    failure: Arc<Mutex<Option<String>>>,
 }
 
 impl EventSender {
     pub(crate) fn send(&self, event: Event) {
         let _ = self.tx.send(event);
     }
+
+    /// Marks the engine failed for good, keeping the first reason, and
+    /// reports it.
+    pub(crate) fn fail(&self, message: String) {
+        self.failure
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get_or_insert_with(|| message.clone());
+        self.send(Event::Error(message));
+    }
+
+    pub(crate) fn failure(&self) -> Option<String> {
+        self.failure
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
 }
 
 pub(crate) fn channel() -> (EventSender, Events) {
     let (tx, rx) = mpsc::unbounded_channel();
-    (EventSender { tx }, Events { rx })
+    let failure = Arc::default();
+    (EventSender { tx, failure }, Events { rx })
+}
+
+thread_local! {
+    /// The engine owning this thread, if it is one of the engine's own.
+    static ENGINE_EVENTS: RefCell<Option<EventSender>> = const { RefCell::new(None) };
+}
+
+/// Marks the current thread as one of the engine's own (the audio thread,
+/// the Tokio workers), so a panic on it fails the engine. Otherwise such a
+/// panic would only end that thread or task, and voice could die quietly
+/// while peers still show as connected. Panics on the caller's threads reach
+/// the caller instead (the FFI catches them).
+pub(crate) fn report_panics_on_this_thread(events: &EventSender) {
+    static HOOK: Once = Once::new();
+    HOOK.call_once(|| {
+        let previous = panic::take_hook();
+        panic::set_hook(Box::new(move |info| {
+            let message = info.payload_as_str().unwrap_or("unknown panic");
+            // `try_with`: the thread may be exiting.
+            let _ = ENGINE_EVENTS.try_with(|events| {
+                if let Some(events) = &*events.borrow() {
+                    events.fail(format!("the voice engine crashed: {message}"));
+                }
+            });
+            previous(info);
+        }));
+    });
+    ENGINE_EVENTS.with(|current| *current.borrow_mut() = Some(events.clone()));
 }
