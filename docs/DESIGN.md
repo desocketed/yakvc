@@ -240,9 +240,9 @@ Two clients are on the same server if each one's UUID is in the other's tab list
 
 One connection per peer, multiplexed by protocol ID, means one handshake and one hole-punch per peer however many protocols are added later.
 
-**Serverless discovery (post-v1)**
+**Serverless discovery (milestone Serverless, after Post-v1)**
 
-The same pair tokens can work as `iroh-gossip` topics bootstrapped from the BitTorrent Mainline DHT. Peers would then authenticate each other directly, either with profile keys (offline, no Mojang call; see the alternative above) or, for accounts without keys, with a Mojang challenge (A sends a nonce, B calls `joinServer`, A calls `hasJoined`), which costs one Mojang round trip per new peer. This removes the rendezvous but is harder to debug, so it stays a fallback behind a config flag.
+The same pair tokens can work as `iroh-gossip` topics bootstrapped from the BitTorrent Mainline DHT. Peers would then authenticate each other directly, either with profile keys (offline, no Mojang call; see the alternative above) or, for accounts without keys, with a Mojang challenge (A sends a nonce, B calls `joinServer`, A calls `hasJoined`), which costs one Mojang round trip per new peer. This removes the rendezvous but is harder to debug. The goal (maintainer, 2026-10-08) is to make it the default, with a self-hosted rendezvous as the option, but only after its open problems are solved and measured (#26, steps #119–#126): a relay that admits players without a rendezvous session, pair tokens an outsider can't compute from two public UUIDs and watch on the DHT, and acceptable join times. Until then it is built behind a config flag.
 
 ## Voice transport and audio pipeline
 
@@ -564,9 +564,10 @@ Build order runs Rust-first: every networking and audio milestone is provable wi
    - Exit: two real accounts on a public online-mode server, no dev flags.
 7. **M6 Beta.** All-platform natives, settings and peer UI, talking indicators, group voice chat (#28), relay-only mode, MOTD opt-out, production server deployed. Check the CurseForge project name is free, and check the default keybinds against popular modpacks. During the beta, resize the VPS from relayed-share and monthly-transfer metrics.
    - Exit: the jar works on Linux; public beta on Modrinth. Checking it on real Windows and macOS waits until after the release (the jar already carries their natives, built in CI).
-8. **Post-v1.** Serverless discovery, OpenAL/HRTF output and a NeoForge port.
+8. **Post-v1.** OpenAL/HRTF output and a NeoForge port.
    - **Read-only Java API for other mods:** talking and peer-state events, plus per-player mute and volume, so HUD and social mods can integrate without data channels.
    - **Generic P2P channels for other mods**, only if mod authors ask for it. This would extract `net` into a separate library mod that other mods register protocols with. It must first solve: per-protocol consent (a mod can't send to peers that haven't installed it), relay quotas per protocol, the fact that every peer learns your IP, a server opt-out covering all protocols, and a stable Java API. Generic position-sharing channels make PvP radar cheats easy, so server-owner opt-out matters more here than for voice.
+9. **Serverless.** Players find and verify each other without the rendezvous (#26), then that becomes the default with self-hosting as the option: relay admission without a rendezvous session, profile-key and peer-to-peer Mojang checks, private pair tokens, discovery over the Mainline DHT and `iroh-gossip`, then testing and measuring before the switch (#119–#126).
 
 ## Sources
 
