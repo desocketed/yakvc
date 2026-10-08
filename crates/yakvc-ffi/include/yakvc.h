@@ -50,7 +50,8 @@
 #define YAKVC_ERR_PANIC -6
 
 /**
- * An earlier call panicked; only `yakvc_destroy` is still allowed.
+ * An earlier call, or one of the engine's own threads, panicked; only
+ * `yakvc_destroy` is still allowed.
  */
 #define YAKVC_ERR_POISONED -7
 

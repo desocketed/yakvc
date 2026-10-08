@@ -151,7 +151,10 @@ impl Voice {
                 let stop = stop.clone();
                 // Built on the audio thread, so a failing audio stack can't
                 // stop the engine from starting.
-                move || AudioLoop::new(shared, from_net, io, stop).run()
+                move || {
+                    crate::event::report_panics_on_this_thread(&shared.events);
+                    AudioLoop::new(shared, from_net, io, stop).run();
+                }
             })
             .expect("spawn audio thread");
         Voice {

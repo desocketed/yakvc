@@ -60,7 +60,8 @@ pub const YAKVC_ERR_START: i32 = -4;
 pub const YAKVC_ERR_AUDIO: i32 = -5;
 /// This call panicked. The engine is now poisoned.
 pub const YAKVC_ERR_PANIC: i32 = -6;
-/// An earlier call panicked; only `yakvc_destroy` is still allowed.
+/// An earlier call, or one of the engine's own threads, panicked; only
+/// `yakvc_destroy` is still allowed.
 pub const YAKVC_ERR_POISONED: i32 = -7;
 /// Not implemented yet. Removed before release.
 pub const YAKVC_ERR_UNIMPLEMENTED: i32 = -99;
@@ -112,6 +113,10 @@ unsafe fn with_engine(
     let Some(engine) = (unsafe { engine.as_ref() }) else {
         return guard(|| Err(FfiError::invalid("engine is null")));
     };
+    // A panic on one of the engine's own threads poisons it too.
+    if let Some(failure) = engine.engine.failure() {
+        return guard(|| Err(FfiError::new(YAKVC_ERR_POISONED, failure)));
+    }
     guard_poisonable(&engine.poisoned, || f(engine))
 }
 
