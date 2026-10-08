@@ -56,6 +56,8 @@ The bars are yellow while Yak VC is connecting to its server (or trying again), 
 - **Voice off: the server opted out with [no-yakvc]**: the server owner turned Yak VC off.
 - **Voice off: the engine stopped**: voice crashed; restart the game.
 
+A grey microphone with **No microphone** means Yak VC gets no sound from your microphone: it is missing, used by another program, or blocked by your system's privacy settings. You can still hear others. A message in the top-right corner says what went wrong (see [below](#when-something-goes-wrong)), and Yak VC tries the microphone again every few seconds.
+
 Under the icons, a speaker and a name show each player who is talking, so you know who it is even when they are behind you.
 
 ## Who is talking
@@ -144,7 +146,7 @@ Under **Troubleshooting**:
 
 ## When something goes wrong
 
-Yak VC shows a message in the top-right corner when voice stops working:
+Yak VC shows a message in the top-right corner when voice, or a part of it, stops working:
 
 ![A Yak VC failure message](guide/toast.png)
 
@@ -156,6 +158,11 @@ Yak VC shows a message in the top-right corner when voice stops working:
 | Voice chat crashed and is off until you restart the game. | Restart the game. If it keeps happening, report it with your game log. |
 | Settings not applied: … | A setting was refused; the message says why. Nothing was changed. |
 | Settings applied but not saved. See the game log. | The settings work until you quit, but Yak VC couldn't write its config file, for example because it is read-only. |
+| Cannot open the microphone: … or The microphone stopped working: … | Check that the microphone is plugged in, not used by another program, and allowed for Java in your system's privacy settings, or pick another one under **Microphone** in the settings. Yak VC keeps trying, and the HUD's microphone turns white again once it works. |
+| Cannot open the speakers: … or The speakers stopped working: … | The same for your speakers or headphones, under **Speakers**. You can still talk. |
+| Voice chat sign-in failed: … | The Yak VC server didn't accept your Minecraft account; the message says why. Yak VC tries again by itself. |
+
+A message that keeps coming back, such as a sign-in that fails at every try, shows at most once every five minutes.
 
 The game log is `logs/latest.log` in your game folder; Yak VC's lines contain `(yakvc)`.
 

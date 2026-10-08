@@ -11,6 +11,7 @@ import io.github.desocketed.yakvc.natives.EngineEvent;
 import io.github.desocketed.yakvc.natives.NativeBridge;
 import io.github.desocketed.yakvc.natives.VoiceStats;
 import io.github.desocketed.yakvc.natives.YakVcException;
+import io.github.desocketed.yakvc.ui.EngineErrorToasts;
 import io.github.desocketed.yakvc.ui.VoiceMenuScreen;
 import io.github.desocketed.yakvc.ui.VoiceToasts;
 import java.lang.foreign.MemorySegment;
@@ -98,6 +99,7 @@ public final class GameStateFeeder {
 	private final Set<UUID> verifiedPeers = new HashSet<>();
 	private final Set<UUID> talking = new LinkedHashSet<>();
 	private int errorEvents;
+	private final EngineErrorToasts errorToasts = new EngineErrorToasts();
 	private boolean micHeard;
 	/** The last microphone level and when it came, for the meter in the settings. */
 	private float micLevelDb = SILENCE_DB;
@@ -469,6 +471,7 @@ public final class GameStateFeeder {
 			case EngineEvent.Error(String message) -> {
 				errorEvents++;
 				YakVcClient.LOGGER.warn("Engine: {}", message);
+				errorToasts.show(message);
 			}
 		}
 	}
@@ -592,5 +595,13 @@ public final class GameStateFeeder {
 	public float micLevelDb() {
 		boolean stale = System.nanoTime() - micLevelNanos > 500_000_000L;
 		return stale ? SILENCE_DB : micLevelDb;
+	}
+
+	/**
+	 * Whether the microphone delivered audio in the last second. Levels come about ten times a second while it does,
+	 * muted or not, so none for a second means it is missing, busy or failed.
+	 */
+	public boolean micWorking() {
+		return micHeard && System.nanoTime() - micLevelNanos < 1_000_000_000L;
 	}
 }

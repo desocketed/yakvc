@@ -97,6 +97,8 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 				throw new AssertionError("the dev rendezvous gave an unverified ticket");
 			}
 			UUID me = context.computeOnClient(mc -> mc.player.getUUID());
+			// The test tone is a working microphone, so the HUD shows no "No microphone".
+			context.waitFor(mc -> feeder.micWorking());
 			hudScreenshot(context, "hud-ready");
 
 			// Push-to-talk sends the test tone, so the engine reports the local player talking.
