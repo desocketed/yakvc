@@ -43,6 +43,29 @@ async fn one_spurt(listener: &mut TestClient, speaker: &TestClient) {
     }
 }
 
+/// A speaker whose link closes mid-spurt stops showing as talking.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_lost_speaker_stops_talking() {
+    let net = TestNet::start().await;
+    let alice = net.client().name("alice").tone(440.0).start().await;
+    let mut bob = net.client().name("bob").start().await;
+    see_each_other(&[&alice, &bob]);
+    alice.move_to(Vec3::new(0.0, 64.0, 0.0));
+    bob.move_to(Vec3::new(5.0, 64.0, 0.0));
+    bob.wait_for_peer(alice.uuid(), PeerState::Direct)
+        .await
+        .unwrap();
+    alice.talk(true);
+    let uuid = alice.uuid();
+    let talking = |want: bool| move |e: &Event| matches!(e, Event::Talking { uuid: u, talking } if *u == uuid && *talking == want);
+    bob.wait_for("alice talking", talking(true)).await.unwrap();
+    // Bob no longer sees alice, which closes the link while she talks.
+    bob.sees(&[]);
+    bob.wait_for("alice gone quiet", talking(false))
+        .await
+        .unwrap();
+}
+
 /// With voice activation, the 300 ms hangover outlasts the 200 ms before DTX
 /// goes quiet, so the spurt's last frame is silenced. The end of talk still
 /// goes out, header only (#71). Noise suppression is off because RNNoise
