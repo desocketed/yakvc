@@ -248,11 +248,15 @@ impl Voice {
                 add(announce.id, &announce.name, announce.locked, uuid);
             }
         }
-        if let Some(own) = &state.group {
-            for group in groups.iter_mut().filter(|g| g.id == own.key.id()) {
-                group.joined = true;
-            }
+        for group in &mut groups {
+            group.joined = state
+                .group
+                .as_ref()
+                .is_some_and(|own| own.key.id() == group.id);
+            group.members.sort();
         }
+        // A stable order, so a menu showing the list only changes when it does.
+        groups.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id)));
         groups
     }
 

@@ -12,6 +12,13 @@ pub const MAX_NAME_CHARS: usize = 32;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct GroupId(pub [u8; 32]);
 
+/// Lowercase hex, as the voice menu shows and compares it.
+impl std::fmt::Display for GroupId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.iter().try_for_each(|byte| write!(f, "{byte:02x}"))
+    }
+}
+
 /// What only members know: the key derived from the name and password.
 #[derive(Clone, PartialEq, Eq)]
 pub struct GroupKey {

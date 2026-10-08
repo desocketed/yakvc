@@ -102,6 +102,9 @@ public final class GameStateFeeder {
 	private boolean debugOverlay;
 	private @Nullable VoiceStats stats;
 	private int ticksUntilStats;
+	/** We joined a group this server session, and whether nearby voice is on in it. */
+	private boolean inGroup;
+	private boolean groupNearby = true;
 
 	public GameStateFeeder(NativeBridge bridge, MemorySegment engine, ClientConfig config, VoiceKeys keys,
 			SessionJoiner joiner, PlayerVolumes volumes) {
@@ -160,6 +163,8 @@ public final class GameStateFeeder {
 		VoiceSession session = this.session;
 		if (session != null) session.tick();
 		else talking.clear();
+		// Groups last one server session.
+		if (session == null && inGroup) step(this::leaveGroup);
 		LocalPlayer player = minecraft.player;
 		boolean active = session != null && session.active() && player != null && minecraft.level != null;
 
@@ -234,6 +239,76 @@ public final class GameStateFeeder {
 			else YakVcClient.LOGGER.warn("Could not list audio devices: {}", e.getMessage());
 		}
 		return devices;
+	}
+
+	/** A group someone on the server is in, as {@code yakvc_list_groups} lists it. */
+	public record Group(String id, String name, boolean locked, boolean joined, List<UUID> members) {}
+
+	/** Our group and every group our peers announce. Empty if the engine is stopped. */
+	public List<Group> groups() {
+		if (closed) return List.of();
+		List<Group> groups = new ArrayList<>();
+		try {
+			for (JsonElement element : JsonParser.parseString(bridge.listGroups(engine)).getAsJsonArray()) {
+				JsonObject fields = element.getAsJsonObject();
+				List<UUID> members = new ArrayList<>();
+				for (JsonElement member : fields.getAsJsonArray("members")) {
+					members.add(UUID.fromString(member.getAsString()));
+				}
+				groups.add(new Group(fields.get("id").getAsString(), fields.get("name").getAsString(),
+						fields.get("locked").getAsBoolean(), fields.get("joined").getAsBoolean(), members));
+			}
+		} catch (YakVcException e) {
+			fail(e);
+		}
+		return groups;
+	}
+
+	/**
+	 * Joins the group with this name and password, leaving any other. With {@code expectedId}, the listed group
+	 * being joined, a password that gives another id is refused instead of starting a second group of the same name.
+	 * Returns why it failed, or null.
+	 */
+	public @Nullable Component joinGroup(String name, String password, @Nullable String expectedId) {
+		if (closed) return Component.translatable("yakvc.groups.error.stopped");
+		try {
+			if (expectedId != null && !bridge.groupId(name, password).equals(expectedId)) {
+				return Component.translatable("yakvc.groups.error.wrong_password");
+			}
+			bridge.joinGroup(engine, name, password);
+		} catch (YakVcException e) {
+			if (e.poisoned()) fail(e);
+			return Component.translatable("yakvc.groups.error.name");
+		}
+		inGroup = true;
+		groupNearby = true;
+		return null;
+	}
+
+	public void leaveGroup() {
+		if (closed) return;
+		inGroup = false;
+		groupNearby = true;
+		try {
+			bridge.leaveGroup(engine);
+		} catch (YakVcException e) {
+			fail(e);
+		}
+	}
+
+	/** Whether nearby players outside our group hear us and are heard. Always true outside a group. */
+	public boolean groupNearby() {
+		return groupNearby;
+	}
+
+	public void setGroupNearby(boolean nearby) {
+		if (closed || !inGroup) return;
+		groupNearby = nearby;
+		try {
+			bridge.setGroupNearby(engine, nearby);
+		} catch (YakVcException e) {
+			fail(e);
+		}
 	}
 
 	private void refreshBlocked(Minecraft minecraft, Set<UUID> players) {

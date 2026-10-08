@@ -64,18 +64,20 @@ public final class VoiceMenuScreen extends Screen {
 		for (UUID uuid : shown) list.add(new PlayerRow(uuid));
 
 		VoiceKeys keys = feeder.keys();
-		LinearLayout footer = layout.addToFooter(LinearLayout.horizontal().spacing(8));
+		LinearLayout footer = layout.addToFooter(LinearLayout.horizontal().spacing(4));
 		footer.addChild(Button.builder(muteLabel(keys.muted()), button -> {
 			keys.setMuted(!keys.muted());
 			button.setMessage(muteLabel(keys.muted()));
-		}).width(74).build());
+		}).width(60).build());
 		footer.addChild(Button.builder(deafenLabel(keys.deafened()), button -> {
 			keys.setDeafened(!keys.deafened());
 			button.setMessage(deafenLabel(keys.deafened()));
-		}).width(74).build());
+		}).width(60).build());
+		footer.addChild(Button.builder(Component.translatable("yakvc.menu.groups"),
+				button -> minecraft.gui.setScreen(new GroupsScreen(this, feeder))).width(60).build());
 		footer.addChild(Button.builder(Component.translatable("yakvc.menu.settings"),
-				button -> minecraft.gui.setScreen(new VoiceSettingsScreen(this, minecraft.options, feeder))).width(74).build());
-		footer.addChild(Button.builder(CommonComponents.GUI_DONE, button -> onClose()).width(74).build());
+				button -> minecraft.gui.setScreen(new VoiceSettingsScreen(this, minecraft.options, feeder))).width(60).build());
+		footer.addChild(Button.builder(CommonComponents.GUI_DONE, button -> onClose()).width(60).build());
 
 		layout.visitWidgets(this::addRenderableWidget);
 		repositionElements();

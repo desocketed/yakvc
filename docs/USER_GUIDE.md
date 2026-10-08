@@ -84,7 +84,19 @@ Each row shows the player's face and name, the verified badge if their Minecraft
 
 **Volume** goes from 0 to 200 % and **Mute** silences just that player; they also stop sending you their voice. Both are remembered for that player, on every server.
 
-At the bottom: **Mute Mic**, **Deafen**, **Settings…** and **Done**.
+At the bottom: **Mute Mic**, **Deafen**, **Groups…**, **Settings…** and **Done**.
+
+## Groups
+
+Players in a group hear each other wherever they are on the server, as if standing next to each other, without direction. Open **Groups…** in the voice menu.
+
+![The groups screen](guide/voice-groups.png)
+
+- **The list** shows every group on the server, who is in it, and **(password)** if it has one. **Join** joins a group (asking for the password if it has one), and **Leave** leaves yours. You can be in one group at a time, and you leave it when you leave the server.
+- **Create** makes a group from the name (up to 32 characters) and the optional password typed at the bottom. Joining a group nobody is in yet is the same as creating it. The same name with a different password is a different group, so check the password when you create one.
+- **Nearby Players** is on by default: you still hear, and are heard by, players near you who aren't in your group. Turn it off to talk only to your group: then nobody outside the group hears you, and you hear nobody outside it.
+- Mute, volume, deafen and blocking work in groups as everywhere else.
+- **Passwords keep strangers out, but they aren't secret.** Everyone on the server can try to guess a group's password, so never reuse a real one. What you say in a group is encrypted like all voice.
 
 The game's own Voice/Speech slider (Options → Music & Sounds) sets the volume of all voices, together with Master.
 

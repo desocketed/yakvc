@@ -65,6 +65,31 @@ class NativeBridgeTest {
 	}
 
 	@Test
+	void joinsAndLeavesAGroup(@TempDir Path configDir) throws Exception {
+		NativeBridge bridge = new NativeBridge(NativeLoader.load(configDir));
+		MemorySegment engine = bridge.create(configDir.toString(), DEV_CONFIG);
+		try {
+			UUID me = UUID.fromString("00112233-4455-6677-8899-aabbccddeeff");
+			bridge.setIdentity(engine, me, "alice");
+			bridge.joinGroup(engine, "Miners", "pw");
+			bridge.setGroupNearby(engine, false);
+			String id = bridge.groupId("Miners", "pw");
+			assertEquals(64, id.length());
+			String groups = bridge.listGroups(engine);
+			assertTrue(groups.contains("\"id\":\"" + id + "\""), groups);
+			assertTrue(groups.contains(me.toString()), groups);
+			assertTrue(!bridge.groupId("Miners", "other").equals(id));
+
+			YakVcException blank = assertThrows(YakVcException.class, () -> bridge.joinGroup(engine, " ", ""));
+			assertTrue(blank.getMessage().contains("1 to 32"), blank.getMessage());
+			bridge.leaveGroup(engine);
+			assertEquals("[]", bridge.listGroups(engine));
+		} finally {
+			bridge.destroy(engine);
+		}
+	}
+
+	@Test
 	void errorsCarryTheNativeMessage(@TempDir Path configDir) throws Exception {
 		NativeBridge bridge = new NativeBridge(NativeLoader.load(configDir));
 		YakVcException bad = assertThrows(YakVcException.class, () -> bridge.create(configDir.toString(), "voice_range = 0"));

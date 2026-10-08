@@ -30,7 +30,7 @@ import java.util.UUID;
  */
 public final class NativeBridge {
 	/** Must equal {@code YAKVC_ABI_VERSION} in {@code yakvc.h}. */
-	public static final int ABI_VERSION = 3;
+	public static final int ABI_VERSION = 4;
 
 	public static final int INPUT_PUSH_TO_TALK = 1;
 	public static final int INPUT_MUTED = 1 << 1;
@@ -58,6 +58,11 @@ public final class NativeBridge {
 	private final MethodHandle updateConfig;
 	private final MethodHandle listDevices;
 	private final MethodHandle stats;
+	private final MethodHandle joinGroup;
+	private final MethodHandle leaveGroup;
+	private final MethodHandle setGroupNearby;
+	private final MethodHandle groupId;
+	private final MethodHandle listGroups;
 	private final MethodHandle lastError;
 
 	public NativeBridge(SymbolLookup library) {
@@ -90,6 +95,15 @@ public final class NativeBridge {
 		listDevices = linker.downcallHandle(find(library, "yakvc_list_devices"),
 				FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, SIZE_T, ADDRESS));
 		stats = linker.downcallHandle(find(library, "yakvc_stats"),
+				FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, SIZE_T, ADDRESS));
+		joinGroup = linker.downcallHandle(find(library, "yakvc_join_group"),
+				FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, SIZE_T, ADDRESS, SIZE_T));
+		leaveGroup = linker.downcallHandle(find(library, "yakvc_leave_group"), FunctionDescriptor.of(JAVA_INT, ADDRESS));
+		setGroupNearby = linker.downcallHandle(find(library, "yakvc_set_group_nearby"),
+				FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_BOOLEAN));
+		groupId = linker.downcallHandle(find(library, "yakvc_group_id"),
+				FunctionDescriptor.of(JAVA_INT, ADDRESS, SIZE_T, ADDRESS, SIZE_T, ADDRESS));
+		listGroups = linker.downcallHandle(find(library, "yakvc_list_groups"),
 				FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, SIZE_T, ADDRESS));
 		lastError = linker.downcallHandle(find(library, "yakvc_last_error"),
 				FunctionDescriptor.of(SIZE_T, ADDRESS, SIZE_T));
@@ -199,6 +213,41 @@ public final class NativeBridge {
 	/** Returns the diagnostics snapshot as JSON; {@code yakvc_stats} in {@code yakvc.h} lists the fields. */
 	public String stats(MemorySegment engine) {
 		return readJson(stats, engine);
+	}
+
+	/** Joins the group with this name and password (empty for an open group), leaving any other. */
+	public void joinGroup(MemorySegment engine, String name, String password) {
+		try (Arena arena = Arena.ofConfined()) {
+			MemorySegment nameBytes = utf8(arena, name);
+			MemorySegment passwordBytes = utf8(arena, password);
+			check((int) invoke(joinGroup, engine, nameBytes, nameBytes.byteSize(), passwordBytes,
+					passwordBytes.byteSize()));
+		}
+	}
+
+	public void leaveGroup(MemorySegment engine) {
+		check((int) invoke(leaveGroup, engine));
+	}
+
+	/** While in a group, whether nearby players outside it are heard and sent to. */
+	public void setGroupNearby(MemorySegment engine, boolean nearby) {
+		check((int) invoke(setGroupNearby, engine, nearby));
+	}
+
+	/** The id, in hex, of the group with this name and password, without joining it. */
+	public String groupId(String name, String password) {
+		try (Arena arena = Arena.ofConfined()) {
+			MemorySegment nameBytes = utf8(arena, name);
+			MemorySegment passwordBytes = utf8(arena, password);
+			MemorySegment out = arena.allocate(64);
+			check((int) invoke(groupId, nameBytes, nameBytes.byteSize(), passwordBytes, passwordBytes.byteSize(), out));
+			return new String(out.toArray(JAVA_BYTE), StandardCharsets.US_ASCII);
+		}
+	}
+
+	/** Returns the known groups as JSON; {@code yakvc_list_groups} in {@code yakvc.h} lists the fields. */
+	public String listGroups(MemorySegment engine) {
+		return readJson(listGroups, engine);
 	}
 
 	/** Calls a function that writes JSON with the {@code (buf, cap, needed)} protocol, growing the buffer as asked. */
