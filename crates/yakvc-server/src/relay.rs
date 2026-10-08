@@ -8,7 +8,7 @@
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::num::NonZeroU32;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
 use iroh_relay::server::{
@@ -104,27 +104,38 @@ enum Admission {
     Refused,
 }
 
-/// What the relay calls. Holds an `Arc` so a grace admission can start a
-/// timer that outlives the call.
+/// What the relay calls. The gate holds the relay (to disconnect clients),
+/// so this holds the gate weakly: a strong reference would be a cycle that
+/// keeps the gate, the sessions and their connections, and with them the
+/// rendezvous socket, alive after the server shuts down.
 #[derive(Debug)]
-struct GateAccess(Arc<RelayGate>);
+struct GateAccess(Weak<RelayGate>);
 
 impl AccessControl for GateAccess {
     async fn on_connect(&self, request: &ClientRequest) -> Access {
+        let refused = Access::Deny {
+            reason: Some("no rendezvous session".into()),
+        };
+        // Gone once the server has shut down.
+        let Some(gate) = self.0.upgrade() else {
+            return refused;
+        };
         let id = request.endpoint_id();
-        match self.0.admit(id, Instant::now()) {
+        match gate.admit(id, Instant::now()) {
             Admission::Session => Access::Allow,
             Admission::Grace => {
-                let gate = Arc::clone(&self.0);
+                // Weak for the same reason: the timer mustn't keep the gate.
+                let grace = gate.grace;
+                let gate = Arc::downgrade(&gate);
                 tokio::spawn(async move {
-                    tokio::time::sleep(gate.grace).await;
-                    gate.session_ended(id);
+                    tokio::time::sleep(grace).await;
+                    if let Some(gate) = gate.upgrade() {
+                        gate.session_ended(id);
+                    }
                 });
                 Access::Allow
             }
-            Admission::Refused => Access::Deny {
-                reason: Some("no rendezvous session".into()),
-            },
+            Admission::Refused => refused,
         }
     }
 }
@@ -142,7 +153,7 @@ pub(crate) async fn spawn(
     };
     relay.limits.client_rx = NonZeroU32::new(client_bytes_per_sec).map(ClientRateLimit::new);
     if !options.open {
-        relay.access = Arc::new(GateAccess(Arc::clone(&gate)));
+        relay.access = Arc::new(GateAccess(Arc::downgrade(&gate)));
     }
 
     let mut config = ServerConfig::default();

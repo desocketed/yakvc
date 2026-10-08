@@ -199,22 +199,15 @@ impl Server {
         self.shared.sessions.stats()
     }
 
-    /// Closes every session as a restart would, and keeps serving. For tests
-    /// of clients reconnecting; a restart in the same process can't bind the
-    /// same ports again.
-    #[doc(hidden)]
-    pub fn close_sessions(&self) {
-        self.shared
-            .sessions
-            .close_all(CloseCode::ShuttingDown, "server restarting");
-    }
-
-    /// Closes all sessions and stops the relay.
+    /// Closes all sessions and stops the relay, letting go of every port.
     pub async fn shutdown(mut self) {
-        self.tasks.shutdown().await;
+        // Before the tasks stop: aborting a connection handler skips its
+        // cleanup, so its session would hold the connection, and with it
+        // the endpoint's socket, for as long as the sessions live.
         self.shared
             .sessions
             .close_all(CloseCode::ShuttingDown, "server shutting down");
+        self.tasks.shutdown().await;
         self.endpoint.close().await;
         if let Some(relay) = self.relay {
             let _ = relay.shutdown().await;

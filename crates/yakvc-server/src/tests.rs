@@ -1377,6 +1377,42 @@ async fn shutdown_closes_sessions() {
     assert_eq!(alice.close_code().await, code(CloseCode::ShuttingDown));
 }
 
+/// A shut down server lets go of its port, even with the relay's gate
+/// and a live session to keep it, so a restart in the same process works.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_new_server_binds_the_port_after_shutdown() {
+    let port = std::net::UdpSocket::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let bind: std::net::SocketAddr = ([127, 0, 0, 1], port).into();
+    let spawn = || {
+        builder()
+            .bind(bind)
+            .insecure_dev_auth()
+            .relay(relay_options())
+            .spawn()
+    };
+    let server = spawn().await.unwrap();
+    let mut alice = Client::connect(&server, "alice").await;
+    alice.register().await;
+    server.shutdown().await;
+    assert_eq!(alice.close_code().await, code(CloseCode::ShuttingDown));
+
+    // The socket closes in the background, so give it a moment.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    let again = loop {
+        match spawn().await {
+            Ok(server) => break server,
+            Err(e) if tokio::time::Instant::now() >= deadline => panic!("{e}"),
+            Err(_) => tokio::time::sleep(Duration::from_millis(50)).await,
+        }
+    };
+    let mut bob = Client::connect(&again, "bob").await;
+    bob.register().await;
+}
+
 /// A `[::]` bind serves IPv4 too, for the rendezvous (where iroh needs a
 /// second socket) and the relay's listener (dual-stack on its own).
 #[tokio::test]

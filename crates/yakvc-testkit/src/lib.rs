@@ -16,11 +16,12 @@
 //! pushes each client a world snapshot at 20 Hz containing the clients it
 //! sees within tracking range.
 
+use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc;
 use yakvc_audio::{FrameSource, NullSink, Recording, SilenceSource, ToneSource, WavSource};
@@ -29,7 +30,7 @@ use yakvc_client::{
     Config, Engine, Event, Events, Input, PeerState, Pose, RendezvousState, StreamStats, Uuid,
     Vec3, World,
 };
-use yakvc_server::{RelayOptions, Server, SessionServer};
+use yakvc_server::{RelayOptions, Server, ServerBuilder, SessionServer};
 use yakvc_shared::{IssuerKey, SecretKey, offline_uuid};
 
 /// Default time [`TestClient`] waits for an expected event.
@@ -49,7 +50,9 @@ pub const DAY: Duration = Duration::from_secs(24 * 3600);
 /// simulated game world.
 #[derive(Debug)]
 pub struct TestNet {
-    server: Server,
+    /// `None` only while [`TestNet::restart_server`] runs.
+    server: Option<Server>,
+    settings: ServerSettings,
     /// Every client's config starts from this one.
     config: Config,
     players: Players,
@@ -134,22 +137,18 @@ impl TestNet {
     }
 
     async fn start_with(dev_auth: bool, ticket_lifetime: Duration) -> TestNet {
-        let localhost = "127.0.0.1:0".parse().expect("valid address");
-        let mut builder = Server::builder(SecretKey::generate(), IssuerKey::generate())
-            .bind(localhost)
-            .relay(RelayOptions {
-                http_bind: localhost,
-                tls: None,
-                quic_bind: None,
-                open: false,
-            })
-            .ticket_lifetime(ticket_lifetime);
-        builder = if dev_auth {
-            builder.insecure_dev_auth()
-        } else {
-            builder.session_server(SessionServer::new("http://127.0.0.1:9"))
+        let settings = ServerSettings {
+            endpoint_key: SecretKey::generate(),
+            issuer_key: IssuerKey::generate(),
+            dev_auth,
+            ticket_lifetime,
         };
-        let server = builder.spawn().await.expect("test server starts");
+        let localhost = "127.0.0.1:0".parse().expect("valid address");
+        let server = settings
+            .builder(localhost, localhost)
+            .spawn()
+            .await
+            .expect("test server starts");
 
         let config = Config {
             rendezvous: Some(server.endpoint_addr().into()),
@@ -172,7 +171,8 @@ impl TestNet {
         });
 
         TestNet {
-            server,
+            server: Some(server),
+            settings,
             config,
             players,
             dir: unique_temp_dir(),
@@ -183,7 +183,35 @@ impl TestNet {
     }
 
     pub fn server(&self) -> &Server {
-        &self.server
+        self.server.as_ref().expect("server is running")
+    }
+
+    /// Shuts the server down and starts it again with the same keys and
+    /// ports, as a restart in production would, so clients find it again.
+    pub async fn restart_server(&mut self) {
+        let server = self.server.take().expect("server is running");
+        let rendezvous = *server
+            .endpoint_addr()
+            .ip_addrs()
+            .next()
+            .expect("rendezvous has an address");
+        let relay_url = server.relay_url().expect("relay is running");
+        let relay = SocketAddr::from((
+            Ipv4Addr::LOCALHOST,
+            relay_url.port().expect("relay URL has a port"),
+        ));
+        server.shutdown().await;
+
+        // The ports can take a moment to come free.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let server = loop {
+            match self.settings.builder(rendezvous, relay).spawn().await {
+                Ok(server) => break server,
+                Err(e) if Instant::now() >= deadline => panic!("test server restarts: {e}"),
+                Err(_) => tokio::time::sleep(Duration::from_millis(50)).await,
+            }
+        };
+        self.server = Some(server);
     }
 
     pub fn client(&self) -> ClientBuilder<'_> {
@@ -195,6 +223,34 @@ impl TestNet {
             impairment: Impairment::default(),
             max_peers: None,
             config: self.config.clone(),
+        }
+    }
+}
+
+/// What it takes to start the same server again.
+#[derive(Debug)]
+struct ServerSettings {
+    endpoint_key: SecretKey,
+    issuer_key: IssuerKey,
+    dev_auth: bool,
+    ticket_lifetime: Duration,
+}
+
+impl ServerSettings {
+    fn builder(&self, rendezvous: SocketAddr, relay: SocketAddr) -> ServerBuilder {
+        let builder = Server::builder(self.endpoint_key.clone(), self.issuer_key.clone())
+            .bind(rendezvous)
+            .relay(RelayOptions {
+                http_bind: relay,
+                tls: None,
+                quic_bind: None,
+                open: false,
+            })
+            .ticket_lifetime(self.ticket_lifetime);
+        if self.dev_auth {
+            builder.insecure_dev_auth()
+        } else {
+            builder.session_server(SessionServer::new("http://127.0.0.1:9"))
         }
     }
 }
