@@ -5,8 +5,8 @@
 use std::time::Duration;
 
 use tokio::time::sleep;
-use yakvc_client::{Event, PeerState, RendezvousState, Vec3};
-use yakvc_testkit::{DAY, TestNet, see_each_other};
+use yakvc_client::{Event, PeerState, RendezvousState, Uuid, Vec3};
+use yakvc_testkit::{DAY, TestClient, TestNet, see_each_other};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn players_without_accounts_talk_on_offline_mode_servers() {
@@ -113,34 +113,13 @@ async fn only_the_newest_link_for_a_player_is_heard() {
     see_each_other(&[&alice, &first]);
     alice.move_to(Vec3::new(0.0, 64.0, 0.0));
     first.move_to(Vec3::new(5.0, 64.0, 0.0));
-    let links_to_bob = |n: usize| {
-        let alice = &alice;
-        async move {
-            for _ in 0..500 {
-                let up = alice
-                    .engine()
-                    .peers()
-                    .iter()
-                    .filter(|p| p.uuid == bob && p.state == PeerState::Direct)
-                    .count();
-                if up == n {
-                    return;
-                }
-                sleep(Duration::from_millis(20)).await;
-            }
-            panic!(
-                "alice never had {n} links to bob: {:?}",
-                alice.engine().peers()
-            );
-        }
-    };
-    links_to_bob(1).await;
+    links_to(&alice, bob, 1).await;
 
     // A second, silent "bob" links up after the first.
     let second = net.client().name("bob").offline().start().await;
     second.sees(&[&alice]);
     second.move_to(Vec3::new(5.0, 64.0, 0.0));
-    links_to_bob(2).await;
+    links_to(&alice, bob, 2).await;
     sleep(Duration::from_millis(500)).await;
 
     first.talk(true);
@@ -148,4 +127,55 @@ async fn only_the_newest_link_for_a_player_is_heard() {
     let before = alice.recording().audible_frames();
     sleep(Duration::from_secs(1)).await;
     assert_eq!(alice.recording().audible_frames(), before);
+}
+
+/// The older link closing must not take the newer one out of voice with
+/// it: the newer link is still heard afterwards.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_newest_link_is_still_heard_once_an_older_one_closes() {
+    let net = TestNet::start_without_accounts(DAY).await;
+    let alice = net.client().name("alice").offline().start().await;
+    let first = net.client().name("bob").offline().start().await;
+    let bob = first.uuid();
+    see_each_other(&[&alice, &first]);
+    alice.move_to(Vec3::new(0.0, 64.0, 0.0));
+    first.move_to(Vec3::new(5.0, 64.0, 0.0));
+    links_to(&alice, bob, 1).await;
+
+    let second = net.client().name("bob").offline().tone(440.0).start().await;
+    second.sees(&[&alice]);
+    second.move_to(Vec3::new(5.0, 64.0, 0.0));
+    links_to(&alice, bob, 2).await;
+    second.talk(true);
+    sleep(Duration::from_millis(500)).await;
+    let before = alice.recording().audible_frames();
+    sleep(Duration::from_secs(1)).await;
+    assert!(alice.recording().audible_frames() > before + 10);
+
+    drop(first);
+    links_to(&alice, bob, 1).await;
+    sleep(Duration::from_millis(500)).await;
+    let before = alice.recording().audible_frames();
+    sleep(Duration::from_secs(1)).await;
+    assert!(alice.recording().audible_frames() > before + 10);
+}
+
+/// Waits until `listener` has `n` direct links to the player `to`.
+async fn links_to(listener: &TestClient, to: Uuid, n: usize) {
+    for _ in 0..500 {
+        let up = listener
+            .engine()
+            .peers()
+            .iter()
+            .filter(|p| p.uuid == to && p.state == PeerState::Direct)
+            .count();
+        if up == n {
+            return;
+        }
+        sleep(Duration::from_millis(20)).await;
+    }
+    panic!(
+        "never had {n} links to {to}: {:?}",
+        listener.engine().peers()
+    );
 }
