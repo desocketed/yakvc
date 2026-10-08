@@ -333,14 +333,14 @@ async fn a_client_that_stops_reading_is_closed() {
     }
 }
 
+/// Only our relay's URL reaches peers: dialling any other relay would show
+/// a `relay_only` client's IP to whoever runs it.
 #[tokio::test]
-async fn only_known_relays_are_forwarded() {
-    let extra: RelayUrl = "https://extra.example.com".parse().unwrap();
+async fn only_our_relay_is_forwarded() {
     let evil: RelayUrl = "https://evil.example.com".parse().unwrap();
     let server = builder()
         .insecure_dev_auth()
         .relay(relay_options())
-        .extra_relays(vec![extra.clone()])
         .spawn()
         .await
         .unwrap();
@@ -372,11 +372,9 @@ async fn only_known_relays_are_forwarded() {
         next_addr().await,
         EndpointAddr::new(alice.id()).with_ip_addr(ip)
     );
-    for relay in [extra, own] {
-        let addr = EndpointAddr::new(alice.id()).with_relay_url(relay);
-        alice.send(ClientMsg::UpdateAddr(addr.clone())).await;
-        assert_eq!(next_addr().await, addr);
-    }
+    let addr = EndpointAddr::new(alice.id()).with_relay_url(own);
+    alice.send(ClientMsg::UpdateAddr(addr.clone())).await;
+    assert_eq!(next_addr().await, addr);
     let addr = EndpointAddr::new(alice.id()).with_relay_url(evil);
     alice.send(ClientMsg::UpdateAddr(addr)).await;
     assert_eq!(next_addr().await, EndpointAddr::new(alice.id()));
