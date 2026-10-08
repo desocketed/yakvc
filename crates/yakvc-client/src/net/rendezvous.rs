@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use iroh::endpoint::{Connection, SendStream};
-use iroh::{EndpointAddr, TransportAddr, Watcher};
+use iroh::{EndpointAddr, EndpointId, TransportAddr, Watcher};
 use rand::RngExt;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
@@ -31,6 +31,10 @@ const RENEW_WINDOW: Duration = Duration::from_secs(2 * 60 * 60);
 /// [`PAIR_UPDATES_PER_SEC`](yakvc_shared::rdv::PAIR_UPDATES_PER_SEC) with
 /// room left for `UpdateAddr`.
 const PAIR_BATCH_INTERVAL: Duration = Duration::from_millis(250);
+/// How long a new session waits for the rendezvous to list our peers again
+/// before dropping the ones it doesn't. It lists current matches as soon as
+/// it has our pair tokens.
+const RELIST_GRACE: Duration = Duration::from_secs(10);
 
 /// Why a session ended.
 #[derive(Debug)]
@@ -199,6 +203,9 @@ impl Session<'_> {
         let mut renew_at: Option<Instant> = None;
         // A failed renewal keeps the current ticket and tries again later.
         let mut renew_backoff = Backoff::new(Duration::from_secs(10), Duration::from_secs(600));
+        // Peers listed since registering, and when to drop the others.
+        let mut relisted: HashSet<EndpointId> = HashSet::new();
+        let mut unlist_at: Option<Instant> = None;
 
         loop {
             tokio::select! {
@@ -229,6 +236,7 @@ impl Session<'_> {
                                 let msg = ClientMsg::SetPairs(pairs.iter().copied().collect());
                                 wire::write_msg(send, &msg).await?;
                                 sent_pairs = Some(pairs);
+                                unlist_at = Some(Instant::now() + RELIST_GRACE);
                                 next_batch = Instant::now() + PAIR_BATCH_INTERVAL;
                             }
                         }
@@ -244,6 +252,7 @@ impl Session<'_> {
                             renew_at = Some(retry_renewal(current, delay));
                         }
                         ServerMsg::PeerAvailable { ticket, addr } => {
+                            relisted.insert(addr.id);
                             self.inner.peer_available(ticket, addr);
                         }
                         ServerMsg::PeerGone(remote) => self.inner.peer_gone(remote),
@@ -295,6 +304,10 @@ impl Session<'_> {
                         wire::write_msg(send, &ClientMsg::AddPairs(added)).await?;
                     }
                     *sent = pairs;
+                }
+                () = sleep_until(unlist_at), if unlist_at.is_some() => {
+                    unlist_at = None;
+                    self.inner.unlist_except(&std::mem::take(&mut relisted));
                 }
                 () = sleep_until(renew_at), if renew_at.is_some() => {
                     renew_at = None;

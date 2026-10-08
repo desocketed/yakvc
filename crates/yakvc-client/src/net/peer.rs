@@ -798,6 +798,35 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn peers_a_new_rendezvous_session_does_not_list_are_dropped() {
+        let (net, _events) = net_without_handshake().await;
+        let inner = net.inner();
+        let linked = loopback_endpoint().await;
+        let idle = loopback_endpoint().await;
+        let relisted = loopback_endpoint().await;
+        let (conn, _conn_b) = connect(&inner.endpoint, &linked).await;
+        register(inner, &conn, true, uuid(2), "bob", true).unwrap();
+        for (endpoint, n) in [(&linked, 2), (&idle, 3), (&relisted, 4)] {
+            let mut peers = inner.peers.lock().unwrap();
+            let entry = peers
+                .entry(endpoint.id())
+                .or_insert_with(|| PeerEntry::new(uuid(n), "p".into(), &inner.events));
+            entry.addr = Some(loopback_addr(endpoint));
+        }
+        let listed = |net: &Net| {
+            let mut uuids: Vec<Uuid> = net.peers().iter().map(|p| p.uuid).collect();
+            uuids.sort();
+            uuids
+        };
+
+        inner.unlist_except(&HashSet::from([relisted.id()]));
+        // A live link keeps its peer until it closes.
+        assert_eq!(listed(&net), [uuid(2), uuid(4)]);
+        unregister(inner, linked.id(), &conn);
+        assert_eq!(listed(&net), [uuid(4)]);
+    }
+
     /// One side of a handshake test: a [`Net`] with a probe protocol, an
     /// identity and a ticket from `issuer`, trusting `trusted`.
     struct Side {
