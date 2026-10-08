@@ -52,6 +52,7 @@ struct Hello {
     uuid: Uuid,
     name: String,
     verified: bool,
+    ticket: SignedTicket,
     /// When the peer's ticket expires.
     expires: Instant,
     /// Protocols both sides speak, with the agreed version.
@@ -257,6 +258,7 @@ async fn handshake(
         name: ticket.name.clone(),
         verified: ticket.verified,
         expires: expiry_instant(&ticket),
+        ticket: theirs.ticket,
         agreed,
         control_send: send,
         control_recv: recv,
@@ -281,6 +283,7 @@ async fn serve(inner: Arc<Inner>, conn: Connection, dialed: bool, hello: Hello) 
             return;
         }
     };
+    set_ticket(&inner, remote, hello.ticket.clone(), hello.verified);
     let mut tasks = start_protocols(&conn, dialed, &hello.agreed, &status, &inner.banned).await;
     tasks.spawn(watch_paths(conn.clone(), status));
 
@@ -452,7 +455,7 @@ async fn peer_control(inner: &Arc<Inner>, conn: &Connection, hello: Hello) {
                         if let Err(code) = inner.claim(remote, uuid, ticket.verified) {
                             break code;
                         }
-                        set_verified(inner, remote, ticket.verified);
+                        set_ticket(inner, remote, signed, ticket.verified);
                         expires = expiry_instant(&ticket);
                     }
                     Ok(_) => break CloseCode::BadTicket,
@@ -525,10 +528,11 @@ fn record_peer_close(inner: &Arc<Inner>, conn: &Connection) {
     }
 }
 
-/// Records whether the peer's latest ticket is verified.
-fn set_verified(inner: &Arc<Inner>, remote: EndpointId, verified: bool) {
+/// Records the peer's latest ticket, which `verified` says is verified.
+fn set_ticket(inner: &Arc<Inner>, remote: EndpointId, ticket: SignedTicket, verified: bool) {
     if let Some(entry) = inner.peers.lock().unwrap().get_mut(&remote) {
         entry.verified = verified;
+        entry.ticket = Some(ticket);
     }
     set_status(inner, remote, |flags| flags.verified = verified);
 }
@@ -991,6 +995,27 @@ mod tests {
             alice.dial(&unverified).await,
             Err(SetupError::Rejected(CloseCode::BadTicket))
         ));
+    }
+
+    #[tokio::test]
+    async fn links_are_checked_again_when_the_trusted_issuers_change() {
+        let issuer = IssuerKey::generate();
+        let alice = side(1, &issuer, &issuer).await;
+        let bob = side(2, &issuer, &issuer).await;
+        alice.sees(&[2]);
+        bob.sees(&[1]);
+        alice.dial(&bob).await.unwrap();
+        eventually("alice links bob", || alice.net.peers().len() == 1).await;
+
+        // Still trusted: the link stays.
+        let both = TicketVerifier::new([issuer.id(), IssuerKey::generate().id()]);
+        alice.net.set_trust(both, false);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(alice.net.peers().len(), 1);
+
+        let other = TicketVerifier::new([IssuerKey::generate().id()]);
+        alice.net.set_trust(other, false);
+        eventually("the link is closed", || alice.net.peers().is_empty()).await;
     }
 
     #[tokio::test]
