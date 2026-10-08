@@ -334,6 +334,55 @@ async fn a_client_that_stops_reading_is_closed() {
 }
 
 #[tokio::test]
+async fn only_known_relays_are_forwarded() {
+    let extra: RelayUrl = "https://extra.example.com".parse().unwrap();
+    let evil: RelayUrl = "https://evil.example.com".parse().unwrap();
+    let server = builder()
+        .insecure_dev_auth()
+        .relay(relay_options())
+        .extra_relays(vec![extra.clone()])
+        .spawn()
+        .await
+        .unwrap();
+    let own = server.relay_url().unwrap();
+    let mut alice = Client::connect(&server, "alice").await;
+    let mut bob = Client::connect(&server, "bob").await;
+    let ClientMsg::Hello(mut hello) = alice.hello(None) else {
+        unreachable!()
+    };
+    let ip = "127.0.0.1:9".parse().unwrap();
+    hello.addr = EndpointAddr::new(alice.id())
+        .with_ip_addr(ip)
+        .with_relay_url(evil.clone());
+    alice.send(ClientMsg::Hello(hello)).await;
+    alice.expect_registered().await;
+    bob.register().await;
+    alice
+        .send(ClientMsg::AddPairs(vec![alice.token_for(&bob)]))
+        .await;
+    bob.send(ClientMsg::AddPairs(vec![bob.token_for(&alice)]))
+        .await;
+
+    let mut next_addr = async || match bob.recv().await {
+        ServerMsg::PeerAvailable { addr, .. } => addr,
+        other => panic!("expected PeerAvailable, got {other:?}"),
+    };
+    // An unknown relay is dropped; the IP stays.
+    assert_eq!(
+        next_addr().await,
+        EndpointAddr::new(alice.id()).with_ip_addr(ip)
+    );
+    for relay in [extra, own] {
+        let addr = EndpointAddr::new(alice.id()).with_relay_url(relay);
+        alice.send(ClientMsg::UpdateAddr(addr.clone())).await;
+        assert_eq!(next_addr().await, addr);
+    }
+    let addr = EndpointAddr::new(alice.id()).with_relay_url(evil);
+    alice.send(ClientMsg::UpdateAddr(addr)).await;
+    assert_eq!(next_addr().await, EndpointAddr::new(alice.id()));
+}
+
+#[tokio::test]
 async fn hello_for_another_endpoint_is_a_protocol_error() {
     let server = dev_server().await;
     let mut client = Client::connect(&server, "alice").await;

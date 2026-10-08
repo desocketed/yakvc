@@ -14,12 +14,15 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
+use iroh::TransportAddr;
 use iroh::endpoint::{Connection, Incoming, IncomingAddr, RecvStream, SendStream};
 use tokio::sync::mpsc;
 use yakvc_shared::auth::Nonce;
 use yakvc_shared::rdv::{ClientMsg, CloseCode, Hello, ServerMsg, addr_fits};
 use yakvc_shared::wire::{MAX_MESSAGE_LEN, WireError, read_msg_max, write_msg};
-use yakvc_shared::{EndpointId, PairToken, Ticket, Uuid, is_offline_player};
+use yakvc_shared::{
+    EndpointAddr, EndpointId, PairToken, RelayUrl, Ticket, Uuid, is_offline_player,
+};
 
 use crate::auth::{JoinCheck, proves};
 use crate::limits::{IpSlot, Slot, TokenBucket, ip_key};
@@ -209,6 +212,7 @@ impl Client {
                 if addr.id != self.id || !addr_fits(&addr) {
                     return Err(CloseCode::ProtocolError);
                 }
+                let addr = known_relays_only(addr, &self.shared.relays);
                 self.shared.sessions.update_addr(self.id, addr);
                 Ok(())
             }
@@ -241,7 +245,7 @@ impl Client {
         }
     }
 
-    fn on_hello(&mut self, hello: Hello) -> Result<(), CloseCode> {
+    fn on_hello(&mut self, mut hello: Hello) -> Result<(), CloseCode> {
         let valid_name = !hello.name.is_empty() && hello.name.len() <= MAX_NAME_LEN;
         // The address is forwarded to every match, so it must stay small.
         let valid_addr = hello.addr.id == self.id && addr_fits(&hello.addr);
@@ -256,6 +260,7 @@ impl Client {
             .cached_ticket
             .as_ref()
             .and_then(|ticket| self.shared.auth.reusable(ticket, &hello, self.id));
+        hello.addr = known_relays_only(hello.addr, &self.shared.relays);
         self.hello = Some(hello);
 
         // An unverified cached ticket is refused while a verified session
@@ -516,4 +521,15 @@ fn outbox_len(limits: &Limits) -> usize {
 /// When `ticket` expires, on the clock the read loop's timeouts use.
 fn expiry(ticket: &Ticket) -> tokio::time::Instant {
     tokio::time::Instant::now() + ticket.remaining(SystemTime::now())
+}
+
+/// `addr` without relay URLs other than `relays`. Peers dial the relays in
+/// each other's addresses, and an arbitrary one would learn a `relay_only`
+/// client's IP.
+fn known_relays_only(addr: EndpointAddr, relays: &[RelayUrl]) -> EndpointAddr {
+    let kept = addr.addrs.into_iter().filter(|transport| match transport {
+        TransportAddr::Relay(url) => relays.contains(url),
+        _ => true,
+    });
+    EndpointAddr::from_parts(addr.id, kept)
 }
