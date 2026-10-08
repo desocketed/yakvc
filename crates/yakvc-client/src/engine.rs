@@ -295,13 +295,13 @@ impl Engine {
             .collect()
     }
 
-    /// The audio thread's devices, bitrate and glitch counts.
     /// Why the engine failed, once one of its own threads panicked. A failed
     /// engine may have lost voice or networking, so it should be restarted.
     pub fn failure(&self) -> Option<String> {
         self.events.failure()
     }
 
+    /// The audio thread's devices, bitrate and glitch counts.
     pub fn audio_stats(&self) -> AudioStats {
         self.voice.audio_stats()
     }
