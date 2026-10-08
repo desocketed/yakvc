@@ -290,6 +290,76 @@ mod tests {
         );
     }
 
+    /// Every relay listener bound to `[::]` serves IPv4 too. The rendezvous
+    /// and plain HTTP are covered in `tests.rs`; HTTPS and QUIC address
+    /// discovery need a certificate, which the rendezvous endpoint in those
+    /// tests wouldn't trust.
+    #[tokio::test]
+    async fn wildcard_ipv6_binds_serve_both_families() {
+        let dir = std::env::temp_dir().join(format!("yakvc-relay-tls-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let certified = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+        let (cert, key) = (dir.join("cert.pem"), dir.join("key.pem"));
+        std::fs::write(&cert, certified.cert.pem()).unwrap();
+        std::fs::write(&key, certified.signing_key.serialize_pem()).unwrap();
+        let options = RelayOptions {
+            http_bind: "[::]:0".parse().unwrap(),
+            tls: Some(RelayTls::Files {
+                https_bind: "[::]:0".parse().unwrap(),
+                domain: "localhost".into(),
+                cert,
+                key,
+            }),
+            quic_bind: Some("[::]:0".parse().unwrap()),
+            open: false,
+        };
+        let gate = Arc::new(RelayGate::new(Arc::default(), id(0), GRACE_PERIOD));
+        let (server, _) = spawn(&options, gate, 0).await.unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        let http = server.http_addr().unwrap().port();
+        let https = server.https_addr().unwrap().port();
+        let quic = server.quic_addr().unwrap().port();
+        for ip in [IpAddr::from(Ipv4Addr::LOCALHOST), "::1".parse().unwrap()] {
+            for port in [http, https] {
+                tokio::net::TcpStream::connect((ip, port))
+                    .await
+                    .unwrap_or_else(|e| panic!("TCP {ip} port {port}: {e}"));
+            }
+            assert!(
+                quic_answers(SocketAddr::new(ip, quic)).await,
+                "QUIC {ip} port {quic}"
+            );
+        }
+    }
+
+    /// Whether a QUIC server answers at `addr`. A long-header packet with an
+    /// unknown version gets a Version Negotiation reply (RFC 9000 §6), which
+    /// needs neither a handshake nor a trusted certificate.
+    async fn quic_answers(addr: SocketAddr) -> bool {
+        let local: SocketAddr = if addr.is_ipv4() {
+            "127.0.0.1:0".parse().unwrap()
+        } else {
+            "[::1]:0".parse().unwrap()
+        };
+        let socket = tokio::net::UdpSocket::bind(local).await.unwrap();
+        // Long header, a reserved version, 8-byte destination and source
+        // connection ids, padded to the 1200 bytes an Initial must have.
+        let mut packet = vec![0xc0, 0x0a, 0x0a, 0x0a, 0x0a, 8];
+        packet.extend([1; 8]);
+        packet.push(8);
+        packet.extend([2; 8]);
+        packet.resize(1200, 0);
+        socket.send_to(&packet, addr).await.unwrap();
+
+        let mut reply = [0; 1500];
+        match tokio::time::timeout(Duration::from_secs(5), socket.recv(&mut reply)).await {
+            // Version Negotiation is a long header with version 0.
+            Ok(Ok(len)) => len >= 5 && reply[0] & 0x80 != 0 && reply[1..5] == [0; 4],
+            _ => false,
+        }
+    }
+
     #[test]
     fn wildcard_binds_are_dialled_over_loopback() {
         assert_eq!(
