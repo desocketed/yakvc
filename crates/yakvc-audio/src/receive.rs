@@ -29,6 +29,8 @@ pub struct Packet<'a> {
     /// Capture time of the first sample, in 48 kHz samples.
     pub ts: u32,
     pub end_of_talk: bool,
+    /// Empty only in a header-only `end_of_talk`, which the sender sends
+    /// when DTX had already silenced the spurt's last frame.
     pub payload: &'a [u8],
 }
 
@@ -199,6 +201,15 @@ impl ReceiveStream {
         let due_slot = (now - base - delay).div_euclid(FRAME_MICROS);
 
         if !self.playing {
+            // A header-only end of talk usually arrives after concealment
+            // has already ended the spurt, and must not start a new one.
+            if let Some((&first, packet)) = self.queue.first_key_value()
+                && first <= due_slot
+                && packet.payload.is_empty()
+            {
+                self.queue.remove(&first);
+                return silence(out);
+            }
             match self.queue.first_key_value() {
                 Some((&first, packet)) if first <= due_slot => {
                     self.playing = true;
@@ -224,8 +235,7 @@ impl ReceiveStream {
         let slot = self.next_slot;
         self.next_slot += 1;
         if let Some(packet) = self.queue.remove(&slot) {
-            self.play(&packet, out);
-            return Pulled::Voice;
+            return self.play(&packet, out);
         }
 
         self.gap.frames += 1;
@@ -237,7 +247,8 @@ impl ReceiveStream {
             // Nothing between the last packet and the next was lost, so DTX
             // skipped this frame: the sender had nothing to say.
             Some((_, next)) if next.seq == self.last_seq.wrapping_add(1) => silence(out),
-            Some((&next_slot, next)) if next_slot == slot + 1 => {
+            // A header-only packet has no FEC data to recover from.
+            Some((&next_slot, next)) if next_slot == slot + 1 && !next.payload.is_empty() => {
                 if decode(&mut self.decoder, &next.payload, true, out) {
                     self.gap.fec_recovered += 1;
                 } else {
@@ -263,7 +274,7 @@ impl ReceiveStream {
         }
     }
 
-    fn play(&mut self, packet: &QueuedPacket, out: &mut MonoFrame) {
+    fn play(&mut self, packet: &QueuedPacket, out: &mut MonoFrame) -> Pulled {
         // Count the frames filled since the last packet, up to the number of
         // packets that went missing; the rest were skipped by DTX.
         let lost = u64::from(packet.seq.wrapping_sub(self.last_seq).wrapping_sub(1));
@@ -273,6 +284,11 @@ impl ReceiveStream {
         self.gap = Gap::default();
         self.last_seq = packet.seq;
 
+        // A header-only end of talk: the sender's DTX had already gone quiet.
+        if packet.payload.is_empty() {
+            self.end_talk_spurt();
+            return silence(out);
+        }
         if !decode(&mut self.decoder, &packet.payload, false, out) {
             self.conceal(out);
             self.stats.concealed += 1;
@@ -280,6 +296,7 @@ impl ReceiveStream {
         if packet.end_of_talk {
             self.end_talk_spurt();
         }
+        Pulled::Voice
     }
 
     fn conceal(&mut self, out: &mut MonoFrame) {
@@ -713,6 +730,49 @@ mod tests {
         assert_eq!(*pulled.last().unwrap(), Pulled::Silence);
         // Nothing shows those frames were lost rather than never sent.
         assert_eq!(stream.stats().concealed, 0);
+    }
+
+    /// The header-only `end_of_talk` a sender sends when DTX suppressed the
+    /// spurt's last frame.
+    fn header_only_end(talker: &mut Talker) -> Sent {
+        let sent = Sent {
+            seq: talker.seq,
+            ts: talker.ts,
+            end_of_talk: true,
+            payload: Vec::new(),
+        };
+        talker.seq = talker.seq.wrapping_add(1);
+        talker.ts = talker.ts.wrapping_add(FRAME_SAMPLES as u32);
+        sent
+    }
+
+    #[test]
+    fn header_only_end_of_talk_ends_the_spurt_in_silence() {
+        let mut stream = ReceiveStream::new(JitterConfig::default());
+        let mut talker = Talker::new();
+        let mut arrivals = talk_then_dtx(&mut talker, 10);
+        talker.skip_frame();
+        talker.skip_frame();
+        arrivals.push((ms(12 * 20 + 10), header_only_end(&mut talker)));
+        let pulled = simulate(&mut stream, arrivals, ms(0), 30);
+        assert_eq!(voice_count(&pulled), 10);
+        assert_eq!(stream.stats().concealed, 0);
+    }
+
+    #[test]
+    fn late_header_only_end_of_talk_starts_no_spurt() {
+        let mut stream = ReceiveStream::new(JitterConfig::default());
+        let mut talker = Talker::new();
+        let mut arrivals = talk_then_dtx(&mut talker, 10);
+        // Concealment has ended the spurt before the end of talk is due.
+        for _ in 0..MAX_CONCEALED_RUN + 3 {
+            talker.skip_frame();
+        }
+        let at = ms(u64::from(10 + MAX_CONCEALED_RUN + 3) * 20 + 10);
+        arrivals.push((at, header_only_end(&mut talker)));
+        let pulled = simulate(&mut stream, arrivals, ms(0), 40);
+        assert_eq!(voice_count(&pulled), 10 + MAX_CONCEALED_RUN as usize);
+        assert_eq!(*pulled.last().unwrap(), Pulled::Silence);
     }
 
     #[test]
