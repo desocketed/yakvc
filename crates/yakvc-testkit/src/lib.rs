@@ -466,7 +466,11 @@ impl TestClient {
 
     fn update_player(&self, change: impl FnOnce(&mut Player)) {
         let mut players = self.players.lock().expect("players lock");
-        if let Some(me) = players.iter_mut().find(|p| p.uuid == self.uuid) {
+        // By engine, not UUID: two clients may claim one player.
+        let me = players
+            .iter_mut()
+            .find(|p| std::ptr::eq(p.engine.as_ptr(), Arc::as_ptr(&self.engine)));
+        if let Some(me) = me {
             change(me);
         }
     }
