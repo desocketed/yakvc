@@ -2,12 +2,12 @@
 //!
 //! The client opens one bi-stream. Before registering it may only send
 //! `Hello` and then `Joined` or `Decline` (for the `Challenge` it was sent),
-//! and must be registered within [`AUTH_TIMEOUT`]. Once registered it sends
-//! pair-token and address updates, and may `Renew` its ticket by running the
-//! challenge again. A failed renewal never ends the session: the client keeps
-//! its current ticket and is told to retry later. Every reply and push goes
-//! through one writer task, so the reading side never has to give up halfway
-//! through a message.
+//! and must be registered within `Limits::auth_timeout`. Once registered it
+//! sends pair-token and address updates, and may `Renew` its ticket by running
+//! the challenge again. A failed renewal never ends the session: the client
+//! keeps its current ticket and is told to retry later. Every reply and push
+//! goes through one writer task, so the reading side never has to give up
+//! halfway through a message.
 
 use std::collections::HashSet;
 use std::net::IpAddr;
@@ -29,10 +29,6 @@ use crate::limits::{IpSlot, Slot, TokenBucket, ip_key};
 use crate::server::Limits;
 use crate::server::Shared;
 use crate::sessions::{Outbox, close, push};
-
-/// Time from accepting the connection until the client must be registered.
-/// Covers the client's `joinServer` call to Mojang.
-const AUTH_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How long the writer may take to deliver its last messages on close.
 const FLUSH_TIMEOUT: Duration = Duration::from_secs(1);
@@ -76,7 +72,7 @@ pub(crate) async fn serve(shared: Arc<Shared>, incoming: Incoming) {
     let Ok(conn) = incoming.await else {
         return;
     };
-    let deadline = tokio::time::Instant::now() + AUTH_TIMEOUT;
+    let deadline = tokio::time::Instant::now() + shared.limits.auth_timeout;
     let (send, recv) = match tokio::time::timeout_at(deadline, conn.accept_bi()).await {
         Ok(Ok(streams)) => streams,
         _ => {

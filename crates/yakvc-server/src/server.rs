@@ -90,6 +90,9 @@ pub struct Limits {
     pub relay_client_bytes_per_sec: u32,
     /// How long a relay client may stay without a rendezvous session.
     pub relay_grace: Duration,
+    /// Time from accepting a connection until the client must be
+    /// registered. Covers the client's `joinServer` call to Mojang.
+    pub auth_timeout: Duration,
     /// Challenges the whole server may issue per minute (with a burst of as
     /// many). Each one can lead to a `hasJoined` call, and fresh keys get
     /// around the per-EndpointId limit, so this keeps a flood from pushing
@@ -426,6 +429,7 @@ impl Default for Limits {
             pair_updates_per_sec: rdv::PAIR_UPDATES_PER_SEC,
             relay_client_bytes_per_sec: 80_000,
             relay_grace: Duration::from_secs(30),
+            auth_timeout: Duration::from_secs(30),
             // Mojang is said to allow about 600 `hasJoined` calls per 10
             // minutes per IP; a full bucket plus ten minutes of refill stays
             // under that.
