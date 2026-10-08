@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::Deserialize;
-use yakvc_shared::{IssuerKey, RelayUrl, SecretKey};
+use yakvc_shared::{IssuerKey, SecretKey};
 
 use crate::server::{RelayOptions, RelayTls, Server, ServerBuilder};
 
@@ -20,10 +20,6 @@ pub struct Config {
     pub relay: Option<RelayConfig>,
     pub ticket_lifetime_hours: Option<u64>,
     pub metrics_bind: Option<SocketAddr>,
-    /// Relays besides `[relay]` that clients may advertise to each other
-    /// (see `ServerBuilder::extra_relays`).
-    #[serde(default)]
-    pub extra_relays: Vec<RelayUrl>,
     #[serde(default)]
     pub insecure_dev_auth: bool,
 }
@@ -82,7 +78,6 @@ impl Config {
             }
             builder = builder.ticket_lifetime(Duration::from_secs(hours * 3600));
         }
-        builder = builder.extra_relays(self.extra_relays);
         if let Some(addr) = self.metrics_bind {
             builder = builder.metrics(addr);
         }
@@ -159,7 +154,6 @@ mod tests {
         bind = "0.0.0.0:7843"
         ticket_lifetime_hours = 12
         metrics_bind = "127.0.0.1:9100"
-        extra_relays = ["https://relay2.example.com"]
 
         [relay]
         http_bind = "0.0.0.0:80"
@@ -180,10 +174,6 @@ mod tests {
         let config: Config = toml::from_str(FULL).unwrap();
         assert_eq!(config.bind, "0.0.0.0:7843".parse().unwrap());
         assert_eq!(config.ticket_lifetime_hours, Some(12));
-        assert_eq!(
-            config.extra_relays,
-            ["https://relay2.example.com".parse::<RelayUrl>().unwrap()]
-        );
         assert!(!config.insecure_dev_auth);
         let options = relay(FULL).unwrap().unwrap();
         assert!(matches!(
@@ -255,7 +245,6 @@ mod tests {
             relay: None,
             ticket_lifetime_hours: Some(1),
             metrics_bind: None,
-            extra_relays: Vec::new(),
             insecure_dev_auth: true,
         };
         assert!(config.clone().into_builder().is_ok());

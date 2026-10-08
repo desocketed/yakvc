@@ -14,11 +14,6 @@ bind = "[::]:7843"
 # Scrape from the same host only: the endpoint has no authentication.
 metrics_bind = "127.0.0.1:9100"
 
-# Relays run apart from this server that clients may advertise to each
-# other. Every other relay URL is dropped from players' addresses, so that a
-# peer can't make another dial a relay of its choosing.
-# extra_relays = ["https://relay02.example.com"]
-
 [relay]
 # Plain HTTP; also answers Let's Encrypt.
 http_bind = "[::]:80"
