@@ -3,7 +3,10 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{ErrorKind, FromSample, I24, Sample, SampleFormat, SizedSample, StreamConfig};
+use cpal::{
+    BufferSize, ErrorKind, FromSample, I24, Sample, SampleFormat, SizedSample, StreamConfig,
+    SupportedBufferSize, SupportedStreamConfig,
+};
 use rtrb::{Consumer, Producer, RingBuffer};
 use serde::Serialize;
 
@@ -105,6 +108,11 @@ impl Direction {
             let (Ok(id), Ok(description)) = (device.id(), device.description()) else {
                 continue;
             };
+            // PulseAudio lists each output's monitor as an input, which would
+            // send the game's sound to everyone.
+            if id.id().ends_with(".monitor") {
+                continue;
+            }
             names.push(Name {
                 name: description.name().to_owned(),
                 // ALSA puts the card on the first line and what the PCM is
@@ -243,7 +251,7 @@ impl Microphone {
     pub fn open(device: &DeviceChoice) -> Result<Self, AudioError> {
         let device = Direction::Input.find(device)?;
         let supported = device.default_input_config().map_err(device_error)?;
-        let config = supported.config();
+        let config = stream_config(&supported);
         let rate = config.sample_rate;
         let (producer, ring) = RingBuffer::new(ring_len(rate));
         let health = Arc::new(Health::default());
@@ -358,7 +366,7 @@ impl Speakers {
     pub fn open(device: &DeviceChoice) -> Result<Self, AudioError> {
         let device = Direction::Output.find(device)?;
         let supported = device.default_output_config().map_err(device_error)?;
-        let config = supported.config();
+        let config = stream_config(&supported);
         let rate = config.sample_rate;
         let (ring, consumer) = RingBuffer::new(ring_len(rate));
         let health = Arc::new(Health::default());
@@ -517,6 +525,16 @@ impl Health {
     fn failure(&self) -> Option<String> {
         self.failure.get().cloned()
     }
+}
+
+/// The device's own config, asking for 10 ms buffers where the device takes a
+/// range. With PulseAudio's default buffers, capture lost most of its audio.
+fn stream_config(supported: &SupportedStreamConfig) -> StreamConfig {
+    let mut config = supported.config();
+    if let SupportedBufferSize::Range { min, max } = *supported.buffer_size() {
+        config.buffer_size = BufferSize::Fixed((config.sample_rate / 100).clamp(min, max));
+    }
+    config
 }
 
 fn ring_len(rate: u32) -> usize {

@@ -2,10 +2,10 @@
 //! audio devices on a machine without a sound card.
 //!
 //! It starts a private PipeWire session with a test microphone and test
-//! speakers, and points ALSA at it the way pipewire-alsa does on a desktop.
-//! The engine then opens its devices through ALSA exactly as it does for
-//! players, instead of using the dev test audio. A 440 Hz tone plays into the
-//! test microphone. Needs Nix, which provides PipeWire, WirePlumber and D-Bus.
+//! speakers, serves it over the Pulse protocol as pipewire-pulse does, and
+//! points ALSA at it the way pipewire-alsa does on a desktop. The engine then
+//! opens its devices exactly as it does for players, instead of using the dev
+//! test audio. A 440 Hz tone plays into the test microphone. Needs Nix, which provides PipeWire, WirePlumber and D-Bus.
 
 use std::fs;
 use std::io::Write;
@@ -73,12 +73,17 @@ pub fn with_pipewire(command: &[String]) -> Result<i32> {
             pw = pipewire.display(),
         ),
     )?;
+    // Pulse clients send a 256-byte cookie, which desktops keep in
+    // ~/.config/pulse/cookie; pipewire-pulse refuses one of any other length.
+    let cookie = work.join("pulse-cookie");
+    fs::write(&cookie, [0u8; 256])?;
     let bus = format!("unix:path={}/bus", runtime.display());
     let env = [
         ("XDG_RUNTIME_DIR", runtime.clone().into_os_string()),
         ("XDG_CONFIG_HOME", config.into_os_string()),
         ("DBUS_SESSION_BUS_ADDRESS", bus.clone().into()),
         ("ALSA_CONFIG_PATH", asound.into_os_string()),
+        ("PULSE_COOKIE", cookie.into_os_string()),
         (
             "ALSA_PLUGIN_DIR",
             pipewire.join("lib/alsa-lib").into_os_string(),
@@ -120,6 +125,13 @@ pub fn with_pipewire(command: &[String]) -> Result<i32> {
         wireplumber.join("bin/wireplumber"),
         &[],
         "wireplumber.log",
+    )?);
+    // Desktops run PipeWire's Pulse server too, and the engine prefers it to
+    // ALSA when its socket exists.
+    daemons.0.push(spawn(
+        pipewire.join("bin/pipewire-pulse"),
+        &[],
+        "pipewire-pulse.log",
     )?);
 
     let tone = [

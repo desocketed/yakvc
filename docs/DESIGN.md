@@ -289,7 +289,7 @@ Voice is 48 kHz mono Opus in 20 ms frames, sent as unreliable QUIC datagrams on 
 - Two `cpal` real-time callbacks (input, output): ring-buffer I/O only.
 - One audio worker thread for resample, encode, decode and mix, talking to Tokio through bounded channels.
 - A missing or failing audio device is reported as one `Error` event and never fails `Engine::start`, so networking and the game keep working without a microphone or speakers. The engine retries the device every 2 s and reports again only after it has worked in between. It never reopens a source or sink the caller supplied. `Speakers` counts underruns only after the first audio has been written. Only cpal's `DeviceNotAvailable`, `HostUnavailable` and `StreamInvalidated` count as failure; `Xrun` counts as an overrun or underrun, and other errors are ignored.
-- The output device follows the game's sound device (`Engine::set_game_device`, `DeviceChoice::ClosestTo`) unless `audio.output_device` overrides it. The audio thread checks each tick which devices it should be using and reopens only the one that changed. Devices are listed and stored by cpal's `DeviceId`, not by name: ALSA gives every PCM of one card (`hw:`, `plughw:`, `sysdefault:`...) the same name, so the listed names get the PCM's purpose and, if still shared, its id added.
+- The output device follows the game's sound device (`Engine::set_game_device`, `DeviceChoice::ClosestTo`) unless `audio.output_device` overrides it. The audio thread checks each tick which devices it should be using and reopens only the one that changed. Devices are listed and stored by cpal's `DeviceId`, not by name: ALSA gives every PCM of one card (`hw:`, `plughw:`, `sysdefault:`...) the same name, so the listed names get the PCM's purpose and, if still shared, its id added. On Linux, cpal's PulseAudio backend (pure Rust, no libpulse) is used when a Pulse server answers, which on desktops is usually PipeWire's: devices then have their desktop names, and monitor sources are left out of the inputs. Streams ask for 10 ms buffers, because with Pulse's default buffers capture lost most of its audio. Without a Pulse server, or if its login fails, the engine falls back to ALSA.
 
 **Budgets**
 
@@ -448,7 +448,7 @@ size_t   yakvc_last_error(uint8_t *buf, size_t cap);         // message for this
 
 | Target | Built on | Notes |
 | --- | --- | --- |
-| `x86_64-unknown-linux-gnu` | Linux runner, `cargo-zigbuild` targeting glibc 2.17 | ALSA linked dynamically; PipeWire/Pulse provide ALSA compatibility |
+| `x86_64-unknown-linux-gnu` | Linux runner, `cargo-zigbuild` targeting glibc 2.17 | ALSA linked dynamically; the PulseAudio backend speaks the protocol itself, so it needs no library |
 | `aarch64-unknown-linux-gnu` | Linux runner, `cargo-zigbuild` | Raspberry Pi / ARM Linux. `alsa-sys` finds arm64 `libasound` through pkg-config's per-target `PKG_CONFIG_PATH_aarch64_unknown_linux_gnu`: Ubuntu's multiarch `libasound2-dev:arm64` in CI, nixpkgs' aarch64 `alsa-lib` in the dev shell |
 | `x86_64-pc-windows-msvc` | Windows runner | WASAPI via `cpal` |
 | `x86_64-apple-darwin` + `aarch64-apple-darwin` | macOS runner | Merged with `lipo` into one universal `.dylib` |
