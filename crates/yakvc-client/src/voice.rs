@@ -315,6 +315,15 @@ impl Shared {
         let _ = self.to_audio.lock().unwrap().try_send(frame);
     }
 
+    /// Whether `link_id` is the link voice uses for `uuid`.
+    fn is_current(&self, uuid: Uuid, link_id: usize) -> bool {
+        self.peers
+            .lock()
+            .unwrap()
+            .get(&uuid)
+            .is_some_and(|p| p.peer.link_id() == link_id)
+    }
+
     /// Works out again which peers are in our group, after an announcement,
     /// a peer leaving, or a change of our own group.
     fn refresh_group_mates(&self) {
@@ -382,6 +391,7 @@ async fn serve_peer(shared: Arc<Shared>, link: PeerLink) {
     let reader = tokio::spawn(read_control(
         shared.clone(),
         uuid,
+        link_id,
         control_recv,
         wants_audio,
     ));
@@ -418,6 +428,12 @@ async fn serve_peer(shared: Arc<Shared>, link: PeerLink) {
         tokio::select! {
             datagram = datagrams.recv() => {
                 let Some(datagram) = datagram else { break };
+                // Two endpoints of equal standing can claim one player, and
+                // voice is per player: only the newest link is heard (and
+                // sent to), so their frames never mix in one jitter buffer.
+                if !shared.is_current(uuid, link_id) {
+                    continue;
+                }
                 #[cfg(feature = "sim")]
                 if let Some(impairer) = &mut impairer {
                     deliver_impaired(&shared, uuid, datagram, impairer);
@@ -451,6 +467,7 @@ async fn serve_peer(shared: Arc<Shared>, link: PeerLink) {
 async fn read_control(
     shared: Arc<Shared>,
     uuid: Uuid,
+    link_id: usize,
     mut control: ControlRecv,
     wants_audio: Arc<AtomicBool>,
 ) {
@@ -460,9 +477,14 @@ async fn read_control(
                 wants_audio.store(wants, Ordering::Relaxed);
             }
             VoiceMsg::Group(group) => {
-                if let Some(peer) = shared.peers.lock().unwrap().get_mut(&uuid) {
+                // Only the current link speaks for the player.
+                let mut peers = shared.peers.lock().unwrap();
+                if let Some(peer) = peers.get_mut(&uuid)
+                    && peer.peer.link_id() == link_id
+                {
                     peer.group = group;
                 }
+                drop(peers);
                 shared.refresh_group_mates();
             }
         }

@@ -100,3 +100,52 @@ async fn players_without_accounts_renew_unverified_tickets() {
     assert_eq!(peers.len(), 1);
     assert_eq!(peers[0].state, PeerState::Direct);
 }
+
+/// Two unverified endpoints claiming one offline UUID both link up, since
+/// neither outranks the other. Only the newer link is heard, so the two
+/// never mix in one jitter buffer (#109).
+#[tokio::test(flavor = "multi_thread")]
+async fn only_the_newest_link_for_a_player_is_heard() {
+    let net = TestNet::start_without_accounts(DAY).await;
+    let alice = net.client().name("alice").offline().start().await;
+    let first = net.client().name("bob").offline().tone(440.0).start().await;
+    let bob = first.uuid();
+    see_each_other(&[&alice, &first]);
+    alice.move_to(Vec3::new(0.0, 64.0, 0.0));
+    first.move_to(Vec3::new(5.0, 64.0, 0.0));
+    let links_to_bob = |n: usize| {
+        let alice = &alice;
+        async move {
+            for _ in 0..500 {
+                let up = alice
+                    .engine()
+                    .peers()
+                    .iter()
+                    .filter(|p| p.uuid == bob && p.state == PeerState::Direct)
+                    .count();
+                if up == n {
+                    return;
+                }
+                sleep(Duration::from_millis(20)).await;
+            }
+            panic!(
+                "alice never had {n} links to bob: {:?}",
+                alice.engine().peers()
+            );
+        }
+    };
+    links_to_bob(1).await;
+
+    // A second, silent "bob" links up after the first.
+    let second = net.client().name("bob").offline().start().await;
+    second.sees(&[&alice]);
+    second.move_to(Vec3::new(5.0, 64.0, 0.0));
+    links_to_bob(2).await;
+    sleep(Duration::from_millis(500)).await;
+
+    first.talk(true);
+    sleep(Duration::from_millis(500)).await;
+    let before = alice.recording().audible_frames();
+    sleep(Duration::from_secs(1)).await;
+    assert_eq!(alice.recording().audible_frames(), before);
+}
