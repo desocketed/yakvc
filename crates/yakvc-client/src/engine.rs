@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -6,12 +7,12 @@ use iroh::endpoint::presets;
 use iroh::{Endpoint, EndpointAddr, RelayMode, SecretKey};
 use tokio::runtime::Runtime;
 use yakvc_audio::{Devices, FrameSink, FrameSource, StreamStats};
-use yakvc_shared::{IssuerKey, TicketBody, TicketVerifier, Uuid};
+use yakvc_shared::{GroupId, GroupKey, IssuerKey, TicketBody, TicketVerifier, Uuid};
 
 use crate::config::{Config, ConfigError};
 use crate::event::{self, Event, Events, JoinId, PeerState, RendezvousState};
 use crate::net::{Identity, Net, Trust};
-use crate::voice::{AudioIo, AudioStats, Voice};
+use crate::voice::{AudioIo, AudioStats, GroupInfo, Voice};
 use crate::world::{Input, World, distance};
 
 /// A running voice engine. Dropping it shuts down gracefully, waiting at most
@@ -191,11 +192,15 @@ impl Engine {
 
     /// Pushes this tick's world snapshot.
     pub fn set_world(&self, world: World) {
-        let distances = world
+        let mut distances: HashMap<Uuid, f64> = world
             .players
             .iter()
             .map(|&(uuid, pos)| (uuid, distance(world.listener.pos, pos)))
             .collect();
+        // Group mates rank as if next to us, so the peer cap keeps them.
+        for mate in self.voice.group_mates() {
+            distances.insert(mate, 0.0);
+        }
         self.net.set_tracked(&distances);
         self.voice.set_world(world);
     }
@@ -223,6 +228,31 @@ impl Engine {
             return NetReport::from_iroh(None);
         }
         NetReport::from_iroh(self.net.net_report().await)
+    }
+
+    /// Joins the group with this name and password (empty for an open
+    /// group), leaving any other. Nearby voice starts on. `None` if the name
+    /// is empty or longer than 32 characters.
+    pub fn join_group(&self, name: &str, password: &str) -> Option<GroupId> {
+        let key = GroupKey::new(name, password)?;
+        let id = key.id();
+        self.voice.join_group(key, !password.is_empty());
+        Some(id)
+    }
+
+    pub fn leave_group(&self) {
+        self.voice.leave_group();
+    }
+
+    /// While in a group, whether nearby players outside it are heard and
+    /// sent to.
+    pub fn set_group_nearby(&self, nearby: bool) {
+        self.voice.set_group_nearby(nearby);
+    }
+
+    /// Our group and every group our peers announce.
+    pub fn groups(&self) -> Vec<GroupInfo> {
+        self.voice.groups()
     }
 
     pub fn set_peer_audio(&self, uuid: Uuid, audio: PeerAudio) {
