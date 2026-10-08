@@ -104,13 +104,6 @@ services.yakvc-server = {
 
 **3. Rebuild** (`sudo nixos-rebuild switch`), then `journalctl -u yakvc-server` prints the endpoint id, issuer id and (with a relay) the relay URL, for clients' `client.toml` (see "Pointing clients at the server" below).
 
-**While the repository is private**, Nix needs credentials to fetch it, and `nixos-rebuild` fetches as root. Either:
-
-- use `git+ssh://git@github.com/desocketed/yakvc` as the URL, with root's SSH public key (`sudo cat /root/.ssh/id_ed25519.pub`, create it with `sudo ssh-keygen -t ed25519` if missing) added as a read-only deploy key under the repository's Settings → Deploy keys; or
-- add a GitHub token with read access to the repository to `/etc/nix/nix.conf` as `access-tokens = github.com=<token>`.
-
-Once the repository is public, the plain `github:desocketed/yakvc` URL works with no setup.
-
 ## Without Docker
 
 Download the static `yakvc-server` binary from the GitHub release, then:

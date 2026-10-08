@@ -202,8 +202,32 @@ jobs:
         with:
           tool: cargo-zigbuild,cargo-about
       - run: cargo xtask server-image
-      - name: Smoke-test the image
-        run: docker run --rm yakvc-server --version
+      # Started as deploy/yakvc-server-docker.service starts it, the first run
+      # must create its keys in a fresh volume (#51) and a second run must
+      # find the same ones there.
+      - name: Smoke-test the image's first start
+        run: |
+          mkdir smoke
+          printf '%s\n' 'endpoint_key = "/var/lib/yakvc/endpoint.key"' \
+            'issuer_key = "/var/lib/yakvc/issuer.key"' 'bind = "127.0.0.1:7843"' > smoke/config.toml
+          start() {
+            docker run -d --name yakvc-smoke --network host \
+              --user 0:0 --cap-drop ALL --cap-add NET_BIND_SERVICE \
+              --security-opt no-new-privileges --read-only \
+              --volume "$PWD/smoke:/etc/yakvc:ro" --volume yakvc-smoke-state:/var/lib/yakvc \
+              yakvc-server >/dev/null
+            for _ in $(seq 30); do
+              docker logs yakvc-smoke 2>&1 | grep -q '^issuer id' && break
+              sleep 1
+            done
+            docker logs yakvc-smoke 2>&1 | tee smoke/log >&2
+            docker rm -f yakvc-smoke >/dev/null
+            grep '^endpoint id' smoke/log
+          }
+          first=$(start)
+          second=$(start)
+          test -n "$first" || { echo "the server didn't start" >&2; exit 1; }
+          test "$first" = "$second" || { echo "the keys weren't kept: $first, then $second" >&2; exit 1; }
       - name: Save the image and binary
         run: |
           mkdir server
