@@ -10,7 +10,7 @@ use yakvc_shared::rdv::{self, CloseCode};
 use yakvc_shared::{EndpointAddr, EndpointId, IssuerId, IssuerKey, RelayUrl, SecretKey};
 
 use crate::auth::Auth;
-use crate::limits::{RateLimiter, Slots, TokenBucket};
+use crate::limits::{IpSlots, RateLimiter, Slots, TokenBucket};
 use crate::metrics::Metrics;
 use crate::mojang::SessionServer;
 use crate::relay::RelayGate;
@@ -44,6 +44,7 @@ pub struct ServerBuilder {
     ticket_lifetime: Duration,
     limits: Limits,
     metrics: Option<SocketAddr>,
+    extra_relays: Vec<RelayUrl>,
 }
 
 /// Embedded relay settings.
@@ -100,6 +101,16 @@ pub struct Limits {
     pub unknown_ip_challenges_per_min: u32,
     /// Connections that may be open at once without being registered yet.
     pub max_unregistered: usize,
+    /// The same, per source IP (IPv6: per /64), so that one host can't take
+    /// every slot. Connections through the relay only count against
+    /// `max_unregistered`, since their IP is unknown.
+    pub max_unregistered_per_ip: usize,
+    /// Sessions (counted from `Hello`) per source IP (IPv6: per /64).
+    /// Offline UUIDs cost only a `Decline`, so this is what bounds how many
+    /// sessions one host can make the matcher work for. Room for a LAN or
+    /// a shared NAT; sessions through the relay have no known IP and are
+    /// bounded by `unknown_ip_challenges_per_min` instead.
+    pub max_sessions_per_ip: usize,
 }
 
 /// Live counters, for metrics and tests.
@@ -134,6 +145,10 @@ pub(crate) struct Shared {
     pub mojang_checks: Mutex<TokenBucket>,
     pub unknown_ip_challenges: Mutex<TokenBucket>,
     pub unregistered: Slots,
+    pub unregistered_per_ip: IpSlots,
+    pub sessions_per_ip: IpSlots,
+    /// The relays clients may advertise: ours and `extra_relays`.
+    pub relays: Vec<RelayUrl>,
     pub metrics: Metrics,
 }
 
@@ -149,6 +164,7 @@ impl Server {
             ticket_lifetime: Duration::from_secs(24 * 3600),
             limits: Limits::default(),
             metrics: None,
+            extra_relays: Vec::new(),
         }
     }
 
@@ -231,6 +247,15 @@ impl ServerBuilder {
         self
     }
 
+    /// Relays besides our own that clients may advertise to each other, for
+    /// a relay run apart from the rendezvous. Any other relay URL is dropped
+    /// from clients' addresses: a peer dialling an arbitrary relay would
+    /// reveal its IP to whoever runs it.
+    pub fn extra_relays(mut self, relays: Vec<RelayUrl>) -> Self {
+        self.extra_relays = relays;
+        self
+    }
+
     /// Serves Prometheus metrics at this address.
     pub fn metrics(mut self, addr: SocketAddr) -> Self {
         self.metrics = Some(addr);
@@ -302,6 +327,9 @@ impl ServerBuilder {
                 Instant::now(),
             )),
             unregistered: Slots::new(self.limits.max_unregistered),
+            unregistered_per_ip: IpSlots::new(self.limits.max_unregistered_per_ip),
+            sessions_per_ip: IpSlots::new(self.limits.max_sessions_per_ip),
+            relays: relay_url.iter().cloned().chain(self.extra_relays).collect(),
             limits: self.limits,
             sessions,
             relay_gate,
@@ -404,6 +432,8 @@ impl Default for Limits {
             mojang_checks_per_min: 50,
             unknown_ip_challenges_per_min: 20,
             max_unregistered: 500,
+            max_unregistered_per_ip: 10,
+            max_sessions_per_ip: 64,
         }
     }
 }

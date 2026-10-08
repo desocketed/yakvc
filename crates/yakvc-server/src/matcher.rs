@@ -22,8 +22,10 @@ pub(crate) struct Notice {
 #[derive(Debug, Default)]
 pub(crate) struct Matcher {
     sessions: HashMap<EndpointId, Session>,
-    /// Which sessions hold each token.
-    holders: HashMap<PairToken, Vec<EndpointId>>,
+    /// Which sessions hold each token, by UUID. Only one other UUID can
+    /// match a token, so finding it costs one hash per UUID, however many
+    /// sessions share a UUID.
+    holders: HashMap<PairToken, HashMap<Uuid, Vec<EndpointId>>>,
     matches: usize,
 }
 
@@ -46,8 +48,22 @@ impl Matcher {
         self.matches
     }
 
+    #[cfg(test)]
     pub fn pair_count(&self, id: EndpointId) -> usize {
         self.sessions.get(&id).map_or(0, |s| s.tokens.len())
+    }
+
+    /// How many tokens the session would hold after `add_pairs(tokens)`:
+    /// duplicates and tokens it already holds count once.
+    pub fn pair_count_after_adding(&self, id: EndpointId, tokens: &[PairToken]) -> usize {
+        let Some(session) = self.sessions.get(&id) else {
+            return 0;
+        };
+        let new: HashSet<&PairToken> = tokens
+            .iter()
+            .filter(|token| !session.tokens.contains(token))
+            .collect();
+        session.tokens.len() + new.len()
     }
 
     /// Adds a session with no tokens, replacing any earlier one for `id`.
@@ -147,14 +163,15 @@ impl Matcher {
         }
         let uuid = session.uuid;
         let holders = self.holders.entry(token).or_default();
-        let others = holders.clone();
-        holders.push(id);
+        let matching: Vec<EndpointId> = holders
+            .iter()
+            .filter(|&(&other, _)| other != uuid && PairToken::new(uuid, other) == token)
+            .flat_map(|(_, ids)| ids.iter().copied())
+            .collect();
+        holders.entry(uuid).or_default().push(id);
 
-        for other in others {
-            let other_uuid = self.sessions[&other].uuid;
-            if other_uuid != uuid && PairToken::new(uuid, other_uuid) == token {
-                self.link(id, other, notices);
-            }
+        for other in matching {
+            self.link(id, other, notices);
         }
     }
 
@@ -169,7 +186,11 @@ impl Matcher {
         let matched: Vec<EndpointId> = session.matched.iter().copied().collect();
 
         let holders = self.holders.get_mut(&token).expect("token was held");
-        holders.retain(|&h| h != id);
+        let ids = holders.get_mut(&uuid).expect("token was held");
+        ids.retain(|&h| h != id);
+        if ids.is_empty() {
+            holders.remove(&uuid);
+        }
         if holders.is_empty() {
             self.holders.remove(&token);
         }
@@ -347,6 +368,34 @@ mod tests {
         let token = PairToken::new(a.uuid, a.uuid);
         m.add_pairs(a.id, vec![token]);
         assert!(m.add_pairs(twin.id, vec![token]).is_empty());
+    }
+
+    #[test]
+    fn sessions_sharing_a_uuid_each_match_and_are_cleaned_up() {
+        let (a, b) = (player(1), player(2));
+        let a2 = Player {
+            id: SecretKey::from_bytes(&[9; 32]).public(),
+            uuid: a.uuid,
+        };
+        let mut m = Matcher::default();
+        for p in [&a, &a2, &b] {
+            join(&mut m, p);
+        }
+        m.add_pairs(a.id, sees(&a, &[&b]));
+        m.add_pairs(a2.id, sees(&a2, &[&b]));
+        let notices = m.add_pairs(b.id, sees(&b, &[&a]));
+        let mut expected = pair("available", &a, &b);
+        expected.extend(pair("available", &a2, &b));
+        expected.sort();
+        assert_eq!(summary(&notices), expected);
+        assert_eq!(m.holders.len(), 1);
+        assert_eq!(m.holders.values().next().unwrap().len(), 2, "two UUIDs");
+
+        m.unregister(a.id);
+        assert_eq!(m.matches(), 1);
+        m.unregister(a2.id);
+        m.unregister(b.id);
+        assert!(m.holders.is_empty());
     }
 
     #[test]

@@ -6,9 +6,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
 
 use crate::server::Shared;
+
+/// How long a metrics request may take to arrive, and the answer to be sent.
+const IO_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How long to wait after a failed accept before trying again.
+const ACCEPT_RETRY: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Default)]
 pub(crate) struct Metrics {
@@ -143,21 +149,61 @@ pub(crate) async fn serve(
     shared: Arc<Shared>,
     relay: Option<Arc<iroh_relay::server::Metrics>>,
 ) {
-    while let Ok((mut stream, _)) = listener.accept().await {
-        let body = render(&shared, relay.as_deref());
-        tokio::spawn(async move {
-            // The request itself doesn't matter; read it so the client isn't
-            // reset, then answer.
-            let mut request = [0; 1024];
-            let _ = stream.read(&mut request).await;
-            let response = format!(
-                "HTTP/1.1 200 OK\r\n\
-                 Content-Type: text/plain; version=0.0.4\r\n\
-                 Content-Length: {}\r\n\
-                 Connection: close\r\n\r\n{body}",
-                body.len()
-            );
-            let _ = stream.write_all(response.as_bytes()).await;
-        });
+    loop {
+        match listener.accept().await {
+            Ok((stream, _)) => {
+                let body = render(&shared, relay.as_deref());
+                tokio::spawn(answer(stream, body));
+            }
+            Err(e) => {
+                // Usually EMFILE under load, which passes. The pending
+                // connection stays queued, so retrying at once would spin.
+                eprintln!("metrics: accept failed: {e}");
+                tokio::time::sleep(ACCEPT_RETRY).await;
+            }
+        }
+    }
+}
+
+async fn answer(mut stream: TcpStream, body: String) {
+    // The request itself doesn't matter; read it so the client isn't
+    // reset, then answer. A client that never sends or reads must not hold
+    // its socket forever.
+    let mut request = [0; 1024];
+    let _ = tokio::time::timeout(IO_TIMEOUT, stream.read(&mut request)).await;
+    let response = format!(
+        "HTTP/1.1 200 OK\r\n\
+         Content-Type: text/plain; version=0.0.4\r\n\
+         Content-Length: {}\r\n\
+         Connection: close\r\n\r\n{body}",
+        body.len()
+    );
+    let _ = tokio::time::timeout(IO_TIMEOUT, stream.write_all(response.as_bytes())).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn a_silent_client_is_answered_after_a_timeout() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (stream, _) = listener.accept().await.unwrap();
+        let handler = tokio::spawn(answer(stream, "body".into()));
+
+        // The client never sends a request; the handler still finishes.
+        let mut response = String::new();
+        tokio::time::timeout(
+            Duration::from_secs(60),
+            client.read_to_string(&mut response),
+        )
+        .await
+        .expect("handler waited for the request forever")
+        .unwrap();
+        assert!(response.ends_with("\r\n\r\nbody"));
+        handler.await.unwrap();
     }
 }

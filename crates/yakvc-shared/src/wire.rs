@@ -38,7 +38,16 @@ pub async fn write_msg<M: Serialize>(
 pub async fn read_msg<M: DeserializeOwned>(
     stream: &mut (impl AsyncRead + Unpin),
 ) -> Result<Option<M>, WireError> {
-    let Some(len) = read_len(stream).await? else {
+    read_msg_max(stream, MAX_MESSAGE_LEN).await
+}
+
+/// [`read_msg`] with a lower size limit than [`MAX_MESSAGE_LEN`], for a peer
+/// that isn't trusted with that much memory yet.
+pub async fn read_msg_max<M: DeserializeOwned>(
+    stream: &mut (impl AsyncRead + Unpin),
+    max_len: usize,
+) -> Result<Option<M>, WireError> {
+    let Some(len) = read_len(stream, max_len.min(MAX_MESSAGE_LEN)).await? else {
         return Ok(None);
     };
     let mut body = vec![0; len];
@@ -62,7 +71,10 @@ fn encode_varint(mut value: usize) -> Vec<u8> {
 
 /// Reads the length prefix. Stops as soon as the length is known to be over
 /// the limit, so a hostile prefix can't make us allocate or read further.
-async fn read_len(stream: &mut (impl AsyncRead + Unpin)) -> Result<Option<usize>, WireError> {
+async fn read_len(
+    stream: &mut (impl AsyncRead + Unpin),
+    max_len: usize,
+) -> Result<Option<usize>, WireError> {
     let mut len: usize = 0;
     let mut shift = 0;
     loop {
@@ -74,7 +86,7 @@ async fn read_len(stream: &mut (impl AsyncRead + Unpin)) -> Result<Option<usize>
             Err(e) => return Err(e.into()),
         };
         len |= usize::from(byte & 0x7f) << shift;
-        if len > MAX_MESSAGE_LEN {
+        if len > max_len {
             return Err(WireError::TooLarge(len));
         }
         if byte & 0x80 == 0 {
@@ -147,6 +159,15 @@ mod tests {
         let prefix = encode_varint(MAX_MESSAGE_LEN);
         let err = read_msg::<ClientMsg>(&mut &prefix[..]).await;
         assert!(matches!(err, Err(WireError::Io(_))));
+    }
+
+    #[tokio::test]
+    async fn a_lower_limit_refuses_larger_messages() {
+        let buf = encode(&ClientMsg::AddPairs(tokens(10))).await;
+        let err = read_msg_max::<ClientMsg>(&mut &buf[..], 100).await;
+        assert!(matches!(err, Err(WireError::TooLarge(_))));
+        let msg = read_msg_max::<ClientMsg>(&mut &buf[..], buf.len()).await;
+        assert!(matches!(msg, Ok(Some(ClientMsg::AddPairs(_)))));
     }
 
     #[tokio::test]

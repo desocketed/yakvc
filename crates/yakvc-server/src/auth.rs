@@ -18,6 +18,11 @@ pub(crate) const RENEW_BEFORE: Duration = Duration::from_secs(2 * 3600);
 /// long clients are told to wait when Mojang is down.
 const DEFAULT_RETRY_AFTER: Duration = Duration::from_secs(10);
 
+/// The longest we stop calling Mojang after a 429, whatever its `Retry-After`
+/// says: a bogus value must not block every sign-in for days, or overflow
+/// `Instant`.
+const MAX_RETRY_AFTER: Duration = Duration::from_secs(600);
+
 #[derive(Debug)]
 pub(crate) struct Auth {
     issuer: IssuerKey,
@@ -82,24 +87,17 @@ impl Auth {
 
     /// Signs a ticket. `verified` says whether the client proved the account
     /// to Mojang; dev tickets count as verified, so dev setups behave like
-    /// signed-in players.
-    pub fn issue(
-        &self,
-        uuid: Uuid,
-        name: String,
-        client: EndpointId,
-        verified: bool,
-    ) -> SignedTicket {
-        let mut body = TicketBody::new(
-            uuid,
-            name,
-            client,
-            verified,
-            SystemTime::now(),
-            self.lifetime,
-        );
+    /// signed-in players. Returned checked, like a cached one, so the session
+    /// knows when it expires.
+    pub fn issue(&self, uuid: Uuid, name: String, client: EndpointId, verified: bool) -> Ticket {
+        let now = SystemTime::now();
+        let mut body = TicketBody::new(uuid, name, client, verified, now, self.lifetime);
         body.dev = self.is_dev();
-        self.issuer.sign(&body)
+        // Only unverified tickets for account UUIDs or lifetimes under a
+        // second could fail, and neither is ever issued.
+        self.verifier
+            .verify(&self.issuer.sign(&body), now)
+            .expect("a ticket we just issued is valid")
     }
 
     /// Seconds until Mojang may be called again, if it is rate-limiting us.
@@ -120,7 +118,9 @@ impl Auth {
             Ok(Some(profile)) => JoinCheck::Confirmed(profile),
             Ok(None) => JoinCheck::Rejected,
             Err(MojangError::RateLimited { retry_after }) => {
-                let wait = retry_after.unwrap_or(DEFAULT_RETRY_AFTER);
+                let wait = retry_after
+                    .unwrap_or(DEFAULT_RETRY_AFTER)
+                    .min(MAX_RETRY_AFTER);
                 *self.mojang_blocked_until.lock().unwrap() = Some(Instant::now() + wait);
                 JoinCheck::RetryAfter(secs_rounded_up(wait))
             }
@@ -184,7 +184,10 @@ mod tests {
     async fn reuses_only_matching_fresh_tickets() {
         let mojang = FakeMojang::start().await;
         let auth = auth(Some(&mojang), DAY);
-        let ticket = auth.issue(uuid_for("alice"), "alice".into(), client(), true);
+        let ticket = auth
+            .issue(uuid_for("alice"), "alice".into(), client(), true)
+            .signed()
+            .clone();
         let reusable = |ticket: &SignedTicket, name, client| {
             auth.reusable(ticket, &hello(name, None), client).is_some()
         };
@@ -209,7 +212,10 @@ mod tests {
     async fn tickets_close_to_expiry_are_reused_only_while_mojang_is_blocked() {
         let mojang = FakeMojang::start().await;
         let auth = auth(Some(&mojang), Duration::from_secs(3600));
-        let ticket = auth.issue(uuid_for("alice"), "alice".into(), client(), true);
+        let ticket = auth
+            .issue(uuid_for("alice"), "alice".into(), client(), true)
+            .signed()
+            .clone();
         let hello = hello("alice", None);
         assert!(auth.reusable(&ticket, &hello, client()).is_none());
 
@@ -223,13 +229,19 @@ mod tests {
         let mojang = FakeMojang::start().await;
         let prod = auth(Some(&mojang), DAY);
         let dev = Auth::new(IssuerKey::from_bytes(&[3; 32]), DAY, None, rendezvous());
-        let dev_ticket = dev.issue(uuid_for("alice"), "alice".into(), client(), true);
+        let dev_ticket = dev
+            .issue(uuid_for("alice"), "alice".into(), client(), true)
+            .signed()
+            .clone();
         let hello = hello("alice", None);
         assert!(prod.reusable(&dev_ticket, &hello, client()).is_none());
         assert!(dev.reusable(&dev_ticket, &hello, client()).is_some());
 
         let verifier = TicketVerifier::new([IssuerKey::from_bytes(&[3; 32]).id()]);
-        let real = prod.issue(uuid_for("alice"), "alice".into(), client(), true);
+        let real = prod
+            .issue(uuid_for("alice"), "alice".into(), client(), true)
+            .signed()
+            .clone();
         assert!(!verifier.verify(&real, SystemTime::now()).unwrap().dev);
         assert!(verifier.verify(&dev_ticket, SystemTime::now()).is_err());
     }
@@ -299,6 +311,23 @@ mod tests {
             auth.check_join("alice", &Nonce([0; 32]), client()).await,
             JoinCheck::RetryAfter(10)
         );
+    }
+
+    #[tokio::test]
+    async fn rate_limit_waits_at_most_ten_minutes() {
+        let mojang = FakeMojang::start().await;
+        let auth = auth(Some(&mojang), DAY);
+        // A week, then a value that would overflow `Instant`.
+        for retry_after in ["604800", "18446744073709551615"] {
+            let header = format!("Retry-After: {retry_after}\r\n");
+            mojang.script([response("429 Too Many Requests", &header, "")]);
+            *auth.mojang_blocked_until.lock().unwrap() = None;
+            assert_eq!(
+                auth.check_join("alice", &Nonce([0; 32]), client()).await,
+                JoinCheck::RetryAfter(600)
+            );
+            assert!(auth.retry_after().unwrap() <= 600);
+        }
     }
 
     #[tokio::test]

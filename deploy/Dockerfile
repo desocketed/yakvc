@@ -11,9 +11,11 @@ LABEL org.opencontainers.image.licenses="MIT OR Apache-2.0"
 
 COPY yakvc-server /usr/local/bin/yakvc-server
 COPY THIRD_PARTY_LICENSES /usr/share/doc/yakvc-server/THIRD_PARTY_LICENSES
-# The keys and the ACME certificate cache. Created here so that a fresh volume
-# mounted on it is writable by the server's user.
-COPY --chown=nonroot:nonroot state/ /var/lib/yakvc/
+# The keys and the ACME certificate cache. Created here so that Docker copies
+# its owner into a fresh volume mounted on it. Owned by root because the
+# systemd unit runs the server as root without CAP_DAC_OVERRIDE, so it can only
+# write a directory it owns (and only read the 0600 keys it created itself).
+COPY --chown=0:0 state/ /var/lib/yakvc/
 
 # Mount config.toml here.
 WORKDIR /etc/yakvc
