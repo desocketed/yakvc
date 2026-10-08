@@ -154,6 +154,41 @@ jar {
 	manifest {
 		attributes 'Enable-Native-Access': 'ALL-UNNAMED'
 	}
+	doLast {
+		StoreXz.rewrite(archiveFile.get().asFile)
+	}
+}
+
+/**
+ * Gradle compresses every jar entry the same way, so the already compressed `.xz` natives get deflated again, which
+ * only adds bytes and work when unpacking. This rewrites the jar with them stored as they are and every other entry
+ * unchanged.
+ */
+class StoreXz {
+	static void rewrite(File jar) {
+		File tmp = new File(jar.path + '.tmp')
+		new java.util.zip.ZipFile(jar).withCloseable { zip ->
+			new java.util.zip.ZipOutputStream(new FileOutputStream(tmp)).withCloseable { out ->
+				for (def entry : zip.entries()) {
+					byte[] data = zip.getInputStream(entry).readAllBytes()
+					def copy = new java.util.zip.ZipEntry(entry.name)
+					copy.time = entry.time
+					if (entry.name.endsWith('.xz')) {
+						def crc = new java.util.zip.CRC32()
+						crc.update(data)
+						copy.method = java.util.zip.ZipEntry.STORED
+						copy.size = data.length
+						copy.compressedSize = data.length
+						copy.crc = crc.value
+					}
+					out.putNextEntry(copy)
+					out.write(data)
+					out.closeEntry()
+				}
+			}
+		}
+		java.nio.file.Files.move(tmp.toPath(), jar.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+	}
 }
 
 // The gametest starts a dev yakvc-server and writes the client config for it (DevRendezvous in the gametest
