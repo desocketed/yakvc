@@ -68,12 +68,12 @@ async fn links_outlive_the_first_tickets_and_end_when_one_runs_out() {
     }
 }
 
-/// The rendezvous closing every session, as a restart does. Links between
+/// The rendezvous restarting, which closes every session. Links between
 /// peers don't go through it, so they stay up while clients reconnect, and
 /// the new sessions match players as before.
 #[tokio::test(flavor = "multi_thread")]
 async fn links_survive_losing_the_rendezvous() {
-    let net = TestNet::start().await;
+    let mut net = TestNet::start().await;
     let mut alice = net.client().name("alice").start().await;
     let mut bob = net.client().name("bob").start().await;
     see_each_other(&[&alice, &bob]);
@@ -85,7 +85,7 @@ async fn links_survive_losing_the_rendezvous() {
         .await
         .unwrap();
 
-    net.server().close_sessions();
+    net.restart_server().await;
     for client in [&mut alice, &mut bob] {
         client
             .wait_for("the rendezvous to close", |e| {
