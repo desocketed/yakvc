@@ -35,6 +35,8 @@ const PAIR_BATCH_INTERVAL: Duration = Duration::from_millis(250);
 /// before dropping the ones it doesn't. It lists current matches as soon as
 /// it has our pair tokens.
 const RELIST_GRACE: Duration = Duration::from_secs(10);
+/// The longest wait after a rate limit or an auth failure.
+const MAX_AUTH_BACKOFF: Duration = Duration::from_secs(600);
 
 /// Why a session ended.
 #[derive(Debug)]
@@ -61,7 +63,7 @@ pub(super) async fn run(inner: Arc<Inner>, config: RendezvousConfig, ticket_cach
     // Network trouble retries quickly; rate limits and auth failures back off
     // as DESIGN.md "Limits" asks: 10 s doubling to 10 min.
     let mut network_backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(60));
-    let mut auth_backoff = Backoff::new(Duration::from_secs(10), Duration::from_secs(600));
+    let mut auth_backoff = Backoff::new(Duration::from_secs(10), MAX_AUTH_BACKOFF);
     let mut identity = inner.identity.subscribe();
     loop {
         let current = match identity.wait_for(Option::is_some).await {
@@ -202,7 +204,7 @@ impl Session<'_> {
         let mut ticket: Option<Ticket> = None;
         let mut renew_at: Option<Instant> = None;
         // A failed renewal keeps the current ticket and tries again later.
-        let mut renew_backoff = Backoff::new(Duration::from_secs(10), Duration::from_secs(600));
+        let mut renew_backoff = Backoff::new(Duration::from_secs(10), MAX_AUTH_BACKOFF);
         // Peers listed since registering, and when to drop the others.
         let mut relisted: HashSet<EndpointId> = HashSet::new();
         let mut unlist_at: Option<Instant> = None;
@@ -241,7 +243,7 @@ impl Session<'_> {
                             }
                         }
                         ServerMsg::RetryAfter { secs } => {
-                            let delay = Duration::from_secs(secs.into());
+                            let delay = retry_after(secs.into());
                             let Some(current) = &ticket else {
                                 // The rendezvous closes the connection next.
                                 return Err(Ended::RetryAfter(delay));
@@ -387,6 +389,12 @@ fn pair_tokens(me: Uuid, tab_list: &HashSet<Uuid>) -> HashSet<PairToken> {
         tokens.truncate(MAX_PAIRS);
     }
     tokens.into_iter().collect()
+}
+
+/// The wait a `RetryAfter` asks for, at most the auth backoff's longest, so
+/// a bad value can't stop us from ever coming back.
+fn retry_after(secs: u64) -> Duration {
+    Duration::from_secs(secs).min(MAX_AUTH_BACKOFF)
 }
 
 /// A peer's address with only its direct addresses and our own relay. The
@@ -543,6 +551,12 @@ mod tests {
         // Two messages per batch, with a token a second to spare.
         let batches_per_sec = Duration::from_secs(1).div_duration_f64(PAIR_BATCH_INTERVAL);
         assert!(2.0 * batches_per_sec < f64::from(PAIR_UPDATES_PER_SEC) - 1.0);
+    }
+
+    #[test]
+    fn retry_after_is_capped() {
+        assert_eq!(retry_after(60), Duration::from_secs(60));
+        assert_eq!(retry_after(u32::MAX.into()), MAX_AUTH_BACKOFF);
     }
 
     #[test]
