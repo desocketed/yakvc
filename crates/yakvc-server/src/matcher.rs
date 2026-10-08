@@ -46,8 +46,22 @@ impl Matcher {
         self.matches
     }
 
+    #[cfg(test)]
     pub fn pair_count(&self, id: EndpointId) -> usize {
         self.sessions.get(&id).map_or(0, |s| s.tokens.len())
+    }
+
+    /// How many tokens the session would hold after `add_pairs(tokens)`:
+    /// duplicates and tokens it already holds count once.
+    pub fn pair_count_after_adding(&self, id: EndpointId, tokens: &[PairToken]) -> usize {
+        let Some(session) = self.sessions.get(&id) else {
+            return 0;
+        };
+        let new: HashSet<&PairToken> = tokens
+            .iter()
+            .filter(|token| !session.tokens.contains(token))
+            .collect();
+        session.tokens.len() + new.len()
     }
 
     /// Adds a session with no tokens, replacing any earlier one for `id`.

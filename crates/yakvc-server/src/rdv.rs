@@ -9,6 +9,7 @@
 //! through one writer task, so the reading side never has to give up halfway
 //! through a message.
 
+use std::collections::HashSet;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
@@ -18,7 +19,7 @@ use tokio::sync::mpsc;
 use yakvc_shared::auth::Nonce;
 use yakvc_shared::rdv::{ClientMsg, CloseCode, Hello, ServerMsg, addr_fits};
 use yakvc_shared::wire::{MAX_MESSAGE_LEN, WireError, read_msg_max, write_msg};
-use yakvc_shared::{EndpointId, Ticket, Uuid, is_offline_player};
+use yakvc_shared::{EndpointId, PairToken, Ticket, Uuid, is_offline_player};
 
 use crate::auth::{JoinCheck, proves};
 use crate::limits::{IpSlot, Slot, TokenBucket, ip_key};
@@ -209,7 +210,8 @@ impl Client {
             }
             ClientMsg::SetPairs(tokens) => {
                 self.check_update()?;
-                if tokens.len() > self.shared.limits.max_pairs {
+                let distinct: HashSet<&PairToken> = tokens.iter().collect();
+                if distinct.len() > self.shared.limits.max_pairs {
                     return Err(CloseCode::LimitExceeded);
                 }
                 self.shared.sessions.set_pairs(self.id, tokens);
@@ -217,7 +219,10 @@ impl Client {
             }
             ClientMsg::AddPairs(tokens) => {
                 self.check_update()?;
-                let total = self.shared.sessions.pair_count(self.id) + tokens.len();
+                let total = self
+                    .shared
+                    .sessions
+                    .pair_count_after_adding(self.id, &tokens);
                 if total > self.shared.limits.max_pairs {
                     return Err(CloseCode::LimitExceeded);
                 }

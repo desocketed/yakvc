@@ -498,6 +498,36 @@ async fn too_many_pairs_closes_the_session() {
 }
 
 #[tokio::test]
+async fn the_pair_limit_counts_distinct_tokens() {
+    let limits = Limits {
+        max_pairs: 2,
+        ..Limits::default()
+    };
+    let server = builder()
+        .insecure_dev_auth()
+        .limits(limits)
+        .spawn()
+        .await
+        .unwrap();
+    let mut alice = Client::connect(&server, "alice").await;
+    let mut bob = Client::connect(&server, "bob").await;
+    alice.register().await;
+    bob.register().await;
+    let ab = alice.token_for(&bob);
+    let other = PairToken::new(alice.uuid(), Uuid::from_u128(7));
+
+    // Duplicates, and tokens already held, don't count twice.
+    alice.send(ClientMsg::SetPairs(vec![ab, ab, ab])).await;
+    alice
+        .send(ClientMsg::AddPairs(vec![ab, other, other]))
+        .await;
+    alice.send(ClientMsg::AddPairs(vec![ab])).await;
+    bob.send(ClientMsg::AddPairs(vec![bob.token_for(&alice)]))
+        .await;
+    alice.expect_peer_available(&bob).await;
+}
+
+#[tokio::test]
 async fn pair_updates_are_rate_limited() {
     let limits = Limits {
         pair_updates_per_sec: 3,
