@@ -87,24 +87,17 @@ impl Auth {
 
     /// Signs a ticket. `verified` says whether the client proved the account
     /// to Mojang; dev tickets count as verified, so dev setups behave like
-    /// signed-in players.
-    pub fn issue(
-        &self,
-        uuid: Uuid,
-        name: String,
-        client: EndpointId,
-        verified: bool,
-    ) -> SignedTicket {
-        let mut body = TicketBody::new(
-            uuid,
-            name,
-            client,
-            verified,
-            SystemTime::now(),
-            self.lifetime,
-        );
+    /// signed-in players. Returned checked, like a cached one, so the session
+    /// knows when it expires.
+    pub fn issue(&self, uuid: Uuid, name: String, client: EndpointId, verified: bool) -> Ticket {
+        let now = SystemTime::now();
+        let mut body = TicketBody::new(uuid, name, client, verified, now, self.lifetime);
         body.dev = self.is_dev();
-        self.issuer.sign(&body)
+        // Only unverified tickets for account UUIDs or lifetimes under a
+        // second could fail, and neither is ever issued.
+        self.verifier
+            .verify(&self.issuer.sign(&body), now)
+            .expect("a ticket we just issued is valid")
     }
 
     /// Seconds until Mojang may be called again, if it is rate-limiting us.
@@ -191,7 +184,10 @@ mod tests {
     async fn reuses_only_matching_fresh_tickets() {
         let mojang = FakeMojang::start().await;
         let auth = auth(Some(&mojang), DAY);
-        let ticket = auth.issue(uuid_for("alice"), "alice".into(), client(), true);
+        let ticket = auth
+            .issue(uuid_for("alice"), "alice".into(), client(), true)
+            .signed()
+            .clone();
         let reusable = |ticket: &SignedTicket, name, client| {
             auth.reusable(ticket, &hello(name, None), client).is_some()
         };
@@ -216,7 +212,10 @@ mod tests {
     async fn tickets_close_to_expiry_are_reused_only_while_mojang_is_blocked() {
         let mojang = FakeMojang::start().await;
         let auth = auth(Some(&mojang), Duration::from_secs(3600));
-        let ticket = auth.issue(uuid_for("alice"), "alice".into(), client(), true);
+        let ticket = auth
+            .issue(uuid_for("alice"), "alice".into(), client(), true)
+            .signed()
+            .clone();
         let hello = hello("alice", None);
         assert!(auth.reusable(&ticket, &hello, client()).is_none());
 
@@ -230,13 +229,19 @@ mod tests {
         let mojang = FakeMojang::start().await;
         let prod = auth(Some(&mojang), DAY);
         let dev = Auth::new(IssuerKey::from_bytes(&[3; 32]), DAY, None, rendezvous());
-        let dev_ticket = dev.issue(uuid_for("alice"), "alice".into(), client(), true);
+        let dev_ticket = dev
+            .issue(uuid_for("alice"), "alice".into(), client(), true)
+            .signed()
+            .clone();
         let hello = hello("alice", None);
         assert!(prod.reusable(&dev_ticket, &hello, client()).is_none());
         assert!(dev.reusable(&dev_ticket, &hello, client()).is_some());
 
         let verifier = TicketVerifier::new([IssuerKey::from_bytes(&[3; 32]).id()]);
-        let real = prod.issue(uuid_for("alice"), "alice".into(), client(), true);
+        let real = prod
+            .issue(uuid_for("alice"), "alice".into(), client(), true)
+            .signed()
+            .clone();
         assert!(!verifier.verify(&real, SystemTime::now()).unwrap().dev);
         assert!(verifier.verify(&dev_ticket, SystemTime::now()).is_err());
     }

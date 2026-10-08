@@ -11,14 +11,14 @@
 
 use std::net::IpAddr;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use iroh::endpoint::{Connection, Incoming, IncomingAddr, RecvStream, SendStream};
 use tokio::sync::mpsc;
 use yakvc_shared::auth::Nonce;
 use yakvc_shared::rdv::{ClientMsg, CloseCode, Hello, ServerMsg, addr_fits};
 use yakvc_shared::wire::{WireError, read_msg, write_msg};
-use yakvc_shared::{EndpointId, SignedTicket, Uuid, is_offline_player};
+use yakvc_shared::{EndpointId, Ticket, Uuid, is_offline_player};
 
 use crate::auth::{JoinCheck, proves};
 use crate::limits::{Slot, TokenBucket};
@@ -73,6 +73,8 @@ pub(crate) async fn serve(shared: Arc<Shared>, incoming: Incoming) {
         recv,
         outbox,
         auth_deadline: deadline,
+        // Replaced when the client registers.
+        ticket_expires: deadline,
         hello: None,
         challenge: None,
         pair_updates: None,
@@ -121,6 +123,8 @@ struct Client {
     recv: RecvStream,
     outbox: mpsc::UnboundedSender<ServerMsg>,
     auth_deadline: tokio::time::Instant,
+    /// When the session's ticket expires, once registered.
+    ticket_expires: tokio::time::Instant,
     /// The client's `Hello`, once received.
     hello: Option<Hello>,
     /// The nonce of the challenge awaiting `Joined`.
@@ -136,13 +140,16 @@ impl Client {
     /// connection has to be closed with a code.
     async fn run(&mut self) -> Result<(), CloseCode> {
         loop {
-            let msg = if self.is_registered() {
-                read_msg(&mut self.recv).await
+            // Matches are handed the session's ticket, so a session must not
+            // outlive it; a renewal moves the deadline.
+            let (deadline, code) = if self.is_registered() {
+                (self.ticket_expires, CloseCode::AuthFailed)
             } else {
-                tokio::time::timeout_at(self.auth_deadline, read_msg(&mut self.recv))
-                    .await
-                    .map_err(|_| CloseCode::ProtocolError)?
+                (self.auth_deadline, CloseCode::ProtocolError)
             };
+            let msg = tokio::time::timeout_at(deadline, read_msg(&mut self.recv))
+                .await
+                .map_err(|_| code)?;
             let msg = match msg {
                 Ok(Some(msg)) => msg,
                 Ok(None) => return Ok(()),
@@ -211,7 +218,7 @@ impl Client {
         // An unverified cached ticket is refused while a verified session
         // holds its UUID; the challenge then decides, as without a ticket.
         if let Some(ticket) = cached
-            && self.register(ticket.signed().clone(), ticket.verified)
+            && self.register(ticket)
         {
             self.shared.metrics.auth_cached.inc();
             Ok(())
@@ -219,7 +226,7 @@ impl Client {
             let (uuid, name) = self.identity();
             let ticket = self.shared.auth.issue(uuid, name, self.id, true);
             self.shared.metrics.auth_ok.inc();
-            self.register(ticket, true);
+            self.register(ticket);
             Ok(())
         } else {
             self.start_challenge()
@@ -237,7 +244,7 @@ impl Client {
             let (uuid, name) = self.identity();
             let ticket = self.shared.auth.issue(uuid, name, self.id, true);
             self.shared.metrics.auth_ok.inc();
-            self.adopt(ticket, true);
+            self.adopt(ticket);
             return Ok(());
         }
         self.start_challenge()
@@ -285,7 +292,7 @@ impl Client {
                 // which may be the offline UUID of that name.
                 let ticket = self.shared.auth.issue(uuid, profile.name, self.id, true);
                 // A verified ticket is never refused.
-                self.adopt(ticket, true);
+                self.adopt(ticket);
                 Ok(())
             }
             JoinCheck::Confirmed(_) | JoinCheck::Rejected => {
@@ -307,7 +314,7 @@ impl Client {
             return self.refuse(CloseCode::AuthFailed);
         }
         let ticket = self.shared.auth.issue(uuid, name, self.id, false);
-        if self.adopt(ticket, false) {
+        if self.adopt(ticket) {
             self.shared.metrics.auth_unverified.inc();
             Ok(())
         } else {
@@ -318,16 +325,17 @@ impl Client {
 
     /// Registers with `ticket`, or renews the session's ticket. Returns
     /// false if the sessions refused it (see `Sessions::register`).
-    fn adopt(&mut self, ticket: SignedTicket, verified: bool) -> bool {
+    fn adopt(&mut self, ticket: Ticket) -> bool {
         if !self.is_registered() {
-            return self.register(ticket, verified);
+            return self.register(ticket);
         }
-        let renewed = self
-            .shared
-            .sessions
-            .update_ticket(self.id, ticket.clone(), verified);
+        let renewed =
+            self.shared
+                .sessions
+                .update_ticket(self.id, ticket.signed().clone(), ticket.verified);
         if renewed {
-            self.send(ServerMsg::Registered(ticket));
+            self.ticket_expires = expiry(&ticket);
+            self.send(ServerMsg::Registered(ticket.signed().clone()));
         }
         renewed
     }
@@ -359,19 +367,20 @@ impl Client {
 
     /// Returns false if the sessions refused the ticket (see
     /// `Sessions::register`).
-    fn register(&mut self, ticket: SignedTicket, verified: bool) -> bool {
+    fn register(&mut self, ticket: Ticket) -> bool {
         let hello = self.hello.as_ref().expect("registered after hello");
         let registered = self.shared.sessions.register(
             &self.conn,
             hello.uuid,
-            verified,
-            ticket.clone(),
+            ticket.verified,
+            ticket.signed().clone(),
             hello.addr.clone(),
             self.outbox.clone(),
         );
         if !registered {
             return false;
         }
+        self.ticket_expires = expiry(&ticket);
         let limits = &self.shared.limits;
         self.pair_updates = Some(TokenBucket::new(
             limits.pair_updates_per_sec,
@@ -379,7 +388,7 @@ impl Client {
             Instant::now(),
         ));
         self.unregistered = None;
-        self.send(ServerMsg::Registered(ticket));
+        self.send(ServerMsg::Registered(ticket.signed().clone()));
         true
     }
 
@@ -455,4 +464,9 @@ impl Client {
         // case the next read fails too.
         let _ = self.outbox.send(msg);
     }
+}
+
+/// When `ticket` expires, on the clock the read loop's timeouts use.
+fn expiry(ticket: &Ticket) -> tokio::time::Instant {
+    tokio::time::Instant::now() + ticket.remaining(SystemTime::now())
 }
