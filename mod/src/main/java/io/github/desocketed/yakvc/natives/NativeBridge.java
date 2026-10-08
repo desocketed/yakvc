@@ -142,7 +142,7 @@ public final class NativeBridge {
 	public void setTabList(MemorySegment engine, Collection<UUID> uuids) {
 		try (Arena arena = Arena.ofConfined()) {
 			MemorySegment bytes = arena.allocateFrom(JAVA_BYTE, uuidBytes(uuids));
-			check((int) invoke(setTabList, engine, bytes, (long) uuids.size()));
+			check((int) invoke(setTabList, engine, bytes, bytes.byteSize() / 16));
 		}
 	}
 
@@ -152,9 +152,14 @@ public final class NativeBridge {
 	 * @param listener x, y, z, yaw, pitch
 	 * @param uuids    16 bytes per tracked player, from {@link #uuidBytes}
 	 * @param xyz      x, y, z per tracked player
+	 * @throws IllegalArgumentException if the lengths don't match, because native code trusts them
 	 */
 	public void pushWorld(MemorySegment engine, double[] listener, byte[] uuids, double[] xyz) {
 		long count = uuids.length / 16;
+		if (listener.length != 5 || uuids.length % 16 != 0 || xyz.length != 3 * count) {
+			throw new IllegalArgumentException("pushWorld: listener " + listener.length + ", uuids " + uuids.length
+					+ " bytes, xyz " + xyz.length);
+		}
 		check((int) invoke(pushWorld, engine, MemorySegment.ofArray(listener), MemorySegment.ofArray(uuids),
 				MemorySegment.ofArray(xyz), count));
 	}

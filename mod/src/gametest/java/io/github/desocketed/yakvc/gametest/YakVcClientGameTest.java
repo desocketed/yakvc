@@ -10,6 +10,7 @@ import io.github.desocketed.yakvc.config.ClientConfig;
 import io.github.desocketed.yakvc.config.PlayerVolumes;
 import io.github.desocketed.yakvc.natives.EngineEvent;
 import io.github.desocketed.yakvc.natives.NativeBridge;
+import io.github.desocketed.yakvc.natives.VoiceStats;
 import io.github.desocketed.yakvc.ui.GroupsScreen;
 import io.github.desocketed.yakvc.ui.VoiceMenuScreen;
 import io.github.desocketed.yakvc.ui.VoiceSettingsScreen;
@@ -150,14 +151,15 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 			context.waitFor(mc -> (feeder.inputFlags() & NativeBridge.INPUT_SPECTATOR) != 0);
 			context.getInput().holdKey(pushToTalk);
 			context.waitTicks(20);
-			if (feeder.talking().contains(me)) {
+			// The feeder's state belongs to the client thread, so it is read there, here and below.
+			if (context.computeOnClient(mc -> feeder.talking().contains(me))) {
 				throw new AssertionError("a spectator transmitted");
 			}
 			context.getInput().releaseKey(pushToTalk);
 			singleplayer.getServer().runCommand("gamemode creative @a");
 			context.waitFor(mc -> (feeder.inputFlags() & NativeBridge.INPUT_SPECTATOR) == 0);
 
-			if (feeder.errorEvents() != 0 || feeder.closed()) {
+			if (context.computeOnClient(mc -> feeder.errorEvents() != 0 || feeder.closed())) {
 				throw new AssertionError("engine reported errors; see the log");
 			}
 		}
@@ -171,8 +173,9 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		if (KeyMapping.get("key.yakvc.debug_overlay") == null) throw new AssertionError("no debug overlay key");
 		context.runOnClient(mc -> feeder.setDebugOverlay(true));
 		context.waitFor(mc -> feeder.stats() != null);
-		if (feeder.stats().endpointId().length() != 64) {
-			throw new AssertionError("bad stats snapshot " + feeder.stats());
+		VoiceStats stats = context.computeOnClient(mc -> feeder.stats());
+		if (stats.endpointId().length() != 64) {
+			throw new AssertionError("bad stats snapshot " + stats);
 		}
 		context.waitTicks(2);
 		context.takeScreenshot(TestScreenshotOptions.of("debug-overlay").disableCounterPrefix());
@@ -244,12 +247,14 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 			throw new AssertionError("closing the settings unchanged rewrote client.toml");
 		}
 		// The run directory is reused, so leave no mute behind for the next run.
-		context.runOnClient(mc -> feeder.volumes().set(REMOTE, PlayerVolumes.DEFAULT));
-		try {
-			feeder.volumes().save();
-		} catch (IOException e) {
-			throw new UncheckedIOException(e);
-		}
+		context.runOnClient(mc -> {
+			feeder.volumes().set(REMOTE, PlayerVolumes.DEFAULT);
+			try {
+				feeder.volumes().save();
+			} catch (IOException e) {
+				throw new UncheckedIOException(e);
+			}
+		});
 	}
 
 	/**
