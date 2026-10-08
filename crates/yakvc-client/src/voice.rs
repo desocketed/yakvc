@@ -569,6 +569,9 @@ impl AudioLoop {
         let mut frame: MonoFrame = [0.0; FRAME_SAMPLES];
         while !self.stop.load(Ordering::Relaxed) {
             self.maintain_devices();
+            if self.source.io.is_none() && self.transmitting {
+                self.end_spurt_without_microphone();
+            }
             while self
                 .source
                 .io
@@ -639,19 +642,40 @@ impl AudioLoop {
         }
 
         let transmitting = state.transmitting(activity.voice);
-        if transmitting != self.transmitting {
-            self.shared.events.send(Event::Talking {
-                uuid: state.own_uuid.unwrap_or_default(),
-                talking: transmitting,
-            });
-        }
         // The frame after the talk spurt ends goes out too, flagged
         // `end_of_talk`, so receivers can reset their decoder.
         if transmitting || self.transmitting {
             self.send(frame, &state, !transmitting);
         }
-        self.transmitting = transmitting;
+        self.set_transmitting(transmitting, &state);
         self.ts = self.ts.wrapping_add(FRAME_SAMPLES as u32);
+    }
+
+    /// Ends the talk spurt when the microphone fails during it, since no
+    /// frame will come to end it.
+    fn end_spurt_without_microphone(&mut self) {
+        let state = self.shared.state.lock().unwrap().clone();
+        self.send(&[0.0; FRAME_SAMPLES], &state, true);
+        self.set_transmitting(false, &state);
+        self.ts = self.ts.wrapping_add(FRAME_SAMPLES as u32);
+    }
+
+    fn set_transmitting(&mut self, transmitting: bool, state: &VoiceState) {
+        if transmitting == self.transmitting {
+            return;
+        }
+        self.transmitting = transmitting;
+        self.shared.events.send(Event::Talking {
+            uuid: state.own_uuid.unwrap_or_default(),
+            talking: transmitting,
+        });
+        if !transmitting {
+            // Only `send` updates the relay budget, so nothing else would
+            // clear it while we are quiet.
+            for p in self.shared.peers.lock().unwrap().values() {
+                p.peer.set_relay_full(false);
+            }
+        }
     }
 
     fn send(&mut self, frame: &MonoFrame, state: &VoiceState, end_of_talk: bool) {
@@ -968,6 +992,54 @@ mod tests {
             Ok("headphones")
         });
         assert_eq!(speakers.io, Some("headphones"));
+    }
+
+    /// A microphone that captures `frames` frames and then breaks.
+    struct Breaks {
+        frames: u32,
+    }
+
+    impl FrameSource for Breaks {
+        fn read(&mut self, frame: &mut MonoFrame) -> bool {
+            if self.frames == 0 {
+                return false;
+            }
+            self.frames -= 1;
+            frame.fill(0.1);
+            true
+        }
+
+        fn failure(&self) -> Option<String> {
+            (self.frames == 0).then(|| "unplugged".into())
+        }
+    }
+
+    #[test]
+    fn a_microphone_failing_mid_spurt_ends_it() {
+        let (events, mut rx) = crate::event::channel();
+        let io = AudioIo {
+            source: Some(Box::new(Breaks { frames: 5 })),
+            sink: Some(Box::new(yakvc_audio::NullSink::new().0)),
+            #[cfg(feature = "sim")]
+            impairment: None,
+        };
+        let mut voice = Voice::start(&Config::default(), io, events);
+        voice.set_input(Input {
+            push_to_talk: true,
+            ..Input::default()
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut talking = Vec::new();
+        while Instant::now() < deadline && talking != [true, false] {
+            match rx.try_next() {
+                Some(Event::Talking { talking: t, .. }) => talking.push(t),
+                Some(_) => {}
+                None => std::thread::sleep(Duration::from_millis(10)),
+            }
+        }
+        assert_eq!(talking, [true, false]);
+        assert!(!voice.audio_stats().transmitting);
+        voice.stop();
     }
 
     #[test]
