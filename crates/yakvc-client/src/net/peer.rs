@@ -14,7 +14,7 @@ use std::time::{Duration, SystemTime};
 use bytes::Bytes;
 use iroh::endpoint::{Connection, ConnectionError, RecvStream, SendStream};
 use iroh::{EndpointAddr, EndpointId};
-use tokio::sync::{Semaphore, mpsc};
+use tokio::sync::{Semaphore, mpsc, watch};
 use tokio::task::JoinSet;
 use tokio::time::Instant;
 use yakvc_shared::peer::{ALPN, CloseCode, PeerHello, PeerMsg};
@@ -59,6 +59,8 @@ struct Hello {
     agreed: Vec<(Arc<dyn Protocol>, u16)>,
     control_send: SendStream,
     control_recv: RecvStream,
+    /// Our own ticket, marked seen as of the one our hello carried.
+    own_ticket_updates: watch::Receiver<Option<SignedTicket>>,
 }
 
 pub(super) async fn accept_loop(inner: Arc<Inner>) {
@@ -195,7 +197,10 @@ async fn handshake(
 ) -> Result<Hello, SetupError> {
     let remote = conn.remote_id();
     // Without our own ticket there is nothing to prove who we are.
-    let own_ticket = inner.own_ticket.borrow().clone();
+    // Subscribed here, so a renewal after this point reaches the peer as a
+    // `TicketUpdate` once the link is up.
+    let mut own_ticket_updates = inner.own_ticket.subscribe();
+    let own_ticket = own_ticket_updates.borrow_and_update().clone();
     let Some(own_ticket) = own_ticket else {
         return Err(SetupError::Rejected(CloseCode::Normal));
     };
@@ -262,6 +267,7 @@ async fn handshake(
         agreed,
         control_send: send,
         control_recv: recv,
+        own_ticket_updates,
     })
 }
 
@@ -448,8 +454,7 @@ async fn peer_control(inner: &Arc<Inner>, conn: &Connection, hello: Hello) {
             }
         }
     });
-    let mut own_ticket = inner.own_ticket.subscribe();
-    own_ticket.mark_unchanged();
+    let mut own_ticket = hello.own_ticket_updates;
 
     let close_code = loop {
         tokio::select! {
@@ -1219,6 +1224,51 @@ mod tests {
             let bad = update(&issuer, &bob.net.inner().endpoint);
             bob.net.inner().own_ticket.send_replace(Some(bad));
             eventually("alice closes the link", || alice.net.peers().is_empty()).await;
+        }
+    }
+
+    /// Our ticket can be renewed while a handshake is under way, after the
+    /// hello carried the old one. The peer must still get the new ticket, or
+    /// it closes the link when the old one runs out.
+    #[tokio::test]
+    async fn a_renewal_during_the_handshake_reaches_the_peer() {
+        let issuer = IssuerKey::generate();
+        let alice = side(1, &issuer, &issuer).await;
+        alice.sees(&[2]);
+        // Bob is played by hand, to renew Alice's ticket between the hellos.
+        let bob = loopback_endpoint().await;
+        let dial = tokio::spawn({
+            let inner = alice.net.inner().clone();
+            let addr = loopback_addr(&bob);
+            async move { dial(&inner, addr).await }
+        });
+        let conn = bob.accept().await.unwrap().await.unwrap();
+        let (mut send, mut recv) = conn.accept_bi().await.unwrap();
+        let hello = wire::read_msg::<PeerMsg>(&mut recv).await.unwrap();
+        assert!(matches!(hello, Some(PeerMsg::Hello(_))));
+
+        let renewed = ticket(&issuer, uuid(1), &alice.net.inner().endpoint);
+        alice
+            .net
+            .inner()
+            .own_ticket
+            .send_replace(Some(renewed.clone()));
+        let bob_hello = PeerMsg::Hello(PeerHello {
+            ticket: ticket(&issuer, uuid(2), &bob),
+            protocols: vec![],
+        });
+        wire::write_msg(&mut send, &bob_hello).await.unwrap();
+        dial.await.unwrap().unwrap();
+
+        let update =
+            tokio::time::timeout(Duration::from_secs(2), wire::read_msg::<PeerMsg>(&mut recv))
+                .await
+                .expect("alice sends her renewed ticket");
+        match update {
+            Ok(Some(PeerMsg::TicketUpdate(sent))) => {
+                assert_eq!(sent.to_bytes(), renewed.to_bytes())
+            }
+            other => panic!("expected a ticket update, got {other:?}"),
         }
     }
 
