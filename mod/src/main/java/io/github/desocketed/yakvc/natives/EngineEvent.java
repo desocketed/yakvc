@@ -1,5 +1,6 @@
 package io.github.desocketed.yakvc.natives;
 
+import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
@@ -36,27 +37,52 @@ public sealed interface EngineEvent {
 	/** In {@code YAKVC_PEER_*} order. */
 	enum PeerState { CONNECTING, DIRECT, RELAYED, RELAY_FULL, FAILED, GONE }
 
-	/** Decodes the first {@code length} bytes of {@code buf}. Unknown record types are skipped. */
+	/**
+	 * Decodes the first {@code length} bytes of {@code buf}. Unknown record types and state codes are skipped, as are
+	 * short payloads, so one bad record doesn't cost the rest of the batch (which may hold a {@link JoinRequest}).
+	 */
 	static List<EngineEvent> decode(byte[] buf, int length) {
 		ByteBuffer in = ByteBuffer.wrap(buf, 0, length).order(ByteOrder.LITTLE_ENDIAN);
 		List<EngineEvent> events = new ArrayList<>();
 		while (in.remaining() >= 4) {
 			int type = Short.toUnsignedInt(in.getShort());
 			int len = Short.toUnsignedInt(in.getShort());
+			// Records are never split, so this one is corrupt and nothing after it can be trusted.
+			if (len > in.remaining()) break;
 			ByteBuffer payload = in.slice(in.position(), len).order(ByteOrder.LITTLE_ENDIAN);
 			in.position(in.position() + len);
-			EngineEvent event = switch (type) {
-				case 1 -> new JoinRequest(payload.getInt(), utf8(payload));
-				case 2 -> new Rendezvous(RendezvousState.values()[payload.get()], payload.getLong(), payload.get() != 0);
-				case 3 -> new Peer(uuid(payload), PeerState.values()[payload.get()], payload.get() != 0);
-				case 4 -> new Talking(uuid(payload), payload.get() != 0);
-				case 5 -> new MicLevel(payload.getFloat());
-				case 6 -> new Error(utf8(payload));
-				default -> null;
-			};
-			if (event != null) events.add(event);
+			try {
+				EngineEvent event = switch (type) {
+					case 1 -> new JoinRequest(payload.getInt(), utf8(payload));
+					case 2 -> {
+						RendezvousState state = lookup(RendezvousState.values(), payload.get());
+						long value = payload.getLong();
+						boolean verified = payload.get() != 0;
+						yield state == null ? null : new Rendezvous(state, value, verified);
+					}
+					case 3 -> {
+						UUID uuid = uuid(payload);
+						PeerState state = lookup(PeerState.values(), payload.get());
+						boolean verified = payload.get() != 0;
+						yield state == null ? null : new Peer(uuid, state, verified);
+					}
+					case 4 -> new Talking(uuid(payload), payload.get() != 0);
+					case 5 -> new MicLevel(payload.getFloat());
+					case 6 -> new Error(utf8(payload));
+					default -> null;
+				};
+				if (event != null) events.add(event);
+			} catch (BufferUnderflowException e) {
+				// The payload is shorter than its type needs: skip just this record.
+			}
 		}
 		return events;
+	}
+
+	/** The constant for an unsigned state code, or null for a code this version doesn't know. */
+	private static <E> E lookup(E[] values, byte code) {
+		int index = Byte.toUnsignedInt(code);
+		return index < values.length ? values[index] : null;
 	}
 
 	private static UUID uuid(ByteBuffer in) {
