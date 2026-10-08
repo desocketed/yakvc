@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::net::{IpAddr, Ipv6Addr};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Allows `capacity` events at once, refilling to `capacity` over `period`.
@@ -138,6 +138,55 @@ impl Drop for Slot {
     }
 }
 
+/// [`Slots`] for each source IP, counted under [`ip_key`].
+#[derive(Debug)]
+pub(crate) struct IpSlots {
+    max: usize,
+    used: Arc<Mutex<HashMap<IpAddr, usize>>>,
+}
+
+/// One taken [`IpSlots`] slot, given back when dropped.
+#[derive(Debug)]
+pub(crate) struct IpSlot {
+    key: IpAddr,
+    used: Arc<Mutex<HashMap<IpAddr, usize>>>,
+}
+
+impl IpSlots {
+    pub fn new(max: usize) -> Self {
+        IpSlots {
+            max,
+            used: Arc::default(),
+        }
+    }
+
+    pub fn take(&self, ip: IpAddr) -> Option<IpSlot> {
+        let key = ip_key(ip);
+        let mut used = self.used.lock().unwrap();
+        let count = used.entry(key).or_default();
+        if *count >= self.max {
+            return None;
+        }
+        *count += 1;
+        Some(IpSlot {
+            key,
+            used: self.used.clone(),
+        })
+    }
+}
+
+impl Drop for IpSlot {
+    fn drop(&mut self) {
+        let mut used = self.used.lock().unwrap();
+        let count = used.get_mut(&self.key).expect("held slots are counted");
+        *count -= 1;
+        // Keeps the map from growing with every IP ever seen.
+        if *count == 0 {
+            used.remove(&self.key);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -150,6 +199,18 @@ mod tests {
         assert_ne!(key("2001:db8:1:2::1"), key("2001:db8:1:3::1"));
         assert_eq!(key("192.0.2.1"), key("::ffff:192.0.2.1"));
         assert_ne!(key("192.0.2.1"), key("192.0.2.2"));
+    }
+
+    #[test]
+    fn ip_slots_are_per_ip_and_given_back_when_dropped() {
+        let slots = IpSlots::new(1);
+        let ip = |s: &str| s.parse::<IpAddr>().unwrap();
+        let first = slots.take(ip("2001:db8::1")).unwrap();
+        assert!(slots.take(ip("2001:db8::2")).is_none(), "same /64");
+        let _other = slots.take(ip("192.0.2.1")).unwrap();
+        drop(first);
+        assert!(slots.take(ip("2001:db8::2")).is_some());
+        assert_eq!(slots.used.lock().unwrap().len(), 1);
     }
 
     #[test]
