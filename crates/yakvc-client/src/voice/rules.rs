@@ -1,11 +1,11 @@
 //! Who hears whom, and how loud: the rules from DESIGN.md "Voice transport
 //! and audio pipeline", as plain functions over a snapshot of game state.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use yakvc_audio::{DeviceChoice, Spatial};
-use yakvc_shared::Uuid;
+use yakvc_shared::{GroupAnnounce, GroupKey, Uuid};
 
 use crate::config::{Activation, AudioConfig};
 use crate::engine::PeerAudio;
@@ -53,6 +53,19 @@ pub(crate) struct VoiceState {
     /// A direct call with no game (`yakvc-cli call`): every peer is heard at
     /// full volume and sent to, whatever the world says.
     pub direct: bool,
+    /// The group we are in.
+    pub group: Option<OwnGroup>,
+    /// Peers whose announcement proves they are in our group.
+    pub group_mates: HashSet<Uuid>,
+}
+
+/// The group we are in, and how.
+#[derive(Debug, Clone)]
+pub(crate) struct OwnGroup {
+    pub key: GroupKey,
+    pub locked: bool,
+    /// Still hear, and be heard by, nearby players outside the group.
+    pub nearby: bool,
 }
 
 /// A connected peer we might send this frame to.
@@ -61,6 +74,8 @@ pub(crate) struct Candidate {
     pub uuid: Uuid,
     pub distance: f64,
     pub relayed: bool,
+    /// A group mate, sent the frame with the `group` flag.
+    pub group: bool,
 }
 
 /// Who gets this frame and at what bitrate.
@@ -93,6 +108,8 @@ impl VoiceState {
             audio,
             game_device: None,
             direct: false,
+            group: None,
+            group_mates: HashSet::new(),
         }
     }
 
@@ -133,7 +150,8 @@ impl VoiceState {
     /// Whether the microphone goes out this frame. `voice_detected` is the
     /// VAD result, used in voice-activation mode.
     pub(crate) fn transmitting(&self, voice_detected: bool) -> bool {
-        if self.input.spectator || self.input.muted {
+        // A spectator can still talk to its group, which isn't positional.
+        if self.input.muted || (self.input.spectator && self.group.is_none()) {
             return false;
         }
         match self.audio.activation {
@@ -145,12 +163,16 @@ impl VoiceState {
     /// Whether we want `peer`'s audio at all. Sent to the peer as
     /// `ReceiveState` so it can stop sending when we don't.
     pub(crate) fn wants_audio_from(&self, peer: Uuid) -> bool {
-        !self.input.deafened && !self.muted(peer) && self.is_friend(peer)
+        !self.input.deafened
+            && !self.muted(peer)
+            && self.is_friend(peer)
+            && (self.hears_nearby() || self.is_group_mate(peer))
     }
 
-    /// How to play a frame from `peer`, or `None` to discard it.
+    /// How to play a frame from `peer` without the `group` flag, or `None`
+    /// to discard it.
     pub(crate) fn playback(&self, peer: Uuid) -> Option<Spatial> {
-        if self.input.spectator || !self.wants_audio_from(peer) {
+        if self.input.spectator || !self.hears_nearby() || !self.wants_audio_from(peer) {
             return None;
         }
         let volume = self.peer_audio.get(&peer).map_or(1.0, |audio| audio.volume);
@@ -168,10 +190,41 @@ impl VoiceState {
         })
     }
 
-    /// The distance to `peer` if it is within our voice range. Whether the
-    /// peer wants our audio is up to the peer and checked separately.
-    pub(crate) fn send_distance(&self, peer: Uuid) -> Option<f64> {
-        if !self.is_friend(peer) {
+    /// How to play a frame from `peer` with the `group` flag: centred, at the
+    /// player's volume, and only from a group mate. Range and spectating
+    /// don't matter, since group voice isn't positional.
+    pub(crate) fn group_playback(&self, peer: Uuid) -> Option<Spatial> {
+        if !self.is_group_mate(peer) || !self.wants_audio_from(peer) {
+            return None;
+        }
+        let volume = self.peer_audio.get(&peer).map_or(1.0, |audio| audio.volume);
+        Some(Spatial {
+            gain: volume,
+            pan: 0.0,
+        })
+    }
+
+    /// Whether to send this frame to `peer`, and how. Whether the peer
+    /// wants our audio is up to the peer and checked separately.
+    pub(crate) fn send_to(&self, peer: Uuid, relayed: bool) -> Option<Candidate> {
+        let group = self.is_group_mate(peer);
+        let distance = if group {
+            // Group mates come first for the recipient cap.
+            0.0
+        } else {
+            self.send_distance(peer)?
+        };
+        Some(Candidate {
+            uuid: peer,
+            distance,
+            relayed,
+            group,
+        })
+    }
+
+    /// The distance to `peer` if positional voice reaches it.
+    fn send_distance(&self, peer: Uuid) -> Option<f64> {
+        if !self.is_friend(peer) || self.input.spectator || !self.hears_nearby() {
             return None;
         }
         if self.direct {
@@ -184,6 +237,21 @@ impl VoiceState {
     fn position(&self, peer: Uuid) -> Option<Vec3> {
         let (_, pos) = self.world.players.iter().find(|(uuid, _)| *uuid == peer)?;
         Some(*pos)
+    }
+
+    /// What we tell peers about our group.
+    pub(crate) fn announcement(&self) -> Option<GroupAnnounce> {
+        let group = self.group.as_ref()?;
+        Some(group.key.announce(self.own_uuid?, group.locked))
+    }
+
+    pub(crate) fn is_group_mate(&self, peer: Uuid) -> bool {
+        self.group.is_some() && self.group_mates.contains(&peer)
+    }
+
+    /// Positional voice is on: we're in no group, or the group allows it.
+    fn hears_nearby(&self) -> bool {
+        self.group.as_ref().is_none_or(|group| group.nearby)
     }
 
     fn muted(&self, peer: Uuid) -> bool {
@@ -244,7 +312,12 @@ pub(crate) fn spatial(listener: &Pose, source: Vec3, range: f32) -> Option<Spati
 /// and keeps relayed recipients within the relay budget (DESIGN.md
 /// "Connection lifecycle").
 pub(crate) fn plan_send(mut candidates: Vec<Candidate>, bitrate: u32) -> SendPlan {
-    candidates.sort_by(|a, b| a.distance.total_cmp(&b.distance));
+    // Group mates first, then nearest first.
+    candidates.sort_by(|a, b| {
+        b.group
+            .cmp(&a.group)
+            .then(a.distance.total_cmp(&b.distance))
+    });
     candidates.truncate(MAX_RECIPIENTS);
 
     let relayed = candidates.iter().filter(|c| c.relayed).count();
@@ -352,10 +425,10 @@ mod tests {
         bob.world.players = vec![(uuid(1), at(25.0, 0.0))];
 
         // Alice doesn't send to Bob, nor play what Bob sends her.
-        assert_eq!(alice.send_distance(uuid(2)), None);
+        assert_eq!(alice.send_to(uuid(2), false).map(|c| c.distance), None);
         assert_eq!(alice.playback(uuid(2)), None);
         // Bob would send and play, but Alice's side stops both directions.
-        assert!(bob.send_distance(uuid(1)).is_some());
+        assert!(bob.send_to(uuid(1), false).map(|c| c.distance).is_some());
         assert!(bob.playback(uuid(1)).is_some());
     }
 
@@ -404,8 +477,8 @@ mod tests {
         state.friends_only = Some(vec![uuid(1)]);
         assert!(state.playback(uuid(1)).is_some());
         assert_eq!(state.playback(uuid(2)), None);
-        assert!(state.send_distance(uuid(1)).is_some());
-        assert_eq!(state.send_distance(uuid(2)), None);
+        assert!(state.send_to(uuid(1), false).map(|c| c.distance).is_some());
+        assert_eq!(state.send_to(uuid(2), false).map(|c| c.distance), None);
     }
 
     #[test]
@@ -431,9 +504,16 @@ mod tests {
     fn send_range_is_exactly_the_voice_range() {
         let mut state = state();
         state.world.players = vec![(uuid(1), at(48.0, 0.0)), (uuid(2), at(48.5, 0.0))];
-        assert_eq!(state.send_distance(uuid(1)), Some(48.0));
-        assert_eq!(state.send_distance(uuid(2)), None);
-        assert_eq!(state.send_distance(uuid(3)), None, "untracked");
+        assert_eq!(
+            state.send_to(uuid(1), false).map(|c| c.distance),
+            Some(48.0)
+        );
+        assert_eq!(state.send_to(uuid(2), false).map(|c| c.distance), None);
+        assert_eq!(
+            state.send_to(uuid(3), false).map(|c| c.distance),
+            None,
+            "untracked"
+        );
     }
 
     #[test]
@@ -481,7 +561,7 @@ mod tests {
     fn direct_calls_ignore_the_world() {
         let mut state = state();
         state.direct = true;
-        assert_eq!(state.send_distance(uuid(1)), Some(0.0));
+        assert_eq!(state.send_to(uuid(1), false).map(|c| c.distance), Some(0.0));
         assert_eq!(
             state.playback(uuid(1)),
             Some(Spatial {
@@ -497,6 +577,7 @@ mod tests {
                 uuid: uuid(i as u8),
                 distance: i as f64,
                 relayed: i >= direct,
+                group: false,
             })
             .collect()
     }
@@ -537,5 +618,71 @@ mod tests {
         let plan = plan_send(candidates(2, 14), 24_000);
         assert_eq!(plan.recipients.len(), 13);
         assert_eq!(plan.relay_full, vec![uuid(13), uuid(14), uuid(15)]);
+    }
+
+    /// In a group with uuid(1); uuid(2) is a nearby player outside it.
+    fn in_group(nearby: bool) -> VoiceState {
+        let mut state = state();
+        state.group = Some(OwnGroup {
+            key: GroupKey::new("Miners", "").unwrap(),
+            locked: false,
+            nearby,
+        });
+        state.group_mates.insert(uuid(1));
+        state.world.players = vec![(uuid(2), at(10.0, 0.0))];
+        state
+    }
+
+    #[test]
+    fn group_mates_are_heard_anywhere_and_unpositioned() {
+        let mut state = in_group(true);
+        let centred = Some(Spatial {
+            gain: 1.0,
+            pan: 0.0,
+        });
+        // uuid(1) has no tracked entity, so only the group reaches it.
+        assert_eq!(state.group_playback(uuid(1)), centred);
+        assert_eq!(state.playback(uuid(1)), None);
+        let mate = state.send_to(uuid(1), false).unwrap();
+        assert!(mate.group);
+        // Nearby players outside the group are heard as usual, but their
+        // group frames are not.
+        assert!(state.playback(uuid(2)).is_some());
+        assert_eq!(state.group_playback(uuid(2)), None);
+        assert!(!state.send_to(uuid(2), false).unwrap().group);
+        // Spectating doesn't stop group voice.
+        state.input.spectator = true;
+        state.input.push_to_talk = true;
+        assert!(state.transmitting(false));
+        assert_eq!(state.group_playback(uuid(1)), centred);
+        assert_eq!(state.send_to(uuid(2), false), None);
+        // Mute still applies.
+        state.peer_audio.insert(
+            uuid(1),
+            PeerAudio {
+                volume: 1.0,
+                muted: true,
+            },
+        );
+        assert_eq!(state.group_playback(uuid(1)), None);
+    }
+
+    #[test]
+    fn group_only_cuts_nearby_players_off_both_ways() {
+        let state = in_group(false);
+        assert!(state.group_playback(uuid(1)).is_some());
+        assert_eq!(state.playback(uuid(2)), None);
+        assert_eq!(state.send_to(uuid(2), false), None);
+        assert!(!state.wants_audio_from(uuid(2)));
+        assert!(state.wants_audio_from(uuid(1)));
+    }
+
+    #[test]
+    fn group_mates_are_sent_to_first() {
+        let mut all = candidates(40, 0);
+        all[39].group = true;
+        let plan = plan_send(all, 24_000);
+        assert_eq!(plan.recipients[0], uuid(39));
+        assert_eq!(plan.recipients.len(), 32);
     }
 }

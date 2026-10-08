@@ -5,6 +5,7 @@
 //! cannot disagree about the format. See DESIGN.md, "Wire format".
 
 pub mod auth;
+pub mod group;
 pub mod pair;
 pub mod peer;
 pub mod rdv;
@@ -16,6 +17,7 @@ pub use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey};
 pub use uuid::Uuid;
 
 pub use crate::auth::{is_offline_player, offline_uuid};
+pub use crate::group::{GroupAnnounce, GroupId, GroupKey};
 pub use crate::pair::PairToken;
 pub use crate::ticket::{
     IssuerId, IssuerKey, SignedTicket, Ticket, TicketBody, TicketError, TicketVerifier,
