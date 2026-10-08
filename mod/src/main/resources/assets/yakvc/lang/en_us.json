@@ -9,6 +9,7 @@
 	"yakvc.hud.stopped": "Voice off: the engine stopped",
 	"yakvc.hud.off": "Voice off: %s",
 	"yakvc.hud.waiting": "Waiting for the server",
+	"yakvc.hud.no_microphone": "No microphone",
 
 	"yakvc.menu.title": "Voice Chat",
 	"yakvc.menu.status.ready": "Connected to Yak VC",
