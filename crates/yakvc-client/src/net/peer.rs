@@ -601,6 +601,11 @@ pub(crate) enum Verdict {
     Abusive,
 }
 
+// Every voice frame the encoder can produce gets through.
+const _: () = assert!(
+    1 + yakvc_shared::voice::VoiceHeader::LEN + yakvc_audio::MAX_PACKET <= FloodGuard::MAX_LEN
+);
+
 impl FloodGuard {
     const MAX_PER_SECOND: u32 = 100;
     /// Protocol byte plus 400 bytes.
