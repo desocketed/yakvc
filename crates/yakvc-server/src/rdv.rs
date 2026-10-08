@@ -208,7 +208,7 @@ impl Client {
                 if addr.id != self.id || !addr_fits(&addr) {
                     return Err(CloseCode::ProtocolError);
                 }
-                let addr = known_relays_only(addr, &self.shared.relays);
+                let addr = our_relay_only(addr, self.shared.relay_url.as_ref());
                 self.shared.sessions.update_addr(self.id, addr);
                 Ok(())
             }
@@ -256,7 +256,7 @@ impl Client {
             .cached_ticket
             .as_ref()
             .and_then(|ticket| self.shared.auth.reusable(ticket, &hello, self.id));
-        hello.addr = known_relays_only(hello.addr, &self.shared.relays);
+        hello.addr = our_relay_only(hello.addr, self.shared.relay_url.as_ref());
         self.hello = Some(hello);
 
         // An unverified cached ticket is refused while a verified session
@@ -519,12 +519,12 @@ fn expiry(ticket: &Ticket) -> tokio::time::Instant {
     tokio::time::Instant::now() + ticket.remaining(SystemTime::now())
 }
 
-/// `addr` without relay URLs other than `relays`. Peers dial the relays in
+/// `addr` without relay URLs other than ours. Peers dial the relays in
 /// each other's addresses, and an arbitrary one would learn a `relay_only`
 /// client's IP.
-fn known_relays_only(addr: EndpointAddr, relays: &[RelayUrl]) -> EndpointAddr {
+fn our_relay_only(addr: EndpointAddr, ours: Option<&RelayUrl>) -> EndpointAddr {
     let kept = addr.addrs.into_iter().filter(|transport| match transport {
-        TransportAddr::Relay(url) => relays.contains(url),
+        TransportAddr::Relay(url) => Some(url) == ours,
         _ => true,
     });
     EndpointAddr::from_parts(addr.id, kept)
