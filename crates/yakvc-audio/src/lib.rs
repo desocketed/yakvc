@@ -19,7 +19,7 @@ mod test_io;
 
 use std::time::Duration;
 
-pub use crate::codec::Encoder;
+pub use crate::codec::{Encoder, MAX_PACKET};
 pub use crate::device::{DeviceChoice, DeviceInfo, Devices, Microphone, Speakers, devices};
 pub use crate::input::{InputActivity, InputConfig, InputProcessor};
 pub use crate::mixer::{Mixer, Spatial};

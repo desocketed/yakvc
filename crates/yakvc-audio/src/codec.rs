@@ -3,8 +3,11 @@ use crate::{AudioError, MonoFrame, SAMPLE_RATE};
 const MIN_BITRATE: u32 = 16_000;
 const MAX_BITRATE: u32 = 64_000;
 
-/// The largest packet Opus produces for one frame.
-const MAX_PACKET: usize = 1275;
+/// The largest packet the encoder produces for one frame. Opus fits its
+/// output to the buffer it is given, and peers drop voice datagrams over
+/// 400 bytes after the protocol byte (9 of them the voice header). At
+/// 64 kbps even noise stays under 170 bytes, so this costs no quality.
+pub const MAX_PACKET: usize = 391;
 
 /// In-band FEC only carries redundancy when the encoder expects some loss, so
 /// tell it to plan for a modest amount.

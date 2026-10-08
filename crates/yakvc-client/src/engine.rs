@@ -10,7 +10,7 @@ use yakvc_audio::{Devices, FrameSink, FrameSource, StreamStats};
 use yakvc_shared::{GroupId, GroupKey, IssuerKey, TicketBody, TicketVerifier, Uuid};
 
 use crate::config::{Config, ConfigError};
-use crate::event::{self, Event, Events, JoinId, PeerState, RendezvousState};
+use crate::event::{self, Event, EventSender, Events, JoinId, PeerState, RendezvousState};
 use crate::net::{Identity, Net, Trust};
 use crate::voice::{AudioIo, AudioStats, GroupInfo, Voice};
 use crate::world::{Input, World, distance};
@@ -26,6 +26,7 @@ pub struct Engine {
     /// A relay is configured. Without one there is nothing to measure the
     /// network against.
     has_relay: bool,
+    events: EventSender,
 }
 
 /// Configures an [`Engine`] before starting it.
@@ -294,6 +295,12 @@ impl Engine {
             .collect()
     }
 
+    /// Why the engine failed, once one of its own threads panicked. A failed
+    /// engine may have lost voice or networking, so it should be restarted.
+    pub fn failure(&self) -> Option<String> {
+        self.events.failure()
+    }
+
     /// The audio thread's devices, bitrate and glitch counts.
     pub fn audio_stats(&self) -> AudioStats {
         self.voice.audio_stats()
@@ -415,14 +422,18 @@ impl EngineBuilder {
             ))
         })?;
         let key = load_or_create_key(&data_dir).map_err(StartError::Key)?;
+        let (events_tx, events) = event::channel();
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .thread_name("yakvc-net")
+            .on_thread_start({
+                let events = events_tx.clone();
+                move || event::report_panics_on_this_thread(&events)
+            })
             .enable_all()
             .build()
             .map_err(|err| StartError::Network(err.to_string()))?;
 
-        let (events_tx, events) = event::channel();
         let voice = Voice::start(&config, io, events_tx.clone());
         let protocols = vec![voice.protocol()];
         let trust = Trust {
@@ -448,6 +459,7 @@ impl EngineBuilder {
                 .rendezvous
                 .as_ref()
                 .is_some_and(|r| r.relay.is_some()),
+            events: events_tx,
         };
         Ok((engine, events))
     }
@@ -518,17 +530,25 @@ fn load_or_create_key(dir: &Path) -> io::Result<SecretKey> {
     }
 }
 
-/// Writes a file only the current user can read.
+/// Writes a file only the current user can read. It is written beside its
+/// final name and then renamed into place, so a crash midway can't leave a
+/// truncated file that stops every later start.
 fn write_private(path: &Path, contents: &[u8]) -> io::Result<()> {
     use std::io::Write;
+    let mut temp_name = path.file_name().unwrap_or_default().to_owned();
+    temp_name.push(".tmp");
+    let temp = path.with_file_name(temp_name);
     let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
+    options.write(true).create(true).truncate(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    options.open(path)?.write_all(contents)
+    let mut file = options.open(&temp)?;
+    file.write_all(contents)?;
+    file.sync_all()?;
+    std::fs::rename(&temp, path)
 }
 
 #[cfg(test)]
@@ -554,6 +574,54 @@ mod tests {
         assert!(matches!(result, Err(StartError::Key(_))));
     }
 
+    /// A microphone with a bug in it.
+    struct Panics;
+
+    impl FrameSource for Panics {
+        fn read(&mut self, _frame: &mut yakvc_audio::MonoFrame) -> bool {
+            panic!("microphone bug");
+        }
+    }
+
+    #[test]
+    fn a_panic_on_an_engine_thread_fails_the_engine() {
+        let (engine, mut events) = Engine::builder(Config::default())
+            .data_dir(data_dir("panic"))
+            .audio_source(Panics)
+            .audio_sink(NullSink::new().0)
+            .start()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let error = loop {
+            match events.try_next() {
+                Some(Event::Error(error)) => break error,
+                Some(_) => {}
+                None if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+                None => panic!("no error event"),
+            }
+        };
+        assert_eq!(error, "the voice engine crashed: microphone bug");
+        assert_eq!(engine.failure(), Some(error));
+    }
+
+    #[test]
+    fn a_panicking_task_fails_the_engine() {
+        let (engine, _events) = Engine::builder(Config::default())
+            .data_dir(data_dir("task-panic"))
+            .audio_source(ToneSource::new(440.0))
+            .audio_sink(NullSink::new().0)
+            .start()
+            .unwrap();
+        assert_eq!(engine.failure(), None);
+        let runtime = engine.runtime.as_ref().unwrap();
+        let task = runtime.spawn(async { panic!("task bug") });
+        assert!(block_on(runtime, task).is_err());
+        assert_eq!(
+            engine.failure().as_deref(),
+            Some("the voice engine crashed: task bug")
+        );
+    }
+
     #[test]
     fn client_key_is_created_once_and_private() {
         let dir = data_dir("key");
@@ -569,6 +637,20 @@ mod tests {
                 .mode();
             assert_eq!(mode & 0o777, 0o600);
         }
+    }
+
+    #[test]
+    fn a_key_write_cut_short_leaves_no_key_behind() {
+        let dir = data_dir("key-crash");
+        std::fs::create_dir_all(&dir).unwrap();
+        // What a crash while writing the key leaves.
+        let temp = dir.join(format!("{KEY_FILE}.tmp"));
+        std::fs::write(&temp, b"half a k").unwrap();
+        assert!(!dir.join(KEY_FILE).exists());
+
+        let key = load_or_create_key(&dir).unwrap();
+        assert_eq!(std::fs::read(dir.join(KEY_FILE)).unwrap(), key.to_bytes());
+        assert!(!temp.exists());
     }
 
     /// Called from inside a Tokio runtime, like the CLI and testkit do.

@@ -336,7 +336,8 @@ impl<'a> ClientBuilder<'a> {
         };
         let (sink, recording) = NullSink::new();
         let mut builder = Engine::builder(self.config)
-            .data_dir(self.net.dir.join(&name))
+            // Per client, not per name: two clients may claim one name.
+            .data_dir(self.net.dir.join(format!("{n}-{name}")))
             .audio_source(source)
             .audio_sink(sink)
             .impairment(self.impairment);

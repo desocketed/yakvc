@@ -91,7 +91,7 @@ struct Shared {
     state: Mutex<VoiceState>,
     /// Peers with an open voice link.
     peers: Mutex<HashMap<Uuid, VoicePeer>>,
-    to_audio: Mutex<std_mpsc::Sender<ToAudio>>,
+    to_audio: Mutex<std_mpsc::SyncSender<Frame>>,
     /// Bumped whenever what we want to hear may have changed, so each peer
     /// task re-sends `ReceiveState` if needed.
     receive_policy: watch::Sender<()>,
@@ -110,21 +110,24 @@ struct VoicePeer {
     group: Option<GroupAnnounce>,
 }
 
-/// Messages from the network tasks and the engine to the audio thread.
-enum ToAudio {
-    Frame {
-        from: Uuid,
-        header: VoiceHeader,
-        payload: Bytes,
-        arrived: Instant,
-    },
-    PeerGone(Uuid),
+/// A received frame, on its way from a peer task to the audio thread.
+struct Frame {
+    from: Uuid,
+    header: VoiceHeader,
+    payload: Bytes,
+    arrived: Instant,
 }
+
+/// Frames waiting for the audio thread: 32 talkers for the longest playout
+/// delay (200 ms), with room to spare. Frames that waited longer would be
+/// too late to play, so while the audio thread is stalled (say, opening a
+/// slow device) the rest are dropped.
+const AUDIO_QUEUE: usize = 512;
 
 impl Voice {
     /// Starts the audio thread.
     pub(crate) fn start(config: &Config, io: AudioIo, events: EventSender) -> Voice {
-        let (to_audio, from_net) = std_mpsc::channel();
+        let (to_audio, from_net) = std_mpsc::sync_channel(AUDIO_QUEUE);
         let shared = Arc::new(Shared {
             state: Mutex::new(VoiceState::new(
                 config.audio.clone(),
@@ -148,7 +151,10 @@ impl Voice {
                 let stop = stop.clone();
                 // Built on the audio thread, so a failing audio stack can't
                 // stop the engine from starting.
-                move || AudioLoop::new(shared, from_net, io, stop).run()
+                move || {
+                    crate::event::report_panics_on_this_thread(&shared.events);
+                    AudioLoop::new(shared, from_net, io, stop).run();
+                }
             })
             .expect("spawn audio thread");
         Voice {
@@ -303,9 +309,19 @@ impl Drop for Voice {
 }
 
 impl Shared {
-    fn send_to_audio(&self, msg: ToAudio) {
-        // Fails only once the audio thread has stopped.
-        let _ = self.to_audio.lock().unwrap().send(msg);
+    fn send_to_audio(&self, frame: Frame) {
+        // Fails when the queue is full (see `AUDIO_QUEUE`) or the audio
+        // thread has stopped; a lost frame is concealed like any other.
+        let _ = self.to_audio.lock().unwrap().try_send(frame);
+    }
+
+    /// Whether `link_id` is the link voice uses for `uuid`.
+    fn is_current(&self, uuid: Uuid, link_id: usize) -> bool {
+        self.peers
+            .lock()
+            .unwrap()
+            .get(&uuid)
+            .is_some_and(|p| p.peer.link_id() == link_id)
     }
 
     /// Works out again which peers are in our group, after an announcement,
@@ -375,6 +391,7 @@ async fn serve_peer(shared: Arc<Shared>, link: PeerLink) {
     let reader = tokio::spawn(read_control(
         shared.clone(),
         uuid,
+        link_id,
         control_recv,
         wants_audio,
     ));
@@ -411,6 +428,12 @@ async fn serve_peer(shared: Arc<Shared>, link: PeerLink) {
         tokio::select! {
             datagram = datagrams.recv() => {
                 let Some(datagram) = datagram else { break };
+                // Two endpoints of equal standing can claim one player, and
+                // voice is per player: only the newest link is heard (and
+                // sent to), so their frames never mix in one jitter buffer.
+                if !shared.is_current(uuid, link_id) {
+                    continue;
+                }
                 #[cfg(feature = "sim")]
                 if let Some(impairer) = &mut impairer {
                     deliver_impaired(&shared, uuid, datagram, impairer);
@@ -435,8 +458,8 @@ async fn serve_peer(shared: Arc<Shared>, link: PeerLink) {
             .is_some_and(|p| p.peer.link_id() == link_id);
         current && peers.remove(&uuid).is_some()
     };
+    // The audio thread notices the peer is gone by itself.
     if removed {
-        shared.send_to_audio(ToAudio::PeerGone(uuid));
         shared.refresh_group_mates();
     }
 }
@@ -444,6 +467,7 @@ async fn serve_peer(shared: Arc<Shared>, link: PeerLink) {
 async fn read_control(
     shared: Arc<Shared>,
     uuid: Uuid,
+    link_id: usize,
     mut control: ControlRecv,
     wants_audio: Arc<AtomicBool>,
 ) {
@@ -453,9 +477,14 @@ async fn read_control(
                 wants_audio.store(wants, Ordering::Relaxed);
             }
             VoiceMsg::Group(group) => {
-                if let Some(peer) = shared.peers.lock().unwrap().get_mut(&uuid) {
+                // Only the current link speaks for the player.
+                let mut peers = shared.peers.lock().unwrap();
+                if let Some(peer) = peers.get_mut(&uuid)
+                    && peer.peer.link_id() == link_id
+                {
                     peer.group = group;
                 }
+                drop(peers);
                 shared.refresh_group_mates();
             }
         }
@@ -467,7 +496,7 @@ fn deliver(shared: &Shared, from: Uuid, datagram: Bytes) {
     let Some((header, _)) = VoiceHeader::parse(&datagram) else {
         return;
     };
-    shared.send_to_audio(ToAudio::Frame {
+    shared.send_to_audio(Frame {
         from,
         header,
         payload: datagram.slice(VoiceHeader::LEN..),
@@ -502,7 +531,7 @@ fn deliver_impaired(
 /// so the loop just polls them.
 struct AudioLoop {
     shared: Arc<Shared>,
-    from_net: std_mpsc::Receiver<ToAudio>,
+    from_net: std_mpsc::Receiver<Frame>,
     stop: Arc<AtomicBool>,
     source: Device<Box<dyn FrameSource>>,
     sink: Device<Box<dyn FrameSink>>,
@@ -532,7 +561,7 @@ struct Remote {
 impl AudioLoop {
     fn new(
         shared: Arc<Shared>,
-        from_net: std_mpsc::Receiver<ToAudio>,
+        from_net: std_mpsc::Receiver<Frame>,
         io: AudioIo,
         stop: Arc<AtomicBool>,
     ) -> AudioLoop {
@@ -569,6 +598,9 @@ impl AudioLoop {
         let mut frame: MonoFrame = [0.0; FRAME_SAMPLES];
         while !self.stop.load(Ordering::Relaxed) {
             self.maintain_devices();
+            if self.source.io.is_none() && self.transmitting {
+                self.end_spurt_without_microphone();
+            }
             while self
                 .source
                 .io
@@ -577,9 +609,10 @@ impl AudioLoop {
             {
                 self.capture(&mut frame);
             }
-            while let Ok(msg) = self.from_net.try_recv() {
-                self.handle(msg);
+            while let Ok(frame) = self.from_net.try_recv() {
+                self.receive(frame);
             }
+            self.drop_gone_remotes();
             while self.sink.io.as_ref().is_some_and(|sink| sink.wants_frame()) {
                 self.play();
             }
@@ -639,19 +672,40 @@ impl AudioLoop {
         }
 
         let transmitting = state.transmitting(activity.voice);
-        if transmitting != self.transmitting {
-            self.shared.events.send(Event::Talking {
-                uuid: state.own_uuid.unwrap_or_default(),
-                talking: transmitting,
-            });
-        }
         // The frame after the talk spurt ends goes out too, flagged
         // `end_of_talk`, so receivers can reset their decoder.
         if transmitting || self.transmitting {
             self.send(frame, &state, !transmitting);
         }
-        self.transmitting = transmitting;
+        self.set_transmitting(transmitting, &state);
         self.ts = self.ts.wrapping_add(FRAME_SAMPLES as u32);
+    }
+
+    /// Ends the talk spurt when the microphone fails during it, since no
+    /// frame will come to end it.
+    fn end_spurt_without_microphone(&mut self) {
+        let state = self.shared.state.lock().unwrap().clone();
+        self.send(&[0.0; FRAME_SAMPLES], &state, true);
+        self.set_transmitting(false, &state);
+        self.ts = self.ts.wrapping_add(FRAME_SAMPLES as u32);
+    }
+
+    fn set_transmitting(&mut self, transmitting: bool, state: &VoiceState) {
+        if transmitting == self.transmitting {
+            return;
+        }
+        self.transmitting = transmitting;
+        self.shared.events.send(Event::Talking {
+            uuid: state.own_uuid.unwrap_or_default(),
+            talking: transmitting,
+        });
+        if !transmitting {
+            // Only `send` updates the relay budget, so nothing else would
+            // clear it while we are quiet.
+            for p in self.shared.peers.lock().unwrap().values() {
+                p.peer.set_relay_full(false);
+            }
+        }
     }
 
     fn send(&mut self, frame: &MonoFrame, state: &VoiceState, end_of_talk: bool) {
@@ -676,11 +730,16 @@ impl AudioLoop {
 
         let payload = match encoder.encode(frame) {
             Ok(Some(payload)) => payload,
-            // DTX decided this frame is silence.
+            // DTX decided this frame is silence. The end of talk still goes
+            // out, header only, or receivers would never see the spurt end.
+            Ok(None) if end_of_talk => &[],
             Ok(None) => return,
             Err(err) => {
                 let message = format!("voice encoder failed: {err}");
                 self.shared.events.send(Event::Error(message));
+                if end_of_talk {
+                    encoder.reset();
+                }
                 return;
             }
         };
@@ -713,39 +772,43 @@ impl AudioLoop {
         }
     }
 
-    fn handle(&mut self, msg: ToAudio) {
-        match msg {
-            ToAudio::Frame {
-                from,
-                header,
-                payload,
-                arrived,
-            } => {
-                // With nothing to play to, buffering would only grow.
-                if self.sink.io.is_none() {
-                    return;
-                }
-                let remote = self.remotes.entry(from).or_insert_with(|| Remote {
-                    stream: ReceiveStream::new(JitterConfig::default()),
-                    group: false,
-                    talking: false,
-                    silent_frames: TALKING_HANGOVER_FRAMES,
-                });
-                let packet = Packet {
-                    seq: header.seq,
-                    ts: header.ts,
-                    end_of_talk: header.end_of_talk,
-                    payload: &payload,
-                };
-                remote.group = header.group;
-                remote.stream.push(packet, arrived);
+    fn receive(&mut self, frame: Frame) {
+        // With nothing to play to, buffering would only grow.
+        if self.sink.io.is_none() {
+            return;
+        }
+        let remote = self.remotes.entry(frame.from).or_insert_with(|| Remote {
+            stream: ReceiveStream::new(JitterConfig::default()),
+            group: false,
+            talking: false,
+            silent_frames: TALKING_HANGOVER_FRAMES,
+        });
+        let packet = Packet {
+            seq: frame.header.seq,
+            ts: frame.header.ts,
+            end_of_talk: frame.header.end_of_talk,
+            payload: &frame.payload,
+        };
+        remote.group = frame.header.group;
+        remote.stream.push(packet, frame.arrived);
+    }
+
+    /// Forgets remote speakers whose voice link has closed. Checked here
+    /// rather than sent as a message, so a full frame queue can't lose it.
+    fn drop_gone_remotes(&mut self) {
+        let gone: Vec<Uuid> = {
+            let peers = self.shared.peers.lock().unwrap();
+            self.remotes
+                .keys()
+                .filter(|uuid| !peers.contains_key(uuid))
+                .copied()
+                .collect()
+        };
+        for uuid in gone {
+            if self.remotes.remove(&uuid).is_some_and(|r| r.talking) {
+                self.talking(uuid, false);
             }
-            ToAudio::PeerGone(uuid) => {
-                if self.remotes.remove(&uuid).is_some_and(|r| r.talking) {
-                    self.talking(uuid, false);
-                }
-                self.shared.stats.lock().unwrap().remove(&uuid);
-            }
+            self.shared.stats.lock().unwrap().remove(&uuid);
         }
     }
 
@@ -963,6 +1026,54 @@ mod tests {
             Ok("headphones")
         });
         assert_eq!(speakers.io, Some("headphones"));
+    }
+
+    /// A microphone that captures `frames` frames and then breaks.
+    struct Breaks {
+        frames: u32,
+    }
+
+    impl FrameSource for Breaks {
+        fn read(&mut self, frame: &mut MonoFrame) -> bool {
+            if self.frames == 0 {
+                return false;
+            }
+            self.frames -= 1;
+            frame.fill(0.1);
+            true
+        }
+
+        fn failure(&self) -> Option<String> {
+            (self.frames == 0).then(|| "unplugged".into())
+        }
+    }
+
+    #[test]
+    fn a_microphone_failing_mid_spurt_ends_it() {
+        let (events, mut rx) = crate::event::channel();
+        let io = AudioIo {
+            source: Some(Box::new(Breaks { frames: 5 })),
+            sink: Some(Box::new(yakvc_audio::NullSink::new().0)),
+            #[cfg(feature = "sim")]
+            impairment: None,
+        };
+        let mut voice = Voice::start(&Config::default(), io, events);
+        voice.set_input(Input {
+            push_to_talk: true,
+            ..Input::default()
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut talking = Vec::new();
+        while Instant::now() < deadline && talking != [true, false] {
+            match rx.try_next() {
+                Some(Event::Talking { talking: t, .. }) => talking.push(t),
+                Some(_) => {}
+                None => std::thread::sleep(Duration::from_millis(10)),
+            }
+        }
+        assert_eq!(talking, [true, false]);
+        assert!(!voice.audio_stats().transmitting);
+        voice.stop();
     }
 
     #[test]

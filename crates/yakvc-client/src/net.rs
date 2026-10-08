@@ -210,6 +210,9 @@ struct PeerEntry {
     name: String,
     /// The peer's latest ticket is verified.
     verified: bool,
+    /// The latest ticket the linked peer showed us, checked again when our
+    /// trust settings change.
+    ticket: Option<SignedTicket>,
     /// Where to dial. Set while the rendezvous lists the peer.
     addr: Option<EndpointAddr>,
     link: Option<Link>,
@@ -350,20 +353,22 @@ impl Net {
         });
     }
 
-    /// Replaces the trusted issuers and the `verified_only` setting. Turning
-    /// `verified_only` on closes the links to unverified peers.
+    /// Replaces the trusted issuers and the `verified_only` setting, and
+    /// checks every open link again: a ticket from an issuer no longer
+    /// trusted, or an unverified one under `verified_only`, closes it.
     pub(crate) fn set_trust(&self, verifier: TicketVerifier, verified_only: bool) {
         {
             let mut trust = self.inner.trust.lock().unwrap();
             trust.verifier = verifier;
             trust.verified_only = verified_only;
         }
-        if verified_only {
-            let peers = self.inner.peers.lock().unwrap();
-            for entry in peers.values().filter(|entry| !entry.verified) {
-                if let Some(conn) = entry.open_conn() {
-                    close(conn, CloseCode::BadTicket);
-                }
+        let peers = self.inner.peers.lock().unwrap();
+        for (&remote, entry) in peers.iter() {
+            let (Some(conn), Some(ticket)) = (entry.open_conn(), &entry.ticket) else {
+                continue;
+            };
+            if let Err(code) = self.inner.verify_peer(ticket, remote) {
+                close(conn, code);
             }
         }
     }
@@ -540,6 +545,33 @@ impl Inner {
         }
     }
 
+    /// After a new rendezvous session, unlists every peer it didn't list
+    /// again: a `PeerGone` sent while we were away is lost. Such a peer is
+    /// no longer dialed, and is gone at once unless its link is up, in which
+    /// case it is gone when the link closes (see `peer::unregister`).
+    fn unlist_except(&self, listed: &HashSet<EndpointId>) {
+        let mut peers = self.peers.lock().unwrap();
+        let stale: Vec<EndpointId> = peers
+            .iter()
+            .filter(|&(id, entry)| entry.addr.is_some() && !listed.contains(id))
+            .map(|(&id, _)| id)
+            .collect();
+        for id in stale {
+            let Some(entry) = peers.get_mut(&id) else {
+                continue;
+            };
+            entry.addr = None;
+            if let Some(dialer) = entry.dialer.take() {
+                dialer.abort();
+            }
+            if entry.open_conn().is_none()
+                && let Some(entry) = peers.remove(&id)
+            {
+                entry.remove(CloseCode::Normal);
+            }
+        }
+    }
+
     fn new_join(&self) -> (JoinId, oneshot::Receiver<bool>) {
         let (tx, rx) = oneshot::channel();
         let mut joins = self.joins.lock().unwrap();
@@ -707,6 +739,7 @@ impl PeerEntry {
             uuid,
             name,
             verified: false,
+            ticket: None,
             addr: None,
             link: None,
             status: Arc::new(PeerStatus {
@@ -753,6 +786,15 @@ impl PeerEntry {
 impl PeerStatus {
     fn update(&self, change: impl FnOnce(&mut StatusFlags)) {
         let mut flags = self.flags.lock().unwrap();
+        // Gone is final: the path watcher and the audio thread can still
+        // call in after the peer was removed, and a peer that comes back gets
+        // a new status.
+        if flags
+            .reported
+            .is_some_and(|(state, _)| state == PeerState::Gone)
+        {
+            return;
+        }
         change(&mut flags);
         let reported = (flags.state(), flags.verified);
         if flags.reported != Some(reported) {
@@ -924,5 +966,22 @@ mod tests {
         assert_eq!(state(true, false, false, true), PeerState::Direct);
         assert_eq!(state(true, false, true, false), PeerState::Relayed);
         assert_eq!(state(true, false, true, true), PeerState::RelayFull);
+    }
+
+    #[test]
+    fn a_gone_peer_stays_gone() {
+        let (events, mut rx) = crate::event::channel();
+        let entry = PeerEntry::new(uuid(2), "bob".into(), &events);
+        let status = entry.status.clone();
+        status.update(|flags| flags.connected = true);
+        entry.remove(CloseCode::Normal);
+        // Late callers: the path watcher's last tick, the audio thread.
+        status.update(|flags| flags.relayed = true);
+        status.update(|flags| flags.relay_full = false);
+        let mut states = Vec::new();
+        while let Some(Event::Peer { state, .. }) = rx.try_next() {
+            states.push(state);
+        }
+        assert_eq!(states, [PeerState::Direct, PeerState::Gone]);
     }
 }
