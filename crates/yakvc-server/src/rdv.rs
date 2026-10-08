@@ -98,6 +98,7 @@ pub(crate) async fn serve(shared: Arc<Shared>, incoming: Incoming) {
         challenge: None,
         pair_updates: None,
         unregistered: Some((unregistered, unregistered_ip)),
+        session_slot: None,
     };
     let code = match client.run().await {
         Ok(()) => CloseCode::Normal,
@@ -157,6 +158,9 @@ struct Client {
     /// Held until registered, against `Limits::max_unregistered` and (with
     /// a known IP) `max_unregistered_per_ip`.
     unregistered: Option<(Slot, Option<IpSlot>)>,
+    /// Held from `Hello` on, against `Limits::max_sessions_per_ip`, when
+    /// the IP is known.
+    session_slot: Option<IpSlot>,
 }
 
 impl Client {
@@ -243,6 +247,10 @@ impl Client {
         let valid_addr = hello.addr.id == self.id && addr_fits(&hello.addr);
         if self.hello.is_some() || !valid_addr || !valid_name {
             return Err(CloseCode::ProtocolError);
+        }
+        if let Some(ip) = self.ip {
+            let slot = self.shared.sessions_per_ip.take(ip);
+            self.session_slot = Some(slot.ok_or(CloseCode::LimitExceeded)?);
         }
         let cached = hello
             .cached_ticket
