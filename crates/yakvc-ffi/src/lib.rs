@@ -30,7 +30,8 @@ use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 
 use yakvc_client::{
-    Config, ConfigError, Engine, Input, JoinId, PeerAudio, Pose, StartError, Vec3, World,
+    Config, ConfigError, Engine, GroupKey, Input, JoinId, PeerAudio, Pose, StartError, Uuid, Vec3,
+    World,
 };
 
 use crate::events::EventQueue;
@@ -42,7 +43,8 @@ use crate::guard::{
 /// from the one it was built against. Bump on any incompatible change.
 /// 2: verified flags in the rendezvous and peer state events.
 /// 3: `yakvc_stats`.
-pub const YAKVC_ABI_VERSION: u32 = 3;
+/// 4: group voice chat (`yakvc_join_group` and the rest).
+pub const YAKVC_ABI_VERSION: u32 = 4;
 
 pub const YAKVC_OK: i32 = 0;
 /// A null pointer, bad UUID, invalid UTF-8 or out-of-range value.
@@ -379,6 +381,137 @@ pub unsafe extern "C" fn yakvc_complete_join(
     unsafe {
         with_engine(engine, |e| {
             e.engine.complete_join(JoinId(request_id), ok);
+            Ok(())
+        })
+    }
+}
+
+/// Joins the group with this name and password (empty for an open group),
+/// leaving any other, with nearby voice on. `YAKVC_ERR_INVALID_ARGUMENT` if
+/// the name is empty or longer than 32 characters.
+///
+/// # Safety
+/// `engine` must be live; `name` and `password` must be readable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn yakvc_join_group(
+    engine: *mut YakVcEngine,
+    name: *const u8,
+    name_len: usize,
+    password: *const u8,
+    password_len: usize,
+) -> i32 {
+    // SAFETY: the caller guarantees `engine` is live.
+    unsafe {
+        with_engine(engine, |e| {
+            // SAFETY: the caller guarantees both strings are readable.
+            let name = str_arg(name, name_len, "name")?;
+            // SAFETY: as above.
+            let password = str_arg(password, password_len, "password")?;
+            e.engine
+                .join_group(name, password)
+                .ok_or_else(|| FfiError::invalid("group name must be 1 to 32 characters"))?;
+            Ok(())
+        })
+    }
+}
+
+/// # Safety
+/// `engine` must be live.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn yakvc_leave_group(engine: *mut YakVcEngine) -> i32 {
+    // SAFETY: the caller guarantees `engine` is live.
+    unsafe {
+        with_engine(engine, |e| {
+            e.engine.leave_group();
+            Ok(())
+        })
+    }
+}
+
+/// While in a group, whether nearby players outside it are heard and sent
+/// to. Off means only the group hears us and is heard.
+///
+/// # Safety
+/// `engine` must be live.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn yakvc_set_group_nearby(engine: *mut YakVcEngine, nearby: bool) -> i32 {
+    // SAFETY: the caller guarantees `engine` is live.
+    unsafe {
+        with_engine(engine, |e| {
+            e.engine.set_group_nearby(nearby);
+            Ok(())
+        })
+    }
+}
+
+/// Writes the id of the group with this name and password into `out`, as 64
+/// hex characters, without joining it: the voice menu checks a password
+/// against a listed group this way. `YAKVC_ERR_INVALID_ARGUMENT` for a name
+/// that can't be a group's.
+///
+/// # Safety
+/// `name` and `password` must be readable; `out` must be writable for 64
+/// bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn yakvc_group_id(
+    name: *const u8,
+    name_len: usize,
+    password: *const u8,
+    password_len: usize,
+    out: *mut u8,
+) -> i32 {
+    guard(|| {
+        // SAFETY: the caller guarantees both strings are readable.
+        let name = unsafe { str_arg(name, name_len, "name") }?;
+        // SAFETY: as above.
+        let password = unsafe { str_arg(password, password_len, "password") }?;
+        // SAFETY: the caller guarantees `out` is writable for 64 bytes.
+        let out = unsafe { buf_arg(out, 64, "out") }?;
+        let key = GroupKey::new(name, password)
+            .ok_or_else(|| FfiError::invalid("group name must be 1 to 32 characters"))?;
+        out.copy_from_slice(key.id().to_string().as_bytes());
+        Ok(())
+    })
+}
+
+/// Writes the groups we know of as JSON, with the buffer protocol of
+/// [`yakvc_list_devices`]: an array of `{ "id": hex, "name", "locked",
+/// "joined", "members": [hyphenated UUIDs] }`. Ours, plus every group our
+/// peers announce.
+///
+/// # Safety
+/// `engine` must be live; `buf` must be writable for `cap` bytes; `needed`
+/// must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn yakvc_list_groups(
+    engine: *mut YakVcEngine,
+    buf: *mut u8,
+    cap: usize,
+    needed: *mut usize,
+) -> i32 {
+    // SAFETY: the caller guarantees `engine` is live.
+    unsafe {
+        with_engine(engine, |e| {
+            // SAFETY: the caller guarantees `needed` is writable.
+            let needed = out_arg(needed, "needed")?;
+            // SAFETY: the caller guarantees `buf` is writable for `cap` bytes.
+            let buf = buf_arg(buf, cap, "buf")?;
+            let groups: Vec<_> = e
+                .engine
+                .groups()
+                .into_iter()
+                .map(|group| {
+                    serde_json::json!({
+                        "id": group.id.to_string(),
+                        "name": group.name,
+                        "locked": group.locked,
+                        "joined": group.joined,
+                        "members": group.members.iter().map(Uuid::to_string).collect::<Vec<_>>(),
+                    })
+                })
+                .collect();
+            let json = serde_json::to_vec(&groups).expect("group list serializes");
+            *needed = write_if_fits(&json, buf);
             Ok(())
         })
     }

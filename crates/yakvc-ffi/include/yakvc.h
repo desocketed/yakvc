@@ -12,8 +12,9 @@
  * from the one it was built against. Bump on any incompatible change.
  * 2: verified flags in the rendezvous and peer state events.
  * 3: `yakvc_stats`.
+ * 4: group voice chat (`yakvc_join_group` and the rest).
  */
-#define YAKVC_ABI_VERSION 3
+#define YAKVC_ABI_VERSION 4
 
 #define YAKVC_OK 0
 
@@ -206,6 +207,63 @@ int32_t yakvc_set_peer_volume(struct YakVcEngine *engine,
  * `engine` must be live.
  */
 int32_t yakvc_complete_join(struct YakVcEngine *engine, uint32_t request_id, bool ok);
+
+/**
+ * Joins the group with this name and password (empty for an open group),
+ * leaving any other, with nearby voice on. `YAKVC_ERR_INVALID_ARGUMENT` if
+ * the name is empty or longer than 32 characters.
+ *
+ * # Safety
+ * `engine` must be live; `name` and `password` must be readable.
+ */
+int32_t yakvc_join_group(struct YakVcEngine *engine,
+                         const uint8_t *name,
+                         size_t name_len,
+                         const uint8_t *password,
+                         size_t password_len);
+
+/**
+ * # Safety
+ * `engine` must be live.
+ */
+int32_t yakvc_leave_group(struct YakVcEngine *engine);
+
+/**
+ * While in a group, whether nearby players outside it are heard and sent
+ * to. Off means only the group hears us and is heard.
+ *
+ * # Safety
+ * `engine` must be live.
+ */
+int32_t yakvc_set_group_nearby(struct YakVcEngine *engine, bool nearby);
+
+/**
+ * Writes the id of the group with this name and password into `out`, as 64
+ * hex characters, without joining it: the voice menu checks a password
+ * against a listed group this way. `YAKVC_ERR_INVALID_ARGUMENT` for a name
+ * that can't be a group's.
+ *
+ * # Safety
+ * `name` and `password` must be readable; `out` must be writable for 64
+ * bytes.
+ */
+int32_t yakvc_group_id(const uint8_t *name,
+                       size_t name_len,
+                       const uint8_t *password,
+                       size_t password_len,
+                       uint8_t *out);
+
+/**
+ * Writes the groups we know of as JSON, with the buffer protocol of
+ * [`yakvc_list_devices`]: an array of `{ "id": hex, "name", "locked",
+ * "joined", "members": [hyphenated UUIDs] }`. Ours, plus every group our
+ * peers announce.
+ *
+ * # Safety
+ * `engine` must be live; `buf` must be writable for `cap` bytes; `needed`
+ * must be writable.
+ */
+int32_t yakvc_list_groups(struct YakVcEngine *engine, uint8_t *buf, size_t cap, size_t *needed);
 
 /**
  * Writes whole queued event records into `buf`; `*written` is the bytes

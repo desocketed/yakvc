@@ -10,6 +10,7 @@ import io.github.desocketed.yakvc.config.ClientConfig;
 import io.github.desocketed.yakvc.config.PlayerVolumes;
 import io.github.desocketed.yakvc.natives.EngineEvent;
 import io.github.desocketed.yakvc.natives.NativeBridge;
+import io.github.desocketed.yakvc.ui.GroupsScreen;
 import io.github.desocketed.yakvc.ui.VoiceMenuScreen;
 import io.github.desocketed.yakvc.ui.VoiceSettingsScreen;
 import io.github.desocketed.yakvc.ui.VoiceToasts;
@@ -219,6 +220,18 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		// The privacy settings are below the fold at the test's small window size.
 		scrollDown(context);
 		screenshotScreen(context, "voice-settings-privacy");
+		context.clickScreenButton("gui.done");
+		context.waitForScreen(VoiceMenuScreen.class);
+
+		// Groups: join one, then leave it with the screen's Leave button.
+		context.clickScreenButton("yakvc.menu.groups");
+		context.waitForScreen(GroupsScreen.class);
+		context.runOnClient(mc -> feeder.joinGroup("Miners", "", null));
+		context.setScreen(() -> new GroupsScreen(new VoiceMenuScreen(null, feeder), feeder));
+		context.waitFor(mc -> feeder.groups().stream().anyMatch(g -> g.joined() && g.name().equals("Miners")));
+		screenshotScreen(context, "voice-groups");
+		pressNestedButton(context, "yakvc.groups.leave");
+		context.waitFor(mc -> feeder.groups().isEmpty());
 		context.clickScreenButton("gui.done");
 		context.waitForScreen(VoiceMenuScreen.class);
 		context.clickScreenButton("gui.done");
