@@ -55,11 +55,6 @@
  */
 #define YAKVC_ERR_POISONED -7
 
-/**
- * Not implemented yet. Removed before release.
- */
-#define YAKVC_ERR_UNIMPLEMENTED -99
-
 #define YAKVC_INPUT_PUSH_TO_TALK (1 << 0)
 
 #define YAKVC_INPUT_MUTED (1 << 1)
