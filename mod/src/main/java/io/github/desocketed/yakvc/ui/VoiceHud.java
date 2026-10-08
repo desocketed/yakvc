@@ -14,8 +14,8 @@ import net.minecraft.network.chat.Component;
 import org.jspecify.annotations.Nullable;
 
 /**
- * Top-left corner, while in a world: the own microphone (green while sending, red when muted, grey when voice is off),
- * a red headphones icon when deafened, and the rendezvous connection as signal bars (green when registered). A short
+ * Top-left corner, while in a world: the own microphone (green while sending, red when muted, grey when voice is off
+ * or the microphone isn't working), a red headphones icon when deafened, and the rendezvous connection as signal bars (green when registered). A short
  * line of text follows only when something is not working. Below, one line per talking player, for players outside
  * the view; players in view also get {@link TalkingIndicator} over their heads.
  */
@@ -40,6 +40,8 @@ public final class VoiceHud implements HudElement {
 		Font font = minecraft.font;
 		int flags = feeder.inputFlags();
 		Component problem = problem(feeder);
+		// Not a reason voice is off, as the others are: the player can still hear.
+		if (problem == null && !feeder.micWorking()) problem = Component.translatable("yakvc.hud.no_microphone");
 
 		int x = 4;
 		int y = 4;
