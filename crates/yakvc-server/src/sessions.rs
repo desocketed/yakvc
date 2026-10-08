@@ -87,8 +87,12 @@ impl Sessions {
         self.0.lock().unwrap().clients.contains_key(&id)
     }
 
-    pub fn pair_count(&self, id: EndpointId) -> usize {
-        self.0.lock().unwrap().matcher.pair_count(id)
+    pub fn pair_count_after_adding(&self, id: EndpointId, tokens: &[PairToken]) -> usize {
+        self.0
+            .lock()
+            .unwrap()
+            .matcher
+            .pair_count_after_adding(id, tokens)
     }
 
     pub fn set_pairs(&self, id: EndpointId, tokens: Vec<PairToken>) {
