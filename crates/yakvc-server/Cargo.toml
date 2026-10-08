@@ -22,6 +22,8 @@ toml.workspace = true
 yakvc-shared.workspace = true
 
 [dev-dependencies]
+# Certificates for test relays; already in the tree through iroh-relay.
+rcgen = "0.14.10"
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "test-util", "time"] }
 
 [lints]
