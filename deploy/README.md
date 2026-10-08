@@ -135,8 +135,10 @@ trusted_issuers = ["<issuer id>"]
 
 [rendezvous]
 endpoint_id = "<endpoint id>"
-addrs = ["<server public IP>:7843"]
+addrs = ["<server public IPv4>:7843", "[<server public IPv6>]:7843"]
 relay = "https://relay.example.com/"
 ```
+
+List both addresses so that clients on IPv6-only networks can reach the rendezvous directly; one alone works too.
 
 Keep the keys: a new endpoint key changes the endpoint id, and a new issuer key invalidates every ticket and every client's `trusted_issuers`.
