@@ -753,6 +753,15 @@ impl PeerEntry {
 impl PeerStatus {
     fn update(&self, change: impl FnOnce(&mut StatusFlags)) {
         let mut flags = self.flags.lock().unwrap();
+        // Gone is final: the path watcher and the audio thread can still
+        // call in after the peer was removed, and a peer that comes back gets
+        // a new status.
+        if flags
+            .reported
+            .is_some_and(|(state, _)| state == PeerState::Gone)
+        {
+            return;
+        }
         change(&mut flags);
         let reported = (flags.state(), flags.verified);
         if flags.reported != Some(reported) {
@@ -924,5 +933,22 @@ mod tests {
         assert_eq!(state(true, false, false, true), PeerState::Direct);
         assert_eq!(state(true, false, true, false), PeerState::Relayed);
         assert_eq!(state(true, false, true, true), PeerState::RelayFull);
+    }
+
+    #[test]
+    fn a_gone_peer_stays_gone() {
+        let (events, mut rx) = crate::event::channel();
+        let entry = PeerEntry::new(uuid(2), "bob".into(), &events);
+        let status = entry.status.clone();
+        status.update(|flags| flags.connected = true);
+        entry.remove(CloseCode::Normal);
+        // Late callers: the path watcher's last tick, the audio thread.
+        status.update(|flags| flags.relayed = true);
+        status.update(|flags| flags.relay_full = false);
+        let mut states = Vec::new();
+        while let Some(Event::Peer { state, .. }) = rx.try_next() {
+            states.push(state);
+        }
+        assert_eq!(states, [PeerState::Direct, PeerState::Gone]);
     }
 }
