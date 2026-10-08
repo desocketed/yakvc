@@ -676,11 +676,16 @@ impl AudioLoop {
 
         let payload = match encoder.encode(frame) {
             Ok(Some(payload)) => payload,
-            // DTX decided this frame is silence.
+            // DTX decided this frame is silence. The end of talk still goes
+            // out, header only, or receivers would never see the spurt end.
+            Ok(None) if end_of_talk => &[],
             Ok(None) => return,
             Err(err) => {
                 let message = format!("voice encoder failed: {err}");
                 self.shared.events.send(Event::Error(message));
+                if end_of_talk {
+                    encoder.reset();
+                }
                 return;
             }
         };
