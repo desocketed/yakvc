@@ -530,17 +530,25 @@ fn load_or_create_key(dir: &Path) -> io::Result<SecretKey> {
     }
 }
 
-/// Writes a file only the current user can read.
+/// Writes a file only the current user can read. It is written beside its
+/// final name and then renamed into place, so a crash midway can't leave a
+/// truncated file that stops every later start.
 fn write_private(path: &Path, contents: &[u8]) -> io::Result<()> {
     use std::io::Write;
+    let mut temp_name = path.file_name().unwrap_or_default().to_owned();
+    temp_name.push(".tmp");
+    let temp = path.with_file_name(temp_name);
     let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
+    options.write(true).create(true).truncate(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    options.open(path)?.write_all(contents)
+    let mut file = options.open(&temp)?;
+    file.write_all(contents)?;
+    file.sync_all()?;
+    std::fs::rename(&temp, path)
 }
 
 #[cfg(test)]
@@ -629,6 +637,20 @@ mod tests {
                 .mode();
             assert_eq!(mode & 0o777, 0o600);
         }
+    }
+
+    #[test]
+    fn a_key_write_cut_short_leaves_no_key_behind() {
+        let dir = data_dir("key-crash");
+        std::fs::create_dir_all(&dir).unwrap();
+        // What a crash while writing the key leaves.
+        let temp = dir.join(format!("{KEY_FILE}.tmp"));
+        std::fs::write(&temp, b"half a k").unwrap();
+        assert!(!dir.join(KEY_FILE).exists());
+
+        let key = load_or_create_key(&dir).unwrap();
+        assert_eq!(std::fs::read(dir.join(KEY_FILE)).unwrap(), key.to_bytes());
+        assert!(!temp.exists());
     }
 
     /// Called from inside a Tokio runtime, like the CLI and testkit do.
