@@ -4761,6 +4761,7 @@ dependencies = [
  "clap",
  "iroh",
  "iroh-relay",
+ "rcgen",
  "reqwest",
  "rustls",
  "serde",
