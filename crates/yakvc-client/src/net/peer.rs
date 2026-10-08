@@ -307,7 +307,11 @@ async fn start_protocols(
 ) -> JoinSet<()> {
     let mut tasks = JoinSet::new();
     let mut routes = HashMap::new();
-    for (protocol, version) in agreed {
+    // The acceptor takes streams in the order the dialer opens them, so
+    // both go by protocol ID rather than by how each lists its protocols.
+    let mut agreed = agreed.to_vec();
+    agreed.sort_by_key(|(protocol, _)| protocol.id().0);
+    for (protocol, version) in &agreed {
         let Ok((send, recv)) = open_protocol_stream(conn, dialed, protocol.id().0).await else {
             close(conn, CloseCode::ProtocolError);
             break;
@@ -724,6 +728,29 @@ mod tests {
         conn_a.close(VarInt::from_u32(0), b"");
         assert_eq!(voice_b.datagrams.recv().await, None);
         assert_eq!(other_b.datagrams.recv().await, None);
+    }
+
+    #[tokio::test]
+    async fn protocol_streams_pair_up_whatever_order_each_side_lists_them() {
+        let (a, b) = (loopback_endpoint().await, loopback_endpoint().await);
+        let (conn_a, conn_b) = connect(&a, &b).await;
+        let (voice_a, _voice_links_a) = probe(1, 1);
+        let (other_a, _other_links_a) = probe(2, 1);
+        let (voice_b, mut voice_links_b) = probe(1, 1);
+        let (other_b, mut other_links_b) = probe(2, 1);
+        let (status_a, _events_a) = status(uuid(2));
+        let (status_b, _events_b) = status(uuid(1));
+        let bans = Bans::default();
+        let agreed_a = vec![(voice_a, 1), (other_a, 1)];
+        let agreed_b = vec![(other_b, 1), (voice_b, 1)];
+        let (_tasks_a, _tasks_b) = tokio::join!(
+            start_protocols(&conn_a, true, &agreed_a, &status_a, &bans),
+            start_protocols(&conn_b, false, &agreed_b, &status_b, &bans),
+        );
+        let both = async { (voice_links_b.recv().await, other_links_b.recv().await) };
+        let links = tokio::time::timeout(Duration::from_secs(5), both).await;
+        assert!(matches!(links, Ok((Some(_), Some(_)))));
+        assert!(conn_b.close_reason().is_none());
     }
 
     /// A [`Net`] on a loopback endpoint, with no protocols.
