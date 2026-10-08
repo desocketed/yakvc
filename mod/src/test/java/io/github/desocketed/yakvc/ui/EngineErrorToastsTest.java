@@ -22,6 +22,17 @@ class EngineErrorToastsTest {
 		EngineErrorToasts toasts = new EngineErrorToasts();
 		assertTrue(toasts.due("cannot open the microphone: busy", 0));
 		assertTrue(toasts.due("cannot open the speakers: busy", 1));
-		assertTrue(toasts.due("cannot open the microphone: busy", 2));
+	}
+
+	@Test
+	void alternatingMessagesRepeatOnlyAfterAFewMinutes() {
+		// Toasts queue, so two failures taking turns must not stack them up either.
+		EngineErrorToasts toasts = new EngineErrorToasts();
+		assertTrue(toasts.due("cannot open the microphone: busy", 0));
+		assertTrue(toasts.due("cannot open the speakers: busy", 1));
+		assertFalse(toasts.due("cannot open the microphone: busy", 2));
+		assertFalse(toasts.due("cannot open the speakers: busy", 3));
+		assertTrue(toasts.due("cannot open the microphone: busy", 5 * MINUTE));
+		assertTrue(toasts.due("cannot open the speakers: busy", 5 * MINUTE + 1));
 	}
 }
