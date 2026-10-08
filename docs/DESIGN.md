@@ -29,7 +29,7 @@ Yak VC is a client-only Fabric mod that gives players on any vanilla server, onl
 **Non-goals (v1)**
 
 - Server-side moderation or admin control; there is nothing on the server to control.
-- Group/radio channels, recording, video. Designed not to preclude them.
+- Radio channels, recording, video. Designed not to preclude them. Group voice chat moved into the beta (#28, maintainer, 2026-10-08).
 - Bedrock, Forge or NeoForge. The Rust core is loader-agnostic, so ports stay possible.
 
 **Glossary**
@@ -537,9 +537,9 @@ Build order runs Rust-first: every networking and audio milestone is provable wi
    - Exit: two dev clients on a local vanilla server hear each other spatially. A gametest confirms spectators are excluded in both directions.
 6. **M5 Real auth.** Mojang challenge on server and client, `SessionJoiner`, ticket cache, Mojang 429 handling, `hasJoined` URL from the discovery document. Measure the real `sessionserver` rate limits. Measure how many clients lack a profile key and decide whether profile-key auth replaces the challenge as the default.
    - Exit: two real accounts on a public online-mode server, no dev flags.
-7. **M6 Beta.** All-platform natives, settings and peer UI, talking indicators, relay-only mode, MOTD opt-out, production server deployed. Check the CurseForge project name is free, and check the default keybinds against popular modpacks. During the beta, resize the VPS from relayed-share and monthly-transfer metrics.
+7. **M6 Beta.** All-platform natives, settings and peer UI, talking indicators, group voice chat (#28), relay-only mode, MOTD opt-out, production server deployed. Check the CurseForge project name is free, and check the default keybinds against popular modpacks. During the beta, resize the VPS from relayed-share and monthly-transfer metrics.
    - Exit: the jar works on Linux; public beta on Modrinth. Checking it on real Windows and macOS waits until after the release (the jar already carries their natives, built in CI).
-8. **Post-v1.** Group and radio channels first (maintainer priority, 2026-10-04), then serverless discovery, OpenAL/HRTF output and a NeoForge port.
+8. **Post-v1.** Radio channels (#112), then serverless discovery, OpenAL/HRTF output and a NeoForge port.
    - **Read-only Java API for other mods:** talking and peer-state events, plus per-player mute and volume, so HUD and social mods can integrate without data channels.
    - **Generic P2P channels for other mods**, only if mod authors ask for it. This would extract `net` into a separate library mod that other mods register protocols with. It must first solve: per-protocol consent (a mod can't send to peers that haven't installed it), relay quotas per protocol, the fact that every peer learns your IP, a server opt-out covering all protocols, and a stable Java API. Generic position-sharing channels make PvP radar cheats easy, so server-owner opt-out matters more here than for voice.
 
