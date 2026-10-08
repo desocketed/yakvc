@@ -452,8 +452,10 @@ fn closed_by_rendezvous(code: iroh::endpoint::VarInt) -> Option<Ended> {
             "the rendezvous did not accept the Minecraft session".into(),
         ))
     } else if code == rdv_close(CloseCode::Superseded) {
+        // Either a signed-in player took over this unverified identity, or
+        // the same player started voice chat on more machines than allowed.
         Some(Ended::AuthFailed(
-            "another player, signed in to the Minecraft account, is using this identity".into(),
+            "this player signed in to voice chat somewhere else".into(),
         ))
     } else if code == rdv_close(CloseCode::RateLimited)
         || code == rdv_close(CloseCode::LimitExceeded)
