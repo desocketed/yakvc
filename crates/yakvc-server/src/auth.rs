@@ -18,6 +18,11 @@ pub(crate) const RENEW_BEFORE: Duration = Duration::from_secs(2 * 3600);
 /// long clients are told to wait when Mojang is down.
 const DEFAULT_RETRY_AFTER: Duration = Duration::from_secs(10);
 
+/// The longest we stop calling Mojang after a 429, whatever its `Retry-After`
+/// says: a bogus value must not block every sign-in for days, or overflow
+/// `Instant`.
+const MAX_RETRY_AFTER: Duration = Duration::from_secs(600);
+
 #[derive(Debug)]
 pub(crate) struct Auth {
     issuer: IssuerKey,
@@ -120,7 +125,9 @@ impl Auth {
             Ok(Some(profile)) => JoinCheck::Confirmed(profile),
             Ok(None) => JoinCheck::Rejected,
             Err(MojangError::RateLimited { retry_after }) => {
-                let wait = retry_after.unwrap_or(DEFAULT_RETRY_AFTER);
+                let wait = retry_after
+                    .unwrap_or(DEFAULT_RETRY_AFTER)
+                    .min(MAX_RETRY_AFTER);
                 *self.mojang_blocked_until.lock().unwrap() = Some(Instant::now() + wait);
                 JoinCheck::RetryAfter(secs_rounded_up(wait))
             }
@@ -299,6 +306,23 @@ mod tests {
             auth.check_join("alice", &Nonce([0; 32]), client()).await,
             JoinCheck::RetryAfter(10)
         );
+    }
+
+    #[tokio::test]
+    async fn rate_limit_waits_at_most_ten_minutes() {
+        let mojang = FakeMojang::start().await;
+        let auth = auth(Some(&mojang), DAY);
+        // A week, then a value that would overflow `Instant`.
+        for retry_after in ["604800", "18446744073709551615"] {
+            let header = format!("Retry-After: {retry_after}\r\n");
+            mojang.script([response("429 Too Many Requests", &header, "")]);
+            *auth.mojang_blocked_until.lock().unwrap() = None;
+            assert_eq!(
+                auth.check_join("alice", &Nonce([0; 32]), client()).await,
+                JoinCheck::RetryAfter(600)
+            );
+            assert!(auth.retry_after().unwrap() <= 600);
+        }
     }
 
     #[tokio::test]
