@@ -85,7 +85,8 @@ pub enum CloseCode {
     LimitExceeded = 4,
     ShuttingDown = 5,
     /// A verified session took over this session's unverified UUID, or holds
-    /// the UUID an unverified ticket was asked for.
+    /// the UUID an unverified ticket was asked for, or newer sessions for the
+    /// same UUID took the last of its two places.
     Superseded = 6,
 }
 

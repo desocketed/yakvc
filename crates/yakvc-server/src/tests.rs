@@ -1164,6 +1164,24 @@ async fn a_renewal_extends_the_session() {
 }
 
 #[tokio::test]
+async fn a_third_session_for_a_uuid_closes_the_oldest() {
+    let server = dev_server().await;
+    let mut first = Client::connect(&server, "alice").await;
+    let mut second = Client::connect(&server, "alice").await;
+    let mut third = Client::connect(&server, "alice").await;
+    first.register().await;
+    second.register().await;
+    third.register().await;
+    assert_eq!(first.close_code().await, code(CloseCode::Superseded));
+    wait_for("two sessions", || server.stats().sessions == 2).await;
+    // The other two stay.
+    third.reconnect(&server).await;
+    third.register().await;
+    second.send(ClientMsg::AddPairs(vec![])).await;
+    assert!(second.conn.close_reason().is_none());
+}
+
+#[tokio::test]
 async fn shutdown_closes_sessions() {
     let server = dev_server().await;
     let mut alice = Client::connect(&server, "alice").await;
