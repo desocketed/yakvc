@@ -2,8 +2,9 @@
 //! handshake, and routing each verified connection's streams and datagrams to
 //! the application protocols.
 //!
-//! Stream layout: the dialer opens the peer control stream and both sides
-//! send [`PeerMsg::Hello`] on it. Once both hellos verify, the dialer opens
+//! Stream layout: the dialer opens the peer control stream and sends its
+//! [`PeerMsg::Hello`] on it; the acceptor answers with its own once the
+//! dialer's verifies. Once both hellos verify, the dialer opens
 //! one bi-stream per agreed protocol, starting with that protocol's ID byte.
 
 use std::collections::HashMap;
@@ -13,7 +14,7 @@ use std::time::{Duration, SystemTime};
 use bytes::Bytes;
 use iroh::endpoint::{Connection, ConnectionError, RecvStream, SendStream};
 use iroh::{EndpointAddr, EndpointId};
-use tokio::sync::mpsc;
+use tokio::sync::{Semaphore, mpsc};
 use tokio::task::JoinSet;
 use tokio::time::Instant;
 use yakvc_shared::peer::{ALPN, CloseCode, PeerHello, PeerMsg};
@@ -28,6 +29,8 @@ use super::{
 const DIAL_GRACE: Duration = Duration::from_secs(3);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+/// Incoming handshakes served at once.
+const MAX_HANDSHAKES: usize = 16;
 /// How often the selected path is checked for the direct/relayed state.
 const PATH_POLL: Duration = Duration::from_secs(1);
 /// Datagrams queued per protocol before new ones are dropped.
@@ -58,8 +61,14 @@ struct Hello {
 }
 
 pub(super) async fn accept_loop(inner: Arc<Inner>) {
+    let handshakes = Arc::new(Semaphore::new(MAX_HANDSHAKES));
     while let Some(incoming) = inner.endpoint.accept().await {
         let inner = inner.clone();
+        // Unverified connections can each hold a task for the handshake
+        // timeout, so only so many are served at once; the rest wait.
+        let Ok(permit) = handshakes.clone().acquire_owned().await else {
+            return;
+        };
         tokio::spawn(async move {
             let Ok(conn) = incoming.await else { return };
             let remote = conn.remote_id();
@@ -74,7 +83,9 @@ pub(super) async fn accept_loop(inner: Arc<Inner>) {
                 close(&conn, CloseCode::TooManyPeers);
                 return;
             }
-            match setup(&inner, &conn, false).await {
+            let hello = setup(&inner, &conn, false).await;
+            drop(permit);
+            match hello {
                 Ok(hello) => serve(inner, conn, false, hello).await,
                 Err(SetupError::Rejected(_)) => mark_failed(&inner, conn.remote_id()),
                 Err(_) => {}
@@ -194,17 +205,21 @@ async fn handshake(
     }
     .map_err(|err| SetupError::Connection(err.to_string()))?;
 
-    let ours = PeerHello {
+    let ours = PeerMsg::Hello(PeerHello {
         ticket: own_ticket,
         protocols: inner
             .protocols
             .iter()
             .map(|protocol| (protocol.id(), protocol.version()))
             .collect(),
-    };
-    wire::write_msg(&mut send, &PeerMsg::Hello(ours))
-        .await
-        .map_err(|err| SetupError::Connection(err.to_string()))?;
+    });
+    // The dialer speaks first. The acceptor answers only once the dialer's
+    // ticket checks out, so whoever connects learns nothing about us.
+    if dialed {
+        wire::write_msg(&mut send, &ours)
+            .await
+            .map_err(|err| SetupError::Connection(err.to_string()))?;
+    }
     let theirs = match wire::read_msg::<PeerMsg>(&mut recv).await {
         Ok(Some(PeerMsg::Hello(hello))) => hello,
         Ok(Some(PeerMsg::TicketUpdate(_)))
@@ -220,6 +235,11 @@ async fn handshake(
     inner
         .claim(remote, ticket.uuid, ticket.verified)
         .map_err(SetupError::Rejected)?;
+    if !dialed {
+        wire::write_msg(&mut send, &ours)
+            .await
+            .map_err(|err| SetupError::Connection(err.to_string()))?;
+    }
 
     let agreed = inner
         .protocols
@@ -983,6 +1003,38 @@ mod tests {
             Err(SetupError::Rejected(CloseCode::BadTicket))
         ));
         assert!(alice.net.peers().is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_acceptor_reveals_nothing_to_a_peer_it_refuses() {
+        let issuer = IssuerKey::generate();
+        let alice = side(1, &issuer, &issuer).await;
+        alice.sees(&[2]);
+        let stranger = loopback_endpoint().await;
+        let conn = stranger.connect(alice.addr(), ALPN).await.unwrap();
+        let (mut send, mut recv) = conn.open_bi().await.unwrap();
+        // The start of a hello that never finishes.
+        send.write_all(&[5]).await.unwrap();
+        let reply = tokio::time::timeout(
+            Duration::from_millis(500),
+            wire::read_msg::<PeerMsg>(&mut recv),
+        )
+        .await;
+        assert!(reply.is_err(), "alice answered before seeing a ticket");
+
+        // A finished hello with an untrusted ticket gets no hello back.
+        let conn = stranger.connect(alice.addr(), ALPN).await.unwrap();
+        let (mut send, mut recv) = conn.open_bi().await.unwrap();
+        let hello = PeerHello {
+            ticket: ticket(&IssuerKey::generate(), uuid(2), &stranger),
+            protocols: vec![],
+        };
+        wire::write_msg(&mut send, &PeerMsg::Hello(hello))
+            .await
+            .unwrap();
+        let reply = wire::read_msg::<PeerMsg>(&mut recv).await;
+        assert!(!matches!(reply, Ok(Some(PeerMsg::Hello(_)))));
+        assert!(closed_with(conn.closed().await, CloseCode::BadTicket));
     }
 
     #[tokio::test]
