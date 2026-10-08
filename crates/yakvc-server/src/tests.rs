@@ -463,6 +463,31 @@ async fn unregistered_connections_are_capped_per_ip() {
 }
 
 #[tokio::test]
+async fn sessions_are_capped_per_ip() {
+    let limits = Limits {
+        max_sessions_per_ip: 1,
+        ..Limits::default()
+    };
+    let server = builder()
+        .insecure_dev_auth()
+        .limits(limits)
+        .spawn()
+        .await
+        .unwrap();
+    let mut alice = Client::connect(&server, "alice").await;
+    let mut bob = Client::connect(&server, "bob").await;
+    alice.register().await;
+    bob.send(bob.hello(None)).await;
+    assert_eq!(bob.close_code().await, code(CloseCode::LimitExceeded));
+
+    // Alice leaving makes room.
+    alice.conn.close(0u32.into(), b"");
+    wait_for("alice's session to end", || server.stats().sessions == 0).await;
+    bob.reconnect(&server).await;
+    bob.register().await;
+}
+
+#[tokio::test]
 async fn large_messages_before_registering_are_a_protocol_error() {
     let server = dev_server().await;
     let mut client = Client::connect(&server, "alice").await;
