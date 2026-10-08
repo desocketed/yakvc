@@ -7,8 +7,8 @@
 # server is vanilla apart from the loader), and two headless clients, Alice
 # and Bob. The clients use dev test audio (a 440 Hz tone for the microphone,
 # no speakers) and hold push-to-talk. A client logs `Talking <uuid> <name>
-# true` only once it is actually playing that player's voice. The script
-# checks that:
+# true` (at DEBUG, so only in its logs/debug.log) once it is actually playing
+# that player's voice. The script checks that:
 #   1. each client hears the other;
 #   2. after `/gamemode spectator Bob`, each stops hearing the other;
 #   3. after `/gamemode survival Bob`, each hears the other again.
@@ -108,7 +108,7 @@ wait_for() {
 	done
 }
 # logged FILE SINCE PATTERN: FILE has a line matching PATTERN after line SINCE.
-logged() { tail -n +$(($2 + 1)) "$1" | grep -qE "$3"; }
+logged() { tail -n +$(($2 + 1)) "$1" 2>/dev/null | grep -qE "$3"; }
 lines() { wc -l <"$1"; }
 
 wait_for 120 "the dev rendezvous" logged "$work/rdv.log" 0 'Dev yakvc-server'
@@ -135,8 +135,10 @@ for name in Alice Bob; do
 	if [[ -n $pipewire ]]; then pids+=("-$!"); else pids+=($!); fi
 done
 
-alice=$work/Alice.log
-bob=$work/Bob.log
+# Talking is logged at DEBUG, which only the dev log config's debug.log keeps
+# (along with every INFO line), so read that rather than the console output.
+alice=$work/Alice/logs/debug.log
+bob=$work/Bob/logs/debug.log
 hears() { logged "$1" "$2" "\(yakvc\) Talking [^ ]+ $3 true"; }
 stops_hearing() { logged "$1" "$2" "\(yakvc\) Talking [^ ]+ $3 false"; }
 
