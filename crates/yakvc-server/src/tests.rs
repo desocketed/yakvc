@@ -402,6 +402,86 @@ async fn updates_before_registering_are_a_protocol_error() {
     assert_eq!(client.close_code().await, code(CloseCode::ProtocolError));
 }
 
+#[tokio::test]
+async fn a_second_hello_is_a_protocol_error() {
+    let server = dev_server().await;
+    let mut client = Client::connect(&server, "alice").await;
+    client.register().await;
+    client.send(client.hello(None)).await;
+    assert_eq!(client.close_code().await, code(CloseCode::ProtocolError));
+}
+
+#[tokio::test]
+async fn joined_without_a_challenge_is_a_protocol_error() {
+    let mojang = FakeMojang::start().await;
+    let server = mojang_server(&mojang).await;
+    let mut early = Client::connect(&server, "alice").await;
+    early.send(ClientMsg::Joined).await;
+    assert_eq!(early.close_code().await, code(CloseCode::ProtocolError));
+
+    // A challenge is answered once: replaying `Joined` doesn't ask Mojang
+    // again.
+    let mut bob = Client::connect(&server, "bob").await;
+    bob.send(bob.hello(None)).await;
+    bob.answer_challenge().await;
+    bob.expect_registered().await;
+    bob.send(ClientMsg::Joined).await;
+    assert_eq!(bob.close_code().await, code(CloseCode::ProtocolError));
+    assert_eq!(mojang.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn clients_that_dont_register_in_time_are_closed() {
+    let mojang = FakeMojang::start().await;
+    let limits = Limits {
+        auth_timeout: Duration::from_millis(500),
+        ..Limits::default()
+    };
+    let server = builder()
+        .session_server(SessionServer::new(&mojang.url))
+        .limits(limits)
+        .spawn()
+        .await
+        .unwrap();
+    // One never opens its stream (a stream only reaches the server with its
+    // first bytes), the other never answers its challenge.
+    let silent = Client::connect(&server, "alice").await;
+    let mut stalled = Client::connect(&server, "bob").await;
+    stalled.send(stalled.hello(None)).await;
+    assert!(matches!(stalled.recv().await, ServerMsg::Challenge(_)));
+    assert_eq!(silent.close_code().await, code(CloseCode::ProtocolError));
+    assert_eq!(stalled.close_code().await, code(CloseCode::ProtocolError));
+}
+
+/// A second connection from the same endpoint replaces the session, and the
+/// old connection's handler ending afterwards must leave the new one alone.
+#[tokio::test]
+async fn a_replaced_connection_leaves_the_new_session_alone() {
+    let server = dev_server().await;
+    let mut old = Client::connect(&server, "alice").await;
+    let mut bob = Client::connect(&server, "bob").await;
+    old.register().await;
+    bob.register().await;
+
+    // `old` keeps its streams open (`reconnect` would finish them, ending
+    // the old session first), so only the replacement closes it.
+    let mut alice =
+        Client::connect_with(old.endpoint.clone(), server.endpoint_addr(), "alice").await;
+    alice.register().await;
+    assert_eq!(old.close_code().await, code(CloseCode::Normal));
+    // Give the old connection's handler time to finish.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(server.stats().sessions, 2);
+
+    alice
+        .send(ClientMsg::AddPairs(vec![alice.token_for(&bob)]))
+        .await;
+    bob.send(ClientMsg::AddPairs(vec![bob.token_for(&alice)]))
+        .await;
+    alice.expect_peer_available(&bob).await;
+    bob.expect_peer_available(&alice).await;
+}
+
 /// An address with one IP address more than the rendezvous accepts.
 fn oversize_addr(id: EndpointId) -> EndpointAddr {
     let mut addr = EndpointAddr::new(id);
@@ -742,6 +822,39 @@ async fn auth_attempts_are_rate_limited_per_endpoint() {
     alice.reconnect(&server).await;
     alice.send(alice.hello(None)).await;
     assert_eq!(alice.close_code().await, code(CloseCode::RateLimited));
+}
+
+#[tokio::test]
+async fn auth_attempts_are_rate_limited_per_ip() {
+    let mojang = FakeMojang::start().await;
+    let limits = Limits {
+        auth_per_ip_per_min: 1,
+        ..Limits::default()
+    };
+    let server = builder()
+        .session_server(SessionServer::new(&mojang.url))
+        .relay(relay_options())
+        .limits(limits)
+        .spawn()
+        .await
+        .unwrap();
+    let mut alice = Client::connect(&server, "alice").await;
+    alice.send(alice.hello(None)).await;
+    alice.answer_challenge().await;
+    alice.expect_registered().await;
+
+    // A fresh key from the same IP gets past the per-EndpointId limit, but
+    // not this one.
+    let mut bob = Client::connect(&server, "bob").await;
+    bob.send(bob.hello(None)).await;
+    assert_eq!(bob.close_code().await, code(CloseCode::RateLimited));
+
+    // Through the relay the IP is unknown, so the per-IP limit can't apply
+    // (the shared budget for those does instead).
+    let mut carol = Client::connect_via_relay(&server, "carol").await;
+    carol.send(carol.hello(None)).await;
+    carol.answer_challenge().await;
+    carol.expect_registered().await;
 }
 
 #[tokio::test]
