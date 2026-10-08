@@ -22,8 +22,9 @@ use yakvc_shared::{EndpointId, Ticket, Uuid, is_offline_player};
 
 use crate::auth::{JoinCheck, proves};
 use crate::limits::{Slot, TokenBucket};
+use crate::server::Limits;
 use crate::server::Shared;
-use crate::sessions::close;
+use crate::sessions::{Outbox, close, push};
 
 /// Time from accepting the connection until the client must be registered.
 /// Covers the client's `joinServer` call to Mojang.
@@ -31,6 +32,9 @@ const AUTH_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How long the writer may take to deliver its last messages on close.
 const FLUSH_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// How long one message may wait for the client to make room for it.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Minecraft names are at most 16 characters.
 const MAX_NAME_LEN: usize = 16;
@@ -63,7 +67,7 @@ pub(crate) async fn serve(shared: Arc<Shared>, incoming: Incoming) {
         }
     };
 
-    let (outbox, outbox_rx) = mpsc::unbounded_channel();
+    let (outbox, outbox_rx) = mpsc::channel(outbox_len(&shared.limits));
     let writer = tokio::spawn(write_all(conn.clone(), send, outbox_rx));
     let mut client = Client {
         shared: shared.clone(),
@@ -98,17 +102,21 @@ pub(crate) async fn serve(shared: Arc<Shared>, incoming: Incoming) {
 
 /// Writes queued messages until every sender is gone, then finishes the
 /// stream and waits for the client to receive it.
-async fn write_all(
-    conn: Connection,
-    mut send: SendStream,
-    mut outbox: mpsc::UnboundedReceiver<ServerMsg>,
-) {
+async fn write_all(conn: Connection, mut send: SendStream, mut outbox: mpsc::Receiver<ServerMsg>) {
     while let Some(msg) = outbox.recv().await {
-        if write_msg(&mut send, &msg).await.is_err() {
+        match tokio::time::timeout(WRITE_TIMEOUT, write_msg(&mut send, &msg)).await {
+            Ok(Ok(())) => {}
             // A client that misses a message is out of step with its
             // session; closing makes it reconnect and start over.
-            close(&conn, CloseCode::Normal, "failed to send");
-            return;
+            Ok(Err(_)) => {
+                close(&conn, CloseCode::Normal, "failed to send");
+                return;
+            }
+            // Flow control held the write: the client stopped reading.
+            Err(_) => {
+                close(&conn, CloseCode::LimitExceeded, "not reading");
+                return;
+            }
         }
     }
     let _ = send.finish();
@@ -121,7 +129,7 @@ struct Client {
     id: EndpointId,
     ip: Option<IpAddr>,
     recv: RecvStream,
-    outbox: mpsc::UnboundedSender<ServerMsg>,
+    outbox: Outbox,
     auth_deadline: tokio::time::Instant,
     /// When the session's ticket expires, once registered.
     ticket_expires: tokio::time::Instant,
@@ -460,10 +468,14 @@ impl Client {
     }
 
     fn send(&self, msg: ServerMsg) {
-        // Fails only if the writer stopped because the stream broke, in which
-        // case the next read fails too.
-        let _ = self.outbox.send(msg);
+        push(&self.conn, &self.outbox, msg);
     }
+}
+
+/// Room for a `PeerAvailable` and a `PeerGone` for every pair, plus replies:
+/// more than an honest client that keeps reading ever has queued.
+fn outbox_len(limits: &Limits) -> usize {
+    2 * limits.max_pairs + 16
 }
 
 /// When `ticket` expires, on the clock the read loop's timeouts use.

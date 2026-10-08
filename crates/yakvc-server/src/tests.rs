@@ -298,6 +298,42 @@ async fn address_updates_reach_matches() {
 }
 
 #[tokio::test]
+async fn a_client_that_stops_reading_is_closed() {
+    let limits = Limits {
+        pair_updates_per_sec: 1_000_000,
+        ..Limits::default()
+    };
+    let server = builder()
+        .insecure_dev_auth()
+        .limits(limits)
+        .spawn()
+        .await
+        .unwrap();
+    let mut alice = Client::connect(&server, "alice").await;
+    let mut bob = Client::connect(&server, "bob").await;
+    alice.register().await;
+    bob.register().await;
+    alice
+        .send(ClientMsg::AddPairs(vec![alice.token_for(&bob)]))
+        .await;
+    bob.send(ClientMsg::AddPairs(vec![bob.token_for(&alice)]))
+        .await;
+    bob.expect_peer_available(&alice).await;
+
+    // Bob stops reading while Alice's address updates keep coming for him.
+    let addr = EndpointAddr::new(alice.id()).with_ip_addr("127.0.0.1:9".parse().unwrap());
+    let flood = async {
+        loop {
+            alice.send(ClientMsg::UpdateAddr(addr.clone())).await;
+        }
+    };
+    tokio::select! {
+        closed = bob.close_code() => assert_eq!(closed, code(CloseCode::LimitExceeded)),
+        () = flood => unreachable!(),
+    }
+}
+
+#[tokio::test]
 async fn hello_for_another_endpoint_is_a_protocol_error() {
     let server = dev_server().await;
     let mut client = Client::connect(&server, "alice").await;
