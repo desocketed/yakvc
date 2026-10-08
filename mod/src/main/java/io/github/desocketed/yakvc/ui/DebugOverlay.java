@@ -91,13 +91,20 @@ public final class DebugOverlay implements HudElement {
 		if (state == null) return "not started";
 		long value = feeder.rendezvousValue();
 		return switch (state) {
-			case REGISTERED -> {
-				long minutes = Math.max(0, value - System.currentTimeMillis() / 1000) / 60;
-				yield String.format("registered, ticket expires in %dh %02dm", minutes / 60, minutes % 60);
-			}
+			case REGISTERED -> "registered, ticket expires in " + timeLeft(value, System.currentTimeMillis() / 1000);
 			case RETRYING -> String.format("retrying in %.1f s", value / 1000.0);
 			default -> state.name().toLowerCase();
 		};
+	}
+
+	/**
+	 * The time until {@code expirySecs}, rounded down: whole hours while an hour or more is left, which is precise
+	 * enough for a day-long ticket and keeps the line (and the guide's screenshot) steady, then minutes, when renewal
+	 * is near.
+	 */
+	static String timeLeft(long expirySecs, long nowSecs) {
+		long secs = Math.max(0, expirySecs - nowSecs);
+		return secs >= 3600 ? secs / 3600 + " h" : secs / 60 + " min";
 	}
 
 	/** One peer: name, path, round trip, loss and jitter buffer delay. */

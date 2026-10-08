@@ -40,6 +40,7 @@ import net.minecraft.client.gui.components.AbstractScrollArea;
 import net.minecraft.client.gui.components.AbstractButton;
 import net.minecraft.client.gui.components.events.ContainerEventHandler;
 import net.minecraft.client.gui.components.events.GuiEventListener;
+import net.minecraft.client.gui.components.toasts.SystemToast;
 import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.client.gui.screens.options.SoundOptionsScreen;
 import net.minecraft.client.gui.screens.options.controls.KeyBindsScreen;
@@ -164,7 +165,30 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 			if (context.computeOnClient(mc -> feeder.errorEvents() != 0 || feeder.closed())) {
 				throw new AssertionError("engine reported errors; see the log");
 			}
+			// After the check above, since these errors are made up.
+			checkEngineErrorToasts(context, feeder);
 		}
+	}
+
+	/** Two engine errors in a row both show, one after the other, rather than the second replacing the first. */
+	private static void checkEngineErrorToasts(ClientGameTestContext context, GameStateFeeder feeder) {
+		context.runOnClient(mc -> {
+			mc.gui.toastManager().clear();
+			feeder.handle(new EngineEvent.Error("cannot open the microphone: test"));
+			feeder.handle(new EngineEvent.Error("cannot open the speakers: test"));
+		});
+		SystemToast first = context.computeOnClient(mc ->
+				mc.gui.toastManager().getToast(SystemToast.class, VoiceToasts.ENGINE_ERROR));
+		if (first == null) throw new AssertionError("no engine error toast");
+		// The toasts have no getter for their text, so tell them apart by identity: once the first is gone, another
+		// must still be there.
+		context.runOnClient(mc -> first.forceHide());
+		context.waitFor(mc -> {
+			SystemToast next = mc.gui.toastManager().getToast(SystemToast.class, VoiceToasts.ENGINE_ERROR);
+			if (next == null) throw new AssertionError("the second engine error toast replaced the first");
+			return next != first;
+		});
+		context.runOnClient(mc -> mc.gui.toastManager().clear());
 	}
 
 	/**
