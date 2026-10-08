@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use iroh::endpoint::{Connection, SendStream};
-use iroh::{EndpointAddr, EndpointId, TransportAddr, Watcher};
+use iroh::{EndpointAddr, EndpointId, RelayUrl, TransportAddr, Watcher};
 use rand::RngExt;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
@@ -253,6 +253,7 @@ impl Session<'_> {
                         }
                         ServerMsg::PeerAvailable { ticket, addr } => {
                             relisted.insert(addr.id);
+                            let addr = only_our_relay(addr, self.config.relay.as_ref());
                             self.inner.peer_available(ticket, addr);
                         }
                         ServerMsg::PeerGone(remote) => self.inner.peer_gone(remote),
@@ -386,6 +387,18 @@ fn pair_tokens(me: Uuid, tab_list: &HashSet<Uuid>) -> HashSet<PairToken> {
         tokens.truncate(MAX_PAIRS);
     }
     tokens.into_iter().collect()
+}
+
+/// A peer's address with only its direct addresses and our own relay. The
+/// rendezvous passes on what peers advertise, and dialing another relay
+/// would show whoever runs it our IP, even in relay-only mode.
+fn only_our_relay(addr: EndpointAddr, relay: Option<&RelayUrl>) -> EndpointAddr {
+    let addrs = addr.addrs.into_iter().filter(|addr| match addr {
+        TransportAddr::Ip(_) => true,
+        TransportAddr::Relay(url) => Some(url) == relay,
+        _ => false,
+    });
+    EndpointAddr::from_parts(addr.id, addrs)
 }
 
 /// A random point in the ticket's last [`RENEW_WINDOW`], leaving a little
@@ -528,6 +541,29 @@ mod tests {
         // Two messages per batch, with a token a second to spare.
         let batches_per_sec = Duration::from_secs(1).div_duration_f64(PAIR_BATCH_INTERVAL);
         assert!(2.0 * batches_per_sec < f64::from(PAIR_UPDATES_PER_SEC) - 1.0);
+    }
+
+    #[test]
+    fn peer_addresses_keep_only_our_relay() {
+        let ours: RelayUrl = "https://relay.example.org".parse().unwrap();
+        let theirs: RelayUrl = "https://attacker.example.com".parse().unwrap();
+        let ip = TransportAddr::Ip("192.0.2.1:4000".parse().unwrap());
+        let id = iroh::SecretKey::generate().public();
+        let addr = EndpointAddr::from_parts(
+            id,
+            [
+                ip.clone(),
+                TransportAddr::Relay(ours.clone()),
+                TransportAddr::Relay(theirs),
+            ],
+        );
+        let expected =
+            EndpointAddr::from_parts(id, [ip.clone(), TransportAddr::Relay(ours.clone())]);
+        assert_eq!(only_our_relay(addr.clone(), Some(&ours)), expected);
+        assert_eq!(
+            only_our_relay(addr, None),
+            EndpointAddr::from_parts(id, [ip])
+        );
     }
 
     #[test]
