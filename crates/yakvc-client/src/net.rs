@@ -540,6 +540,33 @@ impl Inner {
         }
     }
 
+    /// After a new rendezvous session, unlists every peer it didn't list
+    /// again: a `PeerGone` sent while we were away is lost. Such a peer is
+    /// no longer dialed, and is gone at once unless its link is up, in which
+    /// case it is gone when the link closes (see `peer::unregister`).
+    fn unlist_except(&self, listed: &HashSet<EndpointId>) {
+        let mut peers = self.peers.lock().unwrap();
+        let stale: Vec<EndpointId> = peers
+            .iter()
+            .filter(|&(id, entry)| entry.addr.is_some() && !listed.contains(id))
+            .map(|(&id, _)| id)
+            .collect();
+        for id in stale {
+            let Some(entry) = peers.get_mut(&id) else {
+                continue;
+            };
+            entry.addr = None;
+            if let Some(dialer) = entry.dialer.take() {
+                dialer.abort();
+            }
+            if entry.open_conn().is_none()
+                && let Some(entry) = peers.remove(&id)
+            {
+                entry.remove(CloseCode::Normal);
+            }
+        }
+    }
+
     fn new_join(&self) -> (JoinId, oneshot::Receiver<bool>) {
         let (tx, rx) = oneshot::channel();
         let mut joins = self.joins.lock().unwrap();
