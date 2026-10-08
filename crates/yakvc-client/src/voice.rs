@@ -19,7 +19,7 @@ use tokio::sync::watch;
 use yakvc_audio::{
     AudioError, DeviceChoice, Encoder, FRAME_SAMPLES, FrameSink, FrameSource, InputConfig,
     InputProcessor, JitterConfig, Microphone, Mixer, MonoFrame, Packet, Pulled, ReceiveStream,
-    Speakers, StereoFrame, StreamStats,
+    Speakers, StereoFrame, StreamStats, level_db,
 };
 use yakvc_shared::voice::{VERSION, VoiceHeader, VoiceMsg};
 use yakvc_shared::{GroupAnnounce, GroupId, GroupKey, ProtocolId, Uuid};
@@ -39,6 +39,16 @@ const AUDIO_TICK: Duration = Duration::from_millis(5);
 const LEVEL_EVERY_FRAMES: u32 = 5;
 /// A remote speaker counts as stopped after this many silent frames.
 const TALKING_HANGOVER_FRAMES: u32 = 10;
+/// A played frame only counts as talking above this level. With DTX on,
+/// Opus keeps sending a comfort-noise packet every 400 ms or so while
+/// push-to-talk is held over silence, and each would otherwise flash the
+/// talking indicator (#113). Those packets can't be told apart by size:
+/// measured, they are 8-9 bytes at 24 kbps but 14-18 at 16 kbps, 21 at
+/// 32 kbps and 41-45 at 64 kbps, where quiet speech at 16 kbps can be 21.
+/// Decoded, they (and the concealment after them) stay below -85 dBFS at
+/// every bitrate, while speech is well above the default voice activation
+/// threshold of -45 dBFS. They are still played, as Opus intends.
+const TALKING_LEVEL_DB: f32 = -70.0;
 
 /// The audio thread's own state, for the in-game debug overlay.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -826,8 +836,11 @@ impl AudioLoop {
                 (Pulled::Voice, false) => state.playback(uuid),
                 (Pulled::Silence, _) => None,
             };
+            let talking_frame = spatial.is_some() && level_db(&frame) > TALKING_LEVEL_DB;
             if let Some(spatial) = spatial {
                 voices.push((frame, spatial));
+            }
+            if talking_frame {
                 remote.silent_frames = 0;
             } else {
                 remote.silent_frames = remote.silent_frames.saturating_add(1);

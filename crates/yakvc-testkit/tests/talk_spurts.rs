@@ -106,3 +106,86 @@ async fn end_of_talk_is_sent_after_dtx_silence() {
     // of talk at the end of the hangover.
     assert_eq!(after - before, 20 + 10 + 1);
 }
+
+/// Bob's `Talking` changes for alice while she holds push-to-talk for 4 s
+/// with the silent source, at `bitrate`.
+async fn talking_over_silence(bitrate: u32) -> Vec<bool> {
+    let net = TestNet::start().await;
+    let alice = net
+        .client()
+        .name("alice")
+        .config(|c| c.audio.bitrate = bitrate)
+        .start()
+        .await;
+    let mut bob = net.client().name("bob").start().await;
+    see_each_other(&[&alice, &bob]);
+    alice.move_to(Vec3::new(0.0, 64.0, 0.0));
+    bob.move_to(Vec3::new(5.0, 64.0, 0.0));
+    bob.wait_for_peer(alice.uuid(), PeerState::Direct)
+        .await
+        .unwrap();
+
+    let uuid = alice.uuid();
+    alice.talk(true);
+    let mut changes = Vec::new();
+    let _ = tokio::time::timeout(Duration::from_secs(4), async {
+        loop {
+            let event = bob
+                .wait_for(
+                    "alice's talking",
+                    |e| matches!(e, Event::Talking { uuid: u, .. } if *u == uuid),
+                )
+                .await;
+            if let Ok(Event::Talking { talking, .. }) = event {
+                changes.push(talking);
+            }
+        }
+    })
+    .await;
+    // DTX's comfort noise did reach bob, so the test shows it is ignored.
+    assert!(bob.stream_stats(uuid).unwrap().received > 5);
+    changes
+}
+
+/// Opus keeps sending comfort noise while push-to-talk is held over silence,
+/// which must not flash the talking indicator (#113). The packets' size
+/// depends on the bitrate, so two are tried.
+#[tokio::test(flavor = "multi_thread")]
+async fn comfort_noise_is_not_talking() {
+    for bitrate in [24_000, 64_000] {
+        let changes = talking_over_silence(bitrate).await;
+        let spurts = changes.iter().filter(|talking| **talking).count();
+        assert!(spurts <= 1, "{bitrate} bps: {changes:?}");
+    }
+}
+
+/// Speech still shows as talking as soon as it is heard.
+#[tokio::test(flavor = "multi_thread")]
+async fn speech_starts_talking_at_once() {
+    let net = TestNet::start().await;
+    let alice = net.client().name("alice").tone(440.0).start().await;
+    let mut bob = net.client().name("bob").start().await;
+    see_each_other(&[&alice, &bob]);
+    alice.move_to(Vec3::new(0.0, 64.0, 0.0));
+    bob.move_to(Vec3::new(5.0, 64.0, 0.0));
+    bob.wait_for_peer(alice.uuid(), PeerState::Direct)
+        .await
+        .unwrap();
+
+    let uuid = alice.uuid();
+    let start = std::time::Instant::now();
+    alice.talk(true);
+    bob.wait_for(
+        "alice talking",
+        |e| matches!(e, Event::Talking { uuid: u, talking: true } if *u == uuid),
+    )
+    .await
+    .unwrap();
+    // A frame, the network and the 40 ms playout delay, with room for a
+    // slow test machine.
+    assert!(
+        start.elapsed() < Duration::from_millis(300),
+        "{:?}",
+        start.elapsed()
+    );
+}
