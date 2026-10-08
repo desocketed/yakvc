@@ -20,16 +20,12 @@ public record ClientConfig(String toml) {
 	/** Reads the config, writing the commented default first if there is none. */
 	public static ClientConfig load(Path configDir) throws IOException {
 		Path path = configDir.resolve(FILE_NAME);
-		if (!Files.exists(path)) {
-			Files.createDirectories(configDir);
-			Files.writeString(path, DEFAULT);
-		}
+		if (!Files.exists(path)) AtomicFile.write(path, DEFAULT);
 		return new ClientConfig(Files.readString(path));
 	}
 
 	public void save(Path configDir) throws IOException {
-		Files.createDirectories(configDir);
-		Files.writeString(configDir.resolve(FILE_NAME), toml);
+		AtomicFile.write(configDir.resolve(FILE_NAME), toml);
 	}
 
 	public boolean respectChatRestrictions() {

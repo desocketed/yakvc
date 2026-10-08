@@ -79,7 +79,6 @@ public final class PlayerVolumes {
 	}
 
 	public void save() throws IOException {
-		Files.createDirectories(file.getParent());
-		Files.writeString(file, GSON.toJson(settings));
+		AtomicFile.write(file, GSON.toJson(settings));
 	}
 }

@@ -35,6 +35,37 @@ class EngineEventTest {
 				new EngineEvent.Error("no mic")), EngineEvent.decode(buf, buf.length));
 	}
 
+	@Test
+	void skipsUnknownStateCodes() {
+		ByteArrayOutputStream out = new ByteArrayOutputStream();
+		record(out, 2, new byte[] {(byte) 200}, le(8).putLong(0).array(), new byte[] {0});
+		record(out, 3, UUID_BYTES, new byte[] {-1, 0});
+		record(out, 4, UUID_BYTES, new byte[] {1});
+		byte[] buf = out.toByteArray();
+
+		assertEquals(List.of(new EngineEvent.Talking(ID, true)), EngineEvent.decode(buf, buf.length));
+	}
+
+	@Test
+	void skipsShortPayloads() {
+		ByteArrayOutputStream out = new ByteArrayOutputStream();
+		record(out, 4, new byte[] {1, 2, 3});
+		record(out, 5, le(4).putFloat(-3f).array());
+		byte[] buf = out.toByteArray();
+
+		assertEquals(List.of(new EngineEvent.MicLevel(-3f)), EngineEvent.decode(buf, buf.length));
+	}
+
+	@Test
+	void keepsEventsBeforeATruncatedRecord() {
+		ByteArrayOutputStream out = new ByteArrayOutputStream();
+		record(out, 5, le(4).putFloat(-3f).array());
+		record(out, 4, UUID_BYTES, new byte[] {1});
+		byte[] buf = out.toByteArray();
+
+		assertEquals(List.of(new EngineEvent.MicLevel(-3f)), EngineEvent.decode(buf, buf.length - 1));
+	}
+
 	private static ByteBuffer le(int size) {
 		return ByteBuffer.allocate(size).order(ByteOrder.LITTLE_ENDIAN);
 	}

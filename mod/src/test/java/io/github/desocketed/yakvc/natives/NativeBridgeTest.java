@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.lang.foreign.MemorySegment;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -100,6 +101,27 @@ class NativeBridgeTest {
 			YakVcException e = assertThrows(YakVcException.class, () -> bridge.setGameVolume(engine, 2f));
 			assertEquals(-1, e.code());
 			assertTrue(e.getMessage().contains("outside 0..1"), e.getMessage());
+		} finally {
+			bridge.destroy(engine);
+		}
+	}
+
+	@Test
+	void pushWorldRejectsMismatchedLengths(@TempDir Path configDir) throws Exception {
+		NativeBridge bridge = new NativeBridge(NativeLoader.load(configDir));
+		MemorySegment engine = bridge.create(configDir.toString(), DEV_CONFIG);
+		try {
+			// Only over-long arrays, so native code can't read past one even without the check.
+			double[] listener = {0, 64, 0, 90, 0};
+			byte[] one = NativeBridge.uuidBytes(List.of(UUID.randomUUID()));
+			double[] xyz = {3, 64, 0};
+			assertThrows(IllegalArgumentException.class,
+					() -> bridge.pushWorld(engine, new double[] {0, 64, 0, 90, 0, 0}, one, xyz));
+			assertThrows(IllegalArgumentException.class,
+					() -> bridge.pushWorld(engine, listener, Arrays.copyOf(one, 17), xyz));
+			assertThrows(IllegalArgumentException.class,
+					() -> bridge.pushWorld(engine, listener, one, new double[] {3, 64, 0, 4, 64, 0}));
+			bridge.pushWorld(engine, listener, one, xyz);
 		} finally {
 			bridge.destroy(engine);
 		}
