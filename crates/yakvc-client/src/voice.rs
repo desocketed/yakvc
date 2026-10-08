@@ -91,7 +91,7 @@ struct Shared {
     state: Mutex<VoiceState>,
     /// Peers with an open voice link.
     peers: Mutex<HashMap<Uuid, VoicePeer>>,
-    to_audio: Mutex<std_mpsc::Sender<ToAudio>>,
+    to_audio: Mutex<std_mpsc::SyncSender<Frame>>,
     /// Bumped whenever what we want to hear may have changed, so each peer
     /// task re-sends `ReceiveState` if needed.
     receive_policy: watch::Sender<()>,
@@ -110,21 +110,24 @@ struct VoicePeer {
     group: Option<GroupAnnounce>,
 }
 
-/// Messages from the network tasks and the engine to the audio thread.
-enum ToAudio {
-    Frame {
-        from: Uuid,
-        header: VoiceHeader,
-        payload: Bytes,
-        arrived: Instant,
-    },
-    PeerGone(Uuid),
+/// A received frame, on its way from a peer task to the audio thread.
+struct Frame {
+    from: Uuid,
+    header: VoiceHeader,
+    payload: Bytes,
+    arrived: Instant,
 }
+
+/// Frames waiting for the audio thread: 32 talkers for the longest playout
+/// delay (200 ms), with room to spare. Frames that waited longer would be
+/// too late to play, so while the audio thread is stalled (say, opening a
+/// slow device) the rest are dropped.
+const AUDIO_QUEUE: usize = 512;
 
 impl Voice {
     /// Starts the audio thread.
     pub(crate) fn start(config: &Config, io: AudioIo, events: EventSender) -> Voice {
-        let (to_audio, from_net) = std_mpsc::channel();
+        let (to_audio, from_net) = std_mpsc::sync_channel(AUDIO_QUEUE);
         let shared = Arc::new(Shared {
             state: Mutex::new(VoiceState::new(
                 config.audio.clone(),
@@ -303,9 +306,10 @@ impl Drop for Voice {
 }
 
 impl Shared {
-    fn send_to_audio(&self, msg: ToAudio) {
-        // Fails only once the audio thread has stopped.
-        let _ = self.to_audio.lock().unwrap().send(msg);
+    fn send_to_audio(&self, frame: Frame) {
+        // Fails when the queue is full (see `AUDIO_QUEUE`) or the audio
+        // thread has stopped; a lost frame is concealed like any other.
+        let _ = self.to_audio.lock().unwrap().try_send(frame);
     }
 
     /// Works out again which peers are in our group, after an announcement,
@@ -435,8 +439,8 @@ async fn serve_peer(shared: Arc<Shared>, link: PeerLink) {
             .is_some_and(|p| p.peer.link_id() == link_id);
         current && peers.remove(&uuid).is_some()
     };
+    // The audio thread notices the peer is gone by itself.
     if removed {
-        shared.send_to_audio(ToAudio::PeerGone(uuid));
         shared.refresh_group_mates();
     }
 }
@@ -467,7 +471,7 @@ fn deliver(shared: &Shared, from: Uuid, datagram: Bytes) {
     let Some((header, _)) = VoiceHeader::parse(&datagram) else {
         return;
     };
-    shared.send_to_audio(ToAudio::Frame {
+    shared.send_to_audio(Frame {
         from,
         header,
         payload: datagram.slice(VoiceHeader::LEN..),
@@ -502,7 +506,7 @@ fn deliver_impaired(
 /// so the loop just polls them.
 struct AudioLoop {
     shared: Arc<Shared>,
-    from_net: std_mpsc::Receiver<ToAudio>,
+    from_net: std_mpsc::Receiver<Frame>,
     stop: Arc<AtomicBool>,
     source: Device<Box<dyn FrameSource>>,
     sink: Device<Box<dyn FrameSink>>,
@@ -532,7 +536,7 @@ struct Remote {
 impl AudioLoop {
     fn new(
         shared: Arc<Shared>,
-        from_net: std_mpsc::Receiver<ToAudio>,
+        from_net: std_mpsc::Receiver<Frame>,
         io: AudioIo,
         stop: Arc<AtomicBool>,
     ) -> AudioLoop {
@@ -580,9 +584,10 @@ impl AudioLoop {
             {
                 self.capture(&mut frame);
             }
-            while let Ok(msg) = self.from_net.try_recv() {
-                self.handle(msg);
+            while let Ok(frame) = self.from_net.try_recv() {
+                self.receive(frame);
             }
+            self.drop_gone_remotes();
             while self.sink.io.as_ref().is_some_and(|sink| sink.wants_frame()) {
                 self.play();
             }
@@ -742,39 +747,43 @@ impl AudioLoop {
         }
     }
 
-    fn handle(&mut self, msg: ToAudio) {
-        match msg {
-            ToAudio::Frame {
-                from,
-                header,
-                payload,
-                arrived,
-            } => {
-                // With nothing to play to, buffering would only grow.
-                if self.sink.io.is_none() {
-                    return;
-                }
-                let remote = self.remotes.entry(from).or_insert_with(|| Remote {
-                    stream: ReceiveStream::new(JitterConfig::default()),
-                    group: false,
-                    talking: false,
-                    silent_frames: TALKING_HANGOVER_FRAMES,
-                });
-                let packet = Packet {
-                    seq: header.seq,
-                    ts: header.ts,
-                    end_of_talk: header.end_of_talk,
-                    payload: &payload,
-                };
-                remote.group = header.group;
-                remote.stream.push(packet, arrived);
+    fn receive(&mut self, frame: Frame) {
+        // With nothing to play to, buffering would only grow.
+        if self.sink.io.is_none() {
+            return;
+        }
+        let remote = self.remotes.entry(frame.from).or_insert_with(|| Remote {
+            stream: ReceiveStream::new(JitterConfig::default()),
+            group: false,
+            talking: false,
+            silent_frames: TALKING_HANGOVER_FRAMES,
+        });
+        let packet = Packet {
+            seq: frame.header.seq,
+            ts: frame.header.ts,
+            end_of_talk: frame.header.end_of_talk,
+            payload: &frame.payload,
+        };
+        remote.group = frame.header.group;
+        remote.stream.push(packet, frame.arrived);
+    }
+
+    /// Forgets remote speakers whose voice link has closed. Checked here
+    /// rather than sent as a message, so a full frame queue can't lose it.
+    fn drop_gone_remotes(&mut self) {
+        let gone: Vec<Uuid> = {
+            let peers = self.shared.peers.lock().unwrap();
+            self.remotes
+                .keys()
+                .filter(|uuid| !peers.contains_key(uuid))
+                .copied()
+                .collect()
+        };
+        for uuid in gone {
+            if self.remotes.remove(&uuid).is_some_and(|r| r.talking) {
+                self.talking(uuid, false);
             }
-            ToAudio::PeerGone(uuid) => {
-                if self.remotes.remove(&uuid).is_some_and(|r| r.talking) {
-                    self.talking(uuid, false);
-                }
-                self.shared.stats.lock().unwrap().remove(&uuid);
-            }
+            self.shared.stats.lock().unwrap().remove(&uuid);
         }
     }
 
