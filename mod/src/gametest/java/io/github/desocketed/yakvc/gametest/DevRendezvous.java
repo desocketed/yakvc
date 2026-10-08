@@ -72,6 +72,11 @@ public class DevRendezvous implements PreLaunchEntrypoint {
 				tone_hz = 440.0
 				null_output = true
 				""".formatted(issuerId, endpointId, port));
+		// A fixed client key, so the endpoint id in the debug overlay's screenshot is the same on every run. The engine
+		// otherwise makes a random one wherever the run directory is new.
+		byte[] nodeKey = new byte[32];
+		for (int i = 0; i < nodeKey.length; i++) nodeKey[i] = (byte) (i + 1);
+		Files.write(clientConfig.resolveSibling("node.key"), nodeKey);
 	}
 
 	private static void run(String... command) throws IOException {
