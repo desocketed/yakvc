@@ -231,6 +231,7 @@ fn code(code: CloseCode) -> u64 {
 
 fn verify(server: &Server, ticket: &SignedTicket) -> Ticket {
     TicketVerifier::new([server.issuer_id()])
+        .accept_dev(true)
         .verify(ticket, SystemTime::now())
         .unwrap()
 }
@@ -1016,6 +1017,46 @@ async fn metrics_endpoint_serves_prometheus_text() {
     assert!(response.starts_with("HTTP/1.1 200 OK"));
     assert!(response.contains("\nyakvc_sessions 1\n"));
     assert!(response.contains("\nyakvc_auth_ok_total 1\n"));
+}
+
+#[tokio::test]
+async fn sessions_end_when_their_ticket_expires() {
+    let server = builder()
+        .insecure_dev_auth()
+        .ticket_lifetime(Duration::from_secs(1))
+        .spawn()
+        .await
+        .unwrap();
+    let mut alice = Client::connect(&server, "alice").await;
+    alice.register().await;
+    assert_eq!(alice.close_code().await, code(CloseCode::AuthFailed));
+    wait_for("the session to end", || server.stats().sessions == 0).await;
+}
+
+#[tokio::test]
+async fn a_renewal_extends_the_session() {
+    let server = builder()
+        .insecure_dev_auth()
+        .ticket_lifetime(Duration::from_secs(2))
+        .spawn()
+        .await
+        .unwrap();
+    let mut alice = Client::connect(&server, "alice").await;
+    let first = verify(&server, &alice.register().await);
+    // Renew once the first ticket's expiry has moved on a second.
+    while SystemTime::now() < SystemTime::UNIX_EPOCH + Duration::from_secs(first.issued_at + 1) {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    alice.send(ClientMsg::Renew).await;
+    let renewed = verify(&server, &alice.expect_registered().await);
+    assert!(renewed.expires_at > first.expires_at);
+    // Still registered after the first ticket expired.
+    let past_first = SystemTime::UNIX_EPOCH + Duration::from_secs(first.expires_at);
+    while SystemTime::now() < past_first + Duration::from_millis(200) {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(server.stats().sessions, 1);
+    assert_eq!(alice.close_code().await, code(CloseCode::AuthFailed));
 }
 
 #[tokio::test]
