@@ -1,6 +1,7 @@
 package io.github.desocketed.yakvc;
 
 import com.google.gson.JsonElement;
+import com.mojang.authlib.GameProfile;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import io.github.desocketed.yakvc.config.ClientConfig;
@@ -70,7 +71,10 @@ public final class GameStateFeeder {
 
 	private record PendingJoin(int id, CompletableFuture<Boolean> ok) {}
 
+	private record Identity(UUID uuid, String name) {}
+
 	// What the engine was last told, so unchanged values aren't sent again.
+	private @Nullable Identity identity;
 	private Set<UUID> tabList = Set.of();
 	private List<UUID> tracked = List.of();
 	private boolean worldEmpty = true;
@@ -116,19 +120,7 @@ public final class GameStateFeeder {
 		this.volumes = volumes;
 	}
 
-	/** The local Minecraft identity. Starts rendezvous authentication. */
-	public void setIdentity(UUID uuid, String name) {
-		if (closed) return;
-		try {
-			bridge.setIdentity(engine, uuid, name);
-		} catch (YakVcException e) {
-			fail(e);
-		}
-	}
-
 	public void join(ClientPacketListener connection, Minecraft minecraft) {
-		// On an offline-mode dev server the game profile differs from the launcher's account; the tab list uses it.
-		setIdentity(connection.getLocalGameProfile().id(), connection.getLocalGameProfile().name());
 		session = new VoiceSession(connection, minecraft, config);
 	}
 
@@ -161,6 +153,7 @@ public final class GameStateFeeder {
 			minecraft.gui.setScreen(new VoiceMenuScreen(null, this));
 		}
 		VoiceSession session = this.session;
+		step(() -> feedIdentity(minecraft, session));
 		if (session != null) session.tick();
 		else talking.clear();
 		// Groups last one server session.
@@ -322,6 +315,24 @@ public final class GameStateFeeder {
 		}
 		if (!now.equals(blocked)) YakVcClient.LOGGER.info("Blocked players muted: {}", now.size());
 		blocked = now;
+	}
+
+	/**
+	 * Sets who we are, which starts rendezvous authentication, from the title screen on. On an offline-mode server the
+	 * connection's profile differs from the launcher's account and the tab list uses it; back outside a server the
+	 * account is restored, so the next online join doesn't have to re-authenticate first.
+	 */
+	private void feedIdentity(Minecraft minecraft, @Nullable VoiceSession session) {
+		Identity wanted;
+		if (session != null) {
+			GameProfile profile = session.connection.getLocalGameProfile();
+			wanted = new Identity(profile.id(), profile.name());
+		} else {
+			wanted = new Identity(minecraft.getUser().getProfileId(), minecraft.getUser().getName());
+		}
+		if (wanted.equals(identity)) return;
+		identity = wanted;
+		bridge.setIdentity(engine, wanted.uuid(), wanted.name());
 	}
 
 	private void feedTabList(Set<UUID> players) {
