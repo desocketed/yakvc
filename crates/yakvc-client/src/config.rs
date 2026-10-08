@@ -143,14 +143,18 @@ impl Config {
 }
 
 /// The server used when `client.toml` names none, and its issuer. For now a
-/// test server without a relay; the production server replaces it (#12).
+/// test server with a plain-HTTP relay; the production server replaces it (#12).
 fn built_in_rendezvous() -> (RendezvousConfig, IssuerId) {
     let rendezvous = RendezvousConfig {
         endpoint_id: "2d829764b4378d7b20fe2f38ebe4992f0ff3d840f177d320494f78bff94bbbe4"
             .parse()
             .expect("valid endpoint id"),
         addrs: vec!["172.104.24.53:7843".parse().expect("valid address")],
-        relay: None,
+        relay: Some(
+            "http://172.104.24.53:3340"
+                .parse()
+                .expect("valid relay URL"),
+        ),
     };
     let issuer = "7cd6e747b8e51d9ea0427d327151fb39236cfa52a4f73c968fdabb17d5ac7a1f"
         .parse()
