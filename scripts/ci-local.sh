@@ -26,8 +26,9 @@ cargo xtask header --check
 step "rust: test"
 cargo test --workspace --all-features
 step "rust: server has no audio dependencies"
-if cargo tree -p yakvc-server -e normal --prefix none |
-	grep -E '^(yakvc-audio|yakvc-client|cpal|opus|audiopus|alsa)'; then
+# cargo tree on its own line: inside the `if` its failure would pass.
+deps=$(cargo tree -p yakvc-server -e normal --prefix none)
+if grep -E '^(yakvc-audio|yakvc-client|cpal|opus|audiopus|alsa)' <<<"$deps"; then
 	echo "yakvc-server must not depend on audio crates" >&2
 	exit 1
 fi
