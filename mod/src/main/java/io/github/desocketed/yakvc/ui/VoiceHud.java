@@ -15,9 +15,9 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * Top-left corner, while in a world: the own microphone (green while sending, red when muted, grey when voice is off
- * or the microphone isn't working), a red headphones icon when deafened, and the rendezvous connection as signal bars (green when registered). A short
- * line of text follows only when something is not working. Below, one line per talking player, for players outside
- * the view; players in view also get {@link TalkingIndicator} over their heads.
+ * or the microphone isn't working), a red headphones icon when deafened, and the rendezvous connection as signal bars
+ * (green when registered). A short line of text follows only when something is not working. Below, one line per
+ * talking player, for players outside the view; players in view also get {@link TalkingIndicator} over their heads.
  */
 public final class VoiceHud implements HudElement {
 	private static final int WHITE = 0xFFFFFFFF;
