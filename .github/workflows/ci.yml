@@ -153,9 +153,9 @@ jobs:
         run: |
           jar=$(ls dist/yakvc-*.jar)
           unzip -l "$jar" | tee contents
-          entries="natives/natives.sha256 natives/linux-x86_64/libyakvc_ffi.so
-            natives/linux-aarch64/libyakvc_ffi.so natives/windows-x86_64/yakvc_ffi.dll
-            natives/macos-universal/libyakvc_ffi.dylib THIRD_PARTY_LICENSES"
+          entries="natives/natives.sha256 natives/linux-x86_64/libyakvc_ffi.so.xz
+            natives/linux-aarch64/libyakvc_ffi.so.xz natives/windows-x86_64/yakvc_ffi.dll.xz
+            natives/macos-universal/libyakvc_ffi.dylib.xz META-INF/jars/xz-1.10.jar THIRD_PARTY_LICENSES"
           for entry in $entries; do
             grep -q " $entry\$" contents || { echo "$jar has no $entry" >&2; exit 1; }
           done
