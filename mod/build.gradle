@@ -1,3 +1,9 @@
+// For CompressNatives below.
+buildscript {
+	repositories { mavenCentral() }
+	dependencies { classpath "org.tukaani:xz:${xz_version}" }
+}
+
 plugins {
 	id 'net.fabricmc.fabric-loom' version "${loom_version}"
 }
@@ -19,6 +25,9 @@ dependencies {
 	implementation "net.fabricmc:fabric-loader:${project.loader_version}"
 	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 	// Optional: only the API is compiled against; the mod loads without Mod Menu.
+	// Unpacks the xz-compressed natives (CompressNatives below). 0BSD licence, bundled in the jar.
+	implementation "org.tukaani:xz:${project.xz_version}"
+	include "org.tukaani:xz:${project.xz_version}"
 	compileOnly "com.terraformersmc:modmenu:${project.modmenu_version}"
 	// The client gametest clicks through the real Mod Menu; dev runs only, never in the jar or its dependencies.
 	localRuntime "com.terraformersmc:modmenu:${project.modmenu_version}"
@@ -54,6 +63,49 @@ def cargoNatives = tasks.register('cargoNatives', Exec) {
 	outputs.upToDateWhen { false }
 }
 
+/**
+ * Copies staged natives with each library xz-compressed (`<platform>/<library>.xz`), which makes them about 30 %
+ * smaller than the jar's own deflate. `natives.sha256` is copied as is: it holds the hashes of the uncompressed
+ * libraries, which NativeLoader checks after unpacking.
+ */
+abstract class CompressNatives extends DefaultTask {
+	@InputFiles
+	abstract ConfigurableFileCollection getNatives()
+
+	@OutputDirectory
+	abstract DirectoryProperty getOutput()
+
+	@TaskAction
+	void compress() {
+		File out = output.get().asFile
+		out.deleteDir()
+		natives.asFileTree.visit { FileVisitDetails entry ->
+			if (entry.directory) return
+			boolean manifest = entry.name == 'natives.sha256'
+			File target = new File(out, entry.relativePath.pathString + (manifest ? '' : '.xz'))
+			target.parentFile.mkdirs()
+			if (manifest) {
+				entry.copyTo(target)
+				return
+			}
+			def options = new org.tukaani.xz.LZMA2Options(9)
+			// Larger than the biggest library (the macOS universal one); a bigger window gains nothing and costs
+			// memory when unpacking.
+			options.dictSize = 32 << 20
+			target.withOutputStream { stream ->
+				def xz = new org.tukaani.xz.XZOutputStream(stream, options)
+				entry.file.withInputStream { it.transferTo(xz) }
+				xz.finish()
+			}
+		}
+	}
+}
+
+def compressNatives = tasks.register('compressNatives', CompressNatives) {
+	natives.from(prebuiltNatives.isPresent() ? prebuiltNatives.map { file(it) } : cargoNatives)
+	output = layout.buildDirectory.dir('natives-xz')
+}
+
 processResources {
 	def version = project.version
 	inputs.property 'version', version
@@ -61,11 +113,7 @@ processResources {
 		expand 'version': version
 	}
 
-	if (prebuiltNatives.isPresent()) {
-		from(prebuiltNatives.map { file(it) }) { into 'natives' }
-	} else {
-		from(cargoNatives) { into 'natives' }
-	}
+	from(compressNatives) { into 'natives' }
 }
 
 fabricApi {
@@ -90,6 +138,7 @@ test {
 	useJUnitPlatform()
 	jvmArgs '--enable-native-access=ALL-UNNAMED'
 }
+
 
 // `cargo xtask dist` passes the notices of the Rust dependencies linked into the natives.
 def thirdPartyLicenses = providers.gradleProperty('yakvc.thirdPartyLicenses')
