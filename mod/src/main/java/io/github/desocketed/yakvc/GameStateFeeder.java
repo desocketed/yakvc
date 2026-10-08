@@ -1,9 +1,9 @@
 package io.github.desocketed.yakvc;
 
 import com.google.gson.JsonElement;
-import com.mojang.authlib.GameProfile;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.mojang.authlib.GameProfile;
 import io.github.desocketed.yakvc.config.ClientConfig;
 import io.github.desocketed.yakvc.config.PlayerVolumes;
 import io.github.desocketed.yakvc.input.VoiceKeys;
