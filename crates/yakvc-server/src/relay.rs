@@ -19,7 +19,7 @@ use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use yakvc_shared::{EndpointId, RelayUrl};
 
-use crate::limits::RateLimiter;
+use crate::limits::{RateLimiter, TokenBucket};
 use crate::server::{RelayOptions, RelayTls, SpawnError};
 use crate::sessions::Sessions;
 
@@ -29,6 +29,15 @@ use crate::sessions::Sessions;
 const GRACE_ADMISSIONS: u32 = 3;
 const GRACE_PERIOD: Duration = Duration::from_secs(600);
 
+/// Grace admissions for the whole relay: bursts of up to [`GRACE_BURST`]
+/// (enough for everyone reconnecting after a restart), refilling at two a
+/// second. Keys cost nothing, so the per-EndpointId limit alone would let a
+/// non-Yak app relay for free by switching keys; this bounds it to about
+/// 560 connections at once (the burst plus 30 s of refill), each held to
+/// the per-client bandwidth limit.
+const GRACE_BURST: u32 = 500;
+const GRACE_REFILL: Duration = Duration::from_secs(250);
+
 /// Decides who may use the relay.
 #[derive(Debug)]
 pub(crate) struct RelayGate {
@@ -37,6 +46,7 @@ pub(crate) struct RelayGate {
     rendezvous: EndpointId,
     grace: Duration,
     grace_limiter: Mutex<RateLimiter<EndpointId>>,
+    grace_admissions: Mutex<TokenBucket>,
     /// Set once the relay is running; used to disconnect clients.
     service: OnceLock<RelayService>,
 }
@@ -48,6 +58,11 @@ impl RelayGate {
             rendezvous,
             grace,
             grace_limiter: Mutex::new(RateLimiter::new(GRACE_ADMISSIONS, GRACE_PERIOD)),
+            grace_admissions: Mutex::new(TokenBucket::new(
+                GRACE_BURST,
+                GRACE_REFILL,
+                Instant::now(),
+            )),
             service: OnceLock::new(),
         }
     }
@@ -66,7 +81,9 @@ impl RelayGate {
     fn admit(&self, id: EndpointId, now: Instant) -> Admission {
         if id == self.rendezvous || self.sessions.contains(id) {
             Admission::Session
-        } else if self.grace_limiter.lock().unwrap().allow(id, now) {
+        } else if self.grace_limiter.lock().unwrap().allow(id, now)
+            && self.grace_admissions.lock().unwrap().take(now)
+        {
             Admission::Grace
         } else {
             Admission::Refused
@@ -246,6 +263,31 @@ mod tests {
         assert_eq!(gate.admit(id(2), now), Admission::Grace);
         // One admission comes back after a third of the period.
         assert_eq!(gate.admit(id(1), now + GRACE_PERIOD / 3), Admission::Grace);
+    }
+
+    #[test]
+    fn grace_admissions_are_rate_limited_for_the_whole_relay() {
+        let gate = RelayGate::new(Arc::default(), id(0), Duration::from_secs(30));
+        let now = Instant::now();
+        // Fresh keys get around the per-EndpointId limit.
+        for _ in 0..GRACE_BURST {
+            let fresh = SecretKey::generate().public();
+            assert_eq!(gate.admit(fresh, now), Admission::Grace);
+        }
+        assert_eq!(
+            gate.admit(SecretKey::generate().public(), now),
+            Admission::Refused
+        );
+        // Two admissions a second come back.
+        let later = now + Duration::from_secs(1);
+        for _ in 0..2 {
+            let fresh = SecretKey::generate().public();
+            assert_eq!(gate.admit(fresh, later), Admission::Grace);
+        }
+        assert_eq!(
+            gate.admit(SecretKey::generate().public(), later),
+            Admission::Refused
+        );
     }
 
     #[test]
