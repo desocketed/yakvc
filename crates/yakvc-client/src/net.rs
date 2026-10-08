@@ -210,6 +210,9 @@ struct PeerEntry {
     name: String,
     /// The peer's latest ticket is verified.
     verified: bool,
+    /// The latest ticket the linked peer showed us, checked again when our
+    /// trust settings change.
+    ticket: Option<SignedTicket>,
     /// Where to dial. Set while the rendezvous lists the peer.
     addr: Option<EndpointAddr>,
     link: Option<Link>,
@@ -350,20 +353,22 @@ impl Net {
         });
     }
 
-    /// Replaces the trusted issuers and the `verified_only` setting. Turning
-    /// `verified_only` on closes the links to unverified peers.
+    /// Replaces the trusted issuers and the `verified_only` setting, and
+    /// checks every open link again: a ticket from an issuer no longer
+    /// trusted, or an unverified one under `verified_only`, closes it.
     pub(crate) fn set_trust(&self, verifier: TicketVerifier, verified_only: bool) {
         {
             let mut trust = self.inner.trust.lock().unwrap();
             trust.verifier = verifier;
             trust.verified_only = verified_only;
         }
-        if verified_only {
-            let peers = self.inner.peers.lock().unwrap();
-            for entry in peers.values().filter(|entry| !entry.verified) {
-                if let Some(conn) = entry.open_conn() {
-                    close(conn, CloseCode::BadTicket);
-                }
+        let peers = self.inner.peers.lock().unwrap();
+        for (&remote, entry) in peers.iter() {
+            let (Some(conn), Some(ticket)) = (entry.open_conn(), &entry.ticket) else {
+                continue;
+            };
+            if let Err(code) = self.inner.verify_peer(ticket, remote) {
+                close(conn, code);
             }
         }
     }
@@ -734,6 +739,7 @@ impl PeerEntry {
             uuid,
             name,
             verified: false,
+            ticket: None,
             addr: None,
             link: None,
             status: Arc::new(PeerStatus {
