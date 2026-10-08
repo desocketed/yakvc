@@ -110,9 +110,6 @@ public final class YakVcClient implements ClientModInitializer {
 		GameStateFeeder feeder = new GameStateFeeder(bridge, engine, config, VoiceKeys.register(), joiner,
 				PlayerVolumes.load(configDir));
 		YakVcClient.feeder = feeder;
-		// Authenticate with the rendezvous at the title screen, before any server is joined.
-		ClientLifecycleEvents.CLIENT_STARTED.register(minecraft ->
-				feeder.setIdentity(minecraft.getUser().getProfileId(), minecraft.getUser().getName()));
 		ClientLifecycleEvents.CLIENT_STOPPING.register(minecraft -> feeder.close());
 		ClientPlayConnectionEvents.JOIN.register((connection, sender, minecraft) -> feeder.join(connection, minecraft));
 		ClientPlayConnectionEvents.DISCONNECT.register((connection, minecraft) -> feeder.leave());
