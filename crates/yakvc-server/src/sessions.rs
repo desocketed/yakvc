@@ -19,7 +19,11 @@ pub(crate) struct Sessions(Mutex<Inner>);
 struct Inner {
     matcher: Matcher,
     clients: HashMap<EndpointId, Client>,
+    next_seq: u64,
 }
+
+/// Most sessions one UUID may hold at once; a new one closes the oldest.
+const MAX_SESSIONS_PER_UUID: usize = 2;
 
 #[derive(Debug)]
 struct Client {
@@ -29,14 +33,20 @@ struct Client {
     uuid: Uuid,
     /// Whether the current ticket is verified.
     verified: bool,
+    /// Registration order, to find the oldest session for a UUID.
+    seq: u64,
+    /// Closed by another session and out of the matcher, waiting for its
+    /// connection's task to unregister it.
+    ended: bool,
 }
 
 impl Sessions {
     /// Starts a session, unless the ticket is unverified and a verified
     /// session holds the same UUID (returns false). A verified session
     /// closes every unverified session for its UUID (see
-    /// [`Inner::claim`]). An older session for the same EndpointId is
-    /// closed, since its connection is most likely already dead.
+    /// [`Inner::claim`]), and the oldest sessions for it are closed beyond
+    /// [`MAX_SESSIONS_PER_UUID`]. An older session for the same EndpointId
+    /// is closed, since its connection is most likely already dead.
     pub fn register(
         &self,
         conn: &Connection,
@@ -51,11 +61,15 @@ impl Sessions {
         if !inner.claim(id, uuid, verified) {
             return false;
         }
+        inner.make_room(id, uuid);
+        inner.next_seq += 1;
         let client = Client {
             conn: conn.clone(),
             outbox,
             uuid,
             verified,
+            seq: inner.next_seq,
+            ended: false,
         };
         if let Some(old) = inner.clients.insert(id, client) {
             close(&old.conn, CloseCode::Normal, "replaced by a newer session");
@@ -156,29 +170,58 @@ impl Inner {
     /// claim ends every unverified session for it: their connections close
     /// with `Superseded` and their matches get `PeerGone` straight away.
     fn claim(&mut self, id: EndpointId, uuid: Uuid, verified: bool) -> bool {
-        let mut others = self
-            .clients
-            .iter()
-            .filter(|&(&other, client)| other != id && client.uuid == uuid);
+        let mut others = self.others_for(id, uuid);
         if !verified {
             return !others.any(|(_, client)| client.verified);
         }
         let superseded: Vec<EndpointId> = others
             .filter(|(_, client)| !client.verified)
-            .map(|(&other, _)| other)
+            .map(|(other, _)| other)
             .collect();
         for other in superseded {
-            // The entry stays until its connection's task unregisters it, so
-            // the relay gate hears about the session ending as usual.
-            close(
-                &self.clients[&other].conn,
-                CloseCode::Superseded,
-                "a verified player holds this identity",
-            );
-            let notices = self.matcher.unregister(other);
-            self.deliver(notices);
+            self.end(other, "a verified player holds this identity");
         }
         true
+    }
+
+    /// Ends the oldest other sessions for `uuid` until session `id` fits
+    /// within [`MAX_SESSIONS_PER_UUID`]. Each session costs matching work,
+    /// so one account must not hold many; two allow for a second game
+    /// instance.
+    fn make_room(&mut self, id: EndpointId, uuid: Uuid) {
+        let mut others: Vec<(u64, EndpointId)> = self
+            .others_for(id, uuid)
+            .map(|(other, client)| (client.seq, other))
+            .collect();
+        others.sort();
+        let excess = (others.len() + 1).saturating_sub(MAX_SESSIONS_PER_UUID);
+        for &(_, oldest) in &others[..excess] {
+            self.end(oldest, "a newer session took over this identity");
+        }
+    }
+
+    /// The live sessions for `uuid` other than `id`.
+    fn others_for(
+        &self,
+        id: EndpointId,
+        uuid: Uuid,
+    ) -> impl Iterator<Item = (EndpointId, &Client)> {
+        self.clients
+            .iter()
+            .filter(move |&(&other, client)| other != id && client.uuid == uuid && !client.ended)
+            .map(|(&other, client)| (other, client))
+    }
+
+    /// Closes session `id` with `Superseded`; its matches get `PeerGone`
+    /// straight away. The entry stays until its connection's task
+    /// unregisters it, so the relay gate hears about the session ending as
+    /// usual.
+    fn end(&mut self, id: EndpointId, reason: &str) {
+        let client = self.clients.get_mut(&id).expect("ending a known session");
+        client.ended = true;
+        close(&client.conn, CloseCode::Superseded, reason);
+        let notices = self.matcher.unregister(id);
+        self.deliver(notices);
     }
 
     fn deliver(&self, notices: Vec<Notice>) {
