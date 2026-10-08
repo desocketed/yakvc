@@ -63,8 +63,6 @@ pub const YAKVC_ERR_PANIC: i32 = -6;
 /// An earlier call, or one of the engine's own threads, panicked; only
 /// `yakvc_destroy` is still allowed.
 pub const YAKVC_ERR_POISONED: i32 = -7;
-/// Not implemented yet. Removed before release.
-pub const YAKVC_ERR_UNIMPLEMENTED: i32 = -99;
 
 pub const YAKVC_INPUT_PUSH_TO_TALK: u32 = 1 << 0;
 pub const YAKVC_INPUT_MUTED: u32 = 1 << 1;
