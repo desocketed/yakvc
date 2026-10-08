@@ -99,8 +99,12 @@ pub(crate) struct AudioIo {
 
 struct Shared {
     state: Mutex<VoiceState>,
-    /// Peers with an open voice link.
-    peers: Mutex<HashMap<Uuid, VoicePeer>>,
+    /// Each player's open voice links, newest first. Two endpoints of equal
+    /// standing can claim one player, and voice is per player: only the
+    /// newest link is heard, sent to and believed about its group, so their
+    /// frames never mix (#109). The older ones stay in reserve in case it
+    /// closes (#114). [`current`] lists the links in use.
+    peers: Mutex<HashMap<Uuid, Vec<VoicePeer>>>,
     to_audio: Mutex<std_mpsc::SyncSender<Frame>>,
     /// Bumped whenever what we want to hear may have changed, so each peer
     /// task re-sends `ReceiveState` if needed.
@@ -120,9 +124,17 @@ struct VoicePeer {
     group: Option<GroupAnnounce>,
 }
 
+/// The link in use for each player: the newest.
+fn current(peers: &HashMap<Uuid, Vec<VoicePeer>>) -> impl Iterator<Item = &VoicePeer> {
+    peers.values().filter_map(|links| links.first())
+}
+
 /// A received frame, on its way from a peer task to the audio thread.
 struct Frame {
     from: Uuid,
+    /// The link it came over, which changes when another endpoint for the
+    /// player takes over.
+    link_id: usize,
     header: VoiceHeader,
     payload: Bytes,
     arrived: Instant,
@@ -259,8 +271,9 @@ impl Voice {
         if let (Some(own), Some(me)) = (&state.group, state.own_uuid) {
             add(own.key.id(), own.key.name(), own.locked, me);
         }
-        for (&uuid, peer) in self.shared.peers.lock().unwrap().iter() {
-            if let Some(announce) = &peer.group {
+        for p in current(&self.shared.peers.lock().unwrap()) {
+            if let Some(announce) = &p.group {
+                let uuid = p.peer.uuid();
                 add(announce.id, &announce.name, announce.locked, uuid);
             }
         }
@@ -331,18 +344,15 @@ impl Shared {
             .lock()
             .unwrap()
             .get(&uuid)
+            .and_then(|links| links.first())
             .is_some_and(|p| p.peer.link_id() == link_id)
     }
 
     /// Works out again which peers are in our group, after an announcement,
     /// a peer leaving, or a change of our own group.
     fn refresh_group_mates(&self) {
-        let announced: Vec<(Uuid, GroupAnnounce)> = self
-            .peers
-            .lock()
-            .unwrap()
-            .iter()
-            .filter_map(|(&uuid, peer)| Some((uuid, peer.group.clone()?)))
+        let announced: Vec<(Uuid, GroupAnnounce)> = current(&self.peers.lock().unwrap())
+            .filter_map(|p| Some((p.peer.uuid(), p.group.clone()?)))
             .collect();
         let mut state = self.state.lock().unwrap();
         let mates: HashSet<Uuid> = match &state.group {
@@ -390,14 +400,18 @@ async fn serve_peer(shared: Arc<Shared>, link: PeerLink) {
     let uuid = peer.uuid();
     let link_id = peer.link_id();
     let wants_audio = Arc::new(AtomicBool::new(true));
-    shared.peers.lock().unwrap().insert(
-        uuid,
-        VoicePeer {
-            peer,
-            wants_audio: wants_audio.clone(),
-            group: None,
-        },
-    );
+    let newest = VoicePeer {
+        peer,
+        wants_audio: wants_audio.clone(),
+        group: None,
+    };
+    shared
+        .peers
+        .lock()
+        .unwrap()
+        .entry(uuid)
+        .or_default()
+        .insert(0, newest);
     let reader = tokio::spawn(read_control(
         shared.clone(),
         uuid,
@@ -438,18 +452,15 @@ async fn serve_peer(shared: Arc<Shared>, link: PeerLink) {
         tokio::select! {
             datagram = datagrams.recv() => {
                 let Some(datagram) = datagram else { break };
-                // Two endpoints of equal standing can claim one player, and
-                // voice is per player: only the newest link is heard (and
-                // sent to), so their frames never mix in one jitter buffer.
                 if !shared.is_current(uuid, link_id) {
                     continue;
                 }
                 #[cfg(feature = "sim")]
                 if let Some(impairer) = &mut impairer {
-                    deliver_impaired(&shared, uuid, datagram, impairer);
+                    deliver_impaired(&shared, uuid, link_id, datagram, impairer);
                     continue;
                 }
-                deliver(&shared, uuid, datagram);
+                deliver(&shared, uuid, link_id, datagram);
             }
             changed = receive_policy.changed() => {
                 if changed.is_err() {
@@ -460,16 +471,19 @@ async fn serve_peer(shared: Arc<Shared>, link: PeerLink) {
     }
 
     reader.abort();
-    let removed = {
+    let was_current = {
         let mut peers = shared.peers.lock().unwrap();
-        // A newer link to the same player may have replaced this one.
-        let current = peers
-            .get(&uuid)
-            .is_some_and(|p| p.peer.link_id() == link_id);
-        current && peers.remove(&uuid).is_some()
+        let links = peers.entry(uuid).or_default();
+        let was_current = links.first().is_some_and(|p| p.peer.link_id() == link_id);
+        links.retain(|p| p.peer.link_id() != link_id);
+        if links.is_empty() {
+            peers.remove(&uuid);
+        }
+        was_current
     };
-    // The audio thread notices the peer is gone by itself.
-    if removed {
+    // The next newest link, if any, now speaks for the player. The audio
+    // thread notices the change, or the player being gone, by itself.
+    if was_current {
         shared.refresh_group_mates();
     }
 }
@@ -487,11 +501,11 @@ async fn read_control(
                 wants_audio.store(wants, Ordering::Relaxed);
             }
             VoiceMsg::Group(group) => {
-                // Only the current link speaks for the player.
+                // Kept for an older link too, for when it takes over, but
+                // only the current link's counts.
                 let mut peers = shared.peers.lock().unwrap();
-                if let Some(peer) = peers.get_mut(&uuid)
-                    && peer.peer.link_id() == link_id
-                {
+                let mut links = peers.get_mut(&uuid).into_iter().flatten();
+                if let Some(peer) = links.find(|p| p.peer.link_id() == link_id) {
                     peer.group = group;
                 }
                 drop(peers);
@@ -502,12 +516,13 @@ async fn read_control(
 }
 
 /// Passes a received datagram to the audio thread.
-fn deliver(shared: &Shared, from: Uuid, datagram: Bytes) {
+fn deliver(shared: &Shared, from: Uuid, link_id: usize, datagram: Bytes) {
     let Some((header, _)) = VoiceHeader::parse(&datagram) else {
         return;
     };
     shared.send_to_audio(Frame {
         from,
+        link_id,
         header,
         payload: datagram.slice(VoiceHeader::LEN..),
         arrived: Instant::now(),
@@ -519,18 +534,19 @@ fn deliver(shared: &Shared, from: Uuid, datagram: Bytes) {
 fn deliver_impaired(
     shared: &Arc<Shared>,
     from: Uuid,
+    link_id: usize,
     datagram: Bytes,
     impairer: &mut crate::sim::Impairer,
 ) {
     for delay in impairer.delays() {
         if delay.is_zero() {
-            deliver(shared, from, datagram.clone());
+            deliver(shared, from, link_id, datagram.clone());
         } else {
             let shared = shared.clone();
             let datagram = datagram.clone();
             tokio::spawn(async move {
                 tokio::time::sleep(delay).await;
-                deliver(&shared, from, datagram);
+                deliver(&shared, from, link_id, datagram);
             });
         }
     }
@@ -561,6 +577,8 @@ struct AudioLoop {
 
 /// One remote speaker's receive state.
 struct Remote {
+    /// The link `stream` is fed from.
+    link_id: usize,
     stream: ReceiveStream,
     /// Its latest frame had the `group` flag: it is speaking to our group.
     group: bool,
@@ -712,7 +730,7 @@ impl AudioLoop {
         if !transmitting {
             // Only `send` updates the relay budget, so nothing else would
             // clear it while we are quiet.
-            for p in self.shared.peers.lock().unwrap().values() {
+            for p in self.shared.peers.lock().unwrap().values().flatten() {
                 p.peer.set_relay_full(false);
             }
         }
@@ -723,13 +741,12 @@ impl AudioLoop {
             return;
         };
         let peers = self.shared.peers.lock().unwrap();
-        let candidates = peers
-            .values()
+        let candidates = current(&peers)
             .filter(|p| p.wants_audio.load(Ordering::Relaxed))
             .filter_map(|p| state.send_to(p.peer.uuid(), p.peer.is_relayed()))
             .collect();
         let plan = plan_send(candidates, state.audio.bitrate);
-        for p in peers.values().filter(|p| p.peer.is_relayed()) {
+        for p in current(&peers).filter(|p| p.peer.is_relayed()) {
             p.peer
                 .set_relay_full(plan.relay_full.contains(&p.peer.uuid()));
         }
@@ -774,7 +791,7 @@ impl AudioLoop {
                 &nearby
             };
             // A peer that just closed simply misses the frame.
-            let _ = peers[uuid].peer.send_datagram(datagram);
+            let _ = peers[uuid][0].peer.send_datagram(datagram);
         }
         self.seq = self.seq.wrapping_add(1);
         if end_of_talk {
@@ -788,11 +805,18 @@ impl AudioLoop {
             return;
         }
         let remote = self.remotes.entry(frame.from).or_insert_with(|| Remote {
+            link_id: frame.link_id,
             stream: ReceiveStream::new(JitterConfig::default()),
             group: false,
             talking: false,
             silent_frames: TALKING_HANGOVER_FRAMES,
         });
+        // Another endpoint for the player took over: its `seq` and `ts`
+        // count from its own start, so the old stream's timing is no use.
+        if remote.link_id != frame.link_id {
+            remote.link_id = frame.link_id;
+            remote.stream = ReceiveStream::new(JitterConfig::default());
+        }
         let packet = Packet {
             seq: frame.header.seq,
             ts: frame.header.ts,
