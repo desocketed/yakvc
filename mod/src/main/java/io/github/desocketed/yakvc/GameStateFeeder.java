@@ -431,7 +431,8 @@ public final class GameStateFeeder {
 		}
 	}
 
-	private void handle(EngineEvent event) {
+	/** Acts on one engine event. Public for the client gametest, which feeds it errors; must run on the client thread. */
+	public void handle(EngineEvent event) {
 		switch (event) {
 			case EngineEvent.JoinRequest(int id, String serverId) ->
 					pendingJoins.add(new PendingJoin(id, joiner.joinAsync(serverId)));
@@ -456,7 +457,8 @@ public final class GameStateFeeder {
 			case EngineEvent.Talking(UUID uuid, boolean isTalking) -> {
 				if (isTalking) talking.add(uuid);
 				else talking.remove(uuid);
-				YakVcClient.LOGGER.info("Talking {} {} {}", uuid, name(uuid), isTalking);
+				// DEBUG, because every talk spurt changes it and a long conversation would flood latest.log.
+				YakVcClient.LOGGER.debug("Talking {} {} {}", uuid, name(uuid), isTalking);
 			}
 			case EngineEvent.MicLevel(float db) -> {
 				// Levels only arrive while the microphone (or the dev test tone) delivers audio, so the first one
