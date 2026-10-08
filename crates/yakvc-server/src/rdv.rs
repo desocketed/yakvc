@@ -9,21 +9,26 @@
 //! through one writer task, so the reading side never has to give up halfway
 //! through a message.
 
+use std::collections::HashSet;
 use std::net::IpAddr;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
+use iroh::TransportAddr;
 use iroh::endpoint::{Connection, Incoming, IncomingAddr, RecvStream, SendStream};
 use tokio::sync::mpsc;
 use yakvc_shared::auth::Nonce;
 use yakvc_shared::rdv::{ClientMsg, CloseCode, Hello, ServerMsg, addr_fits};
-use yakvc_shared::wire::{WireError, read_msg, write_msg};
-use yakvc_shared::{EndpointId, SignedTicket, Uuid, is_offline_player};
+use yakvc_shared::wire::{MAX_MESSAGE_LEN, WireError, read_msg_max, write_msg};
+use yakvc_shared::{
+    EndpointAddr, EndpointId, PairToken, RelayUrl, Ticket, Uuid, is_offline_player,
+};
 
 use crate::auth::{JoinCheck, proves};
-use crate::limits::{Slot, TokenBucket};
+use crate::limits::{IpSlot, Slot, TokenBucket, ip_key};
+use crate::server::Limits;
 use crate::server::Shared;
-use crate::sessions::close;
+use crate::sessions::{Outbox, close, push};
 
 /// Time from accepting the connection until the client must be registered.
 /// Covers the client's `joinServer` call to Mojang.
@@ -31,6 +36,13 @@ const AUTH_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How long the writer may take to deliver its last messages on close.
 const FLUSH_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// How long one message may wait for the client to make room for it.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Largest message accepted before registering. A `Hello` with the largest
+/// address `addr_fits` allows and a cached ticket is about 1 KiB.
+const MAX_UNREGISTERED_MSG_LEN: usize = 4096;
 
 /// Minecraft names are at most 16 characters.
 const MAX_NAME_LEN: usize = 16;
@@ -51,6 +63,16 @@ pub(crate) async fn serve(shared: Arc<Shared>, incoming: Incoming) {
         incoming.refuse();
         return;
     };
+    let unregistered_ip = match ip {
+        Some(ip) => match shared.unregistered_per_ip.take(ip) {
+            Some(slot) => Some(slot),
+            None => {
+                incoming.refuse();
+                return;
+            }
+        },
+        None => None,
+    };
     let Ok(conn) = incoming.await else {
         return;
     };
@@ -63,7 +85,7 @@ pub(crate) async fn serve(shared: Arc<Shared>, incoming: Incoming) {
         }
     };
 
-    let (outbox, outbox_rx) = mpsc::unbounded_channel();
+    let (outbox, outbox_rx) = mpsc::channel(outbox_len(&shared.limits));
     let writer = tokio::spawn(write_all(conn.clone(), send, outbox_rx));
     let mut client = Client {
         shared: shared.clone(),
@@ -73,10 +95,13 @@ pub(crate) async fn serve(shared: Arc<Shared>, incoming: Incoming) {
         recv,
         outbox,
         auth_deadline: deadline,
+        // Replaced when the client registers.
+        ticket_expires: deadline,
         hello: None,
         challenge: None,
         pair_updates: None,
-        unregistered: Some(unregistered),
+        unregistered: Some((unregistered, unregistered_ip)),
+        session_slot: None,
     };
     let code = match client.run().await {
         Ok(()) => CloseCode::Normal,
@@ -96,17 +121,21 @@ pub(crate) async fn serve(shared: Arc<Shared>, incoming: Incoming) {
 
 /// Writes queued messages until every sender is gone, then finishes the
 /// stream and waits for the client to receive it.
-async fn write_all(
-    conn: Connection,
-    mut send: SendStream,
-    mut outbox: mpsc::UnboundedReceiver<ServerMsg>,
-) {
+async fn write_all(conn: Connection, mut send: SendStream, mut outbox: mpsc::Receiver<ServerMsg>) {
     while let Some(msg) = outbox.recv().await {
-        if write_msg(&mut send, &msg).await.is_err() {
+        match tokio::time::timeout(WRITE_TIMEOUT, write_msg(&mut send, &msg)).await {
+            Ok(Ok(())) => {}
             // A client that misses a message is out of step with its
             // session; closing makes it reconnect and start over.
-            close(&conn, CloseCode::Normal, "failed to send");
-            return;
+            Ok(Err(_)) => {
+                close(&conn, CloseCode::Normal, "failed to send");
+                return;
+            }
+            // Flow control held the write: the client stopped reading.
+            Err(_) => {
+                close(&conn, CloseCode::LimitExceeded, "not reading");
+                return;
+            }
         }
     }
     let _ = send.finish();
@@ -119,16 +148,22 @@ struct Client {
     id: EndpointId,
     ip: Option<IpAddr>,
     recv: RecvStream,
-    outbox: mpsc::UnboundedSender<ServerMsg>,
+    outbox: Outbox,
     auth_deadline: tokio::time::Instant,
+    /// When the session's ticket expires, once registered.
+    ticket_expires: tokio::time::Instant,
     /// The client's `Hello`, once received.
     hello: Option<Hello>,
     /// The nonce of the challenge awaiting `Joined`.
     challenge: Option<Nonce>,
     /// Present once registered.
     pair_updates: Option<TokenBucket>,
-    /// Held until registered, against `Limits::max_unregistered`.
-    unregistered: Option<Slot>,
+    /// Held until registered, against `Limits::max_unregistered` and (with
+    /// a known IP) `max_unregistered_per_ip`.
+    unregistered: Option<(Slot, Option<IpSlot>)>,
+    /// Held from `Hello` on, against `Limits::max_sessions_per_ip`, when
+    /// the IP is known.
+    session_slot: Option<IpSlot>,
 }
 
 impl Client {
@@ -136,13 +171,23 @@ impl Client {
     /// connection has to be closed with a code.
     async fn run(&mut self) -> Result<(), CloseCode> {
         loop {
-            let msg = if self.is_registered() {
-                read_msg(&mut self.recv).await
+            // Matches are handed the session's ticket, so a session must not
+            // outlive it; a renewal moves the deadline.
+            let (deadline, code) = if self.is_registered() {
+                (self.ticket_expires, CloseCode::AuthFailed)
             } else {
-                tokio::time::timeout_at(self.auth_deadline, read_msg(&mut self.recv))
-                    .await
-                    .map_err(|_| CloseCode::ProtocolError)?
+                (self.auth_deadline, CloseCode::ProtocolError)
             };
+            // Before registering only `Hello` is large, so a small limit keeps
+            // unauthenticated connections from making us allocate much.
+            let max_len = if self.is_registered() {
+                MAX_MESSAGE_LEN
+            } else {
+                MAX_UNREGISTERED_MSG_LEN
+            };
+            let msg = tokio::time::timeout_at(deadline, read_msg_max(&mut self.recv, max_len))
+                .await
+                .map_err(|_| code)?;
             let msg = match msg {
                 Ok(Some(msg)) => msg,
                 Ok(None) => return Ok(()),
@@ -167,12 +212,14 @@ impl Client {
                 if addr.id != self.id || !addr_fits(&addr) {
                     return Err(CloseCode::ProtocolError);
                 }
+                let addr = known_relays_only(addr, &self.shared.relays);
                 self.shared.sessions.update_addr(self.id, addr);
                 Ok(())
             }
             ClientMsg::SetPairs(tokens) => {
                 self.check_update()?;
-                if tokens.len() > self.shared.limits.max_pairs {
+                let distinct: HashSet<&PairToken> = tokens.iter().collect();
+                if distinct.len() > self.shared.limits.max_pairs {
                     return Err(CloseCode::LimitExceeded);
                 }
                 self.shared.sessions.set_pairs(self.id, tokens);
@@ -180,7 +227,10 @@ impl Client {
             }
             ClientMsg::AddPairs(tokens) => {
                 self.check_update()?;
-                let total = self.shared.sessions.pair_count(self.id) + tokens.len();
+                let total = self
+                    .shared
+                    .sessions
+                    .pair_count_after_adding(self.id, &tokens);
                 if total > self.shared.limits.max_pairs {
                     return Err(CloseCode::LimitExceeded);
                 }
@@ -195,23 +245,28 @@ impl Client {
         }
     }
 
-    fn on_hello(&mut self, hello: Hello) -> Result<(), CloseCode> {
+    fn on_hello(&mut self, mut hello: Hello) -> Result<(), CloseCode> {
         let valid_name = !hello.name.is_empty() && hello.name.len() <= MAX_NAME_LEN;
         // The address is forwarded to every match, so it must stay small.
         let valid_addr = hello.addr.id == self.id && addr_fits(&hello.addr);
         if self.hello.is_some() || !valid_addr || !valid_name {
             return Err(CloseCode::ProtocolError);
         }
+        if let Some(ip) = self.ip {
+            let slot = self.shared.sessions_per_ip.take(ip);
+            self.session_slot = Some(slot.ok_or(CloseCode::LimitExceeded)?);
+        }
         let cached = hello
             .cached_ticket
             .as_ref()
             .and_then(|ticket| self.shared.auth.reusable(ticket, &hello, self.id));
+        hello.addr = known_relays_only(hello.addr, &self.shared.relays);
         self.hello = Some(hello);
 
         // An unverified cached ticket is refused while a verified session
         // holds its UUID; the challenge then decides, as without a ticket.
         if let Some(ticket) = cached
-            && self.register(ticket.signed().clone(), ticket.verified)
+            && self.register(ticket)
         {
             self.shared.metrics.auth_cached.inc();
             Ok(())
@@ -219,7 +274,7 @@ impl Client {
             let (uuid, name) = self.identity();
             let ticket = self.shared.auth.issue(uuid, name, self.id, true);
             self.shared.metrics.auth_ok.inc();
-            self.register(ticket, true);
+            self.register(ticket);
             Ok(())
         } else {
             self.start_challenge()
@@ -237,7 +292,7 @@ impl Client {
             let (uuid, name) = self.identity();
             let ticket = self.shared.auth.issue(uuid, name, self.id, true);
             self.shared.metrics.auth_ok.inc();
-            self.adopt(ticket, true);
+            self.adopt(ticket);
             return Ok(());
         }
         self.start_challenge()
@@ -285,7 +340,7 @@ impl Client {
                 // which may be the offline UUID of that name.
                 let ticket = self.shared.auth.issue(uuid, profile.name, self.id, true);
                 // A verified ticket is never refused.
-                self.adopt(ticket, true);
+                self.adopt(ticket);
                 Ok(())
             }
             JoinCheck::Confirmed(_) | JoinCheck::Rejected => {
@@ -307,7 +362,7 @@ impl Client {
             return self.refuse(CloseCode::AuthFailed);
         }
         let ticket = self.shared.auth.issue(uuid, name, self.id, false);
-        if self.adopt(ticket, false) {
+        if self.adopt(ticket) {
             self.shared.metrics.auth_unverified.inc();
             Ok(())
         } else {
@@ -318,16 +373,17 @@ impl Client {
 
     /// Registers with `ticket`, or renews the session's ticket. Returns
     /// false if the sessions refused it (see `Sessions::register`).
-    fn adopt(&mut self, ticket: SignedTicket, verified: bool) -> bool {
+    fn adopt(&mut self, ticket: Ticket) -> bool {
         if !self.is_registered() {
-            return self.register(ticket, verified);
+            return self.register(ticket);
         }
-        let renewed = self
-            .shared
-            .sessions
-            .update_ticket(self.id, ticket.clone(), verified);
+        let renewed =
+            self.shared
+                .sessions
+                .update_ticket(self.id, ticket.signed().clone(), ticket.verified);
         if renewed {
-            self.send(ServerMsg::Registered(ticket));
+            self.ticket_expires = expiry(&ticket);
+            self.send(ServerMsg::Registered(ticket.signed().clone()));
         }
         renewed
     }
@@ -359,19 +415,20 @@ impl Client {
 
     /// Returns false if the sessions refused the ticket (see
     /// `Sessions::register`).
-    fn register(&mut self, ticket: SignedTicket, verified: bool) -> bool {
+    fn register(&mut self, ticket: Ticket) -> bool {
         let hello = self.hello.as_ref().expect("registered after hello");
         let registered = self.shared.sessions.register(
             &self.conn,
             hello.uuid,
-            verified,
-            ticket.clone(),
+            ticket.verified,
+            ticket.signed().clone(),
             hello.addr.clone(),
             self.outbox.clone(),
         );
         if !registered {
             return false;
         }
+        self.ticket_expires = expiry(&ticket);
         let limits = &self.shared.limits;
         self.pair_updates = Some(TokenBucket::new(
             limits.pair_updates_per_sec,
@@ -379,7 +436,7 @@ impl Client {
             Instant::now(),
         ));
         self.unregistered = None;
-        self.send(ServerMsg::Registered(ticket));
+        self.send(ServerMsg::Registered(ticket.signed().clone()));
         true
     }
 
@@ -409,7 +466,7 @@ impl Client {
         let shared = &self.shared;
         let endpoint_ok = shared.auth_per_endpoint.lock().unwrap().allow(self.id, now);
         let ip_ok = match self.ip {
-            Some(ip) => shared.auth_per_ip.lock().unwrap().allow(ip, now),
+            Some(ip) => shared.auth_per_ip.lock().unwrap().allow(ip_key(ip), now),
             None => true,
         };
         if endpoint_ok && ip_ok {
@@ -451,8 +508,28 @@ impl Client {
     }
 
     fn send(&self, msg: ServerMsg) {
-        // Fails only if the writer stopped because the stream broke, in which
-        // case the next read fails too.
-        let _ = self.outbox.send(msg);
+        push(&self.conn, &self.outbox, msg);
     }
+}
+
+/// Room for a `PeerAvailable` and a `PeerGone` for every pair, plus replies:
+/// more than an honest client that keeps reading ever has queued.
+fn outbox_len(limits: &Limits) -> usize {
+    2 * limits.max_pairs + 16
+}
+
+/// When `ticket` expires, on the clock the read loop's timeouts use.
+fn expiry(ticket: &Ticket) -> tokio::time::Instant {
+    tokio::time::Instant::now() + ticket.remaining(SystemTime::now())
+}
+
+/// `addr` without relay URLs other than `relays`. Peers dial the relays in
+/// each other's addresses, and an arbitrary one would learn a `relay_only`
+/// client's IP.
+fn known_relays_only(addr: EndpointAddr, relays: &[RelayUrl]) -> EndpointAddr {
+    let kept = addr.addrs.into_iter().filter(|transport| match transport {
+        TransportAddr::Relay(url) => relays.contains(url),
+        _ => true,
+    });
+    EndpointAddr::from_parts(addr.id, kept)
 }

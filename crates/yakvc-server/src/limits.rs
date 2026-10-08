@@ -2,8 +2,9 @@
 
 use std::collections::HashMap;
 use std::hash::Hash;
-use std::sync::Arc;
+use std::net::{IpAddr, Ipv6Addr};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Allows `capacity` events at once, refilling to `capacity` over `period`.
@@ -89,6 +90,19 @@ impl<K: Hash + Eq> RateLimiter<K> {
     }
 }
 
+/// The key per-IP limits count `ip` under. An IPv6 host is usually given a
+/// whole /64 and can pick any address in it, so IPv6 addresses count per
+/// /64; an IPv4-mapped address counts as its IPv4 address.
+pub(crate) fn ip_key(ip: IpAddr) -> IpAddr {
+    match ip.to_canonical() {
+        IpAddr::V6(v6) => {
+            let prefix = v6.to_bits() & !(u128::from(u64::MAX));
+            IpAddr::V6(Ipv6Addr::from_bits(prefix))
+        }
+        v4 => v4,
+    }
+}
+
 /// A cap on how many of something may exist at once.
 #[derive(Debug)]
 pub(crate) struct Slots {
@@ -124,9 +138,80 @@ impl Drop for Slot {
     }
 }
 
+/// [`Slots`] for each source IP, counted under [`ip_key`].
+#[derive(Debug)]
+pub(crate) struct IpSlots {
+    max: usize,
+    used: Arc<Mutex<HashMap<IpAddr, usize>>>,
+}
+
+/// One taken [`IpSlots`] slot, given back when dropped.
+#[derive(Debug)]
+pub(crate) struct IpSlot {
+    key: IpAddr,
+    used: Arc<Mutex<HashMap<IpAddr, usize>>>,
+}
+
+impl IpSlots {
+    pub fn new(max: usize) -> Self {
+        IpSlots {
+            max,
+            used: Arc::default(),
+        }
+    }
+
+    pub fn take(&self, ip: IpAddr) -> Option<IpSlot> {
+        let key = ip_key(ip);
+        let mut used = self.used.lock().unwrap();
+        let count = used.entry(key).or_default();
+        if *count >= self.max {
+            return None;
+        }
+        *count += 1;
+        Some(IpSlot {
+            key,
+            used: self.used.clone(),
+        })
+    }
+}
+
+impl Drop for IpSlot {
+    fn drop(&mut self) {
+        let mut used = self.used.lock().unwrap();
+        let count = used.get_mut(&self.key).expect("held slots are counted");
+        *count -= 1;
+        // Keeps the map from growing with every IP ever seen.
+        if *count == 0 {
+            used.remove(&self.key);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ipv6_addresses_count_per_64() {
+        let key = |ip: &str| ip_key(ip.parse().unwrap());
+        assert_eq!(key("2001:db8:1:2:aaaa::1"), key("2001:db8:1:2:bbbb::2"));
+        assert_eq!(key("2001:db8:1:2:aaaa::1"), key("2001:db8:1:2::"));
+        assert_ne!(key("2001:db8:1:2::1"), key("2001:db8:1:3::1"));
+        assert_eq!(key("192.0.2.1"), key("::ffff:192.0.2.1"));
+        assert_ne!(key("192.0.2.1"), key("192.0.2.2"));
+    }
+
+    #[test]
+    fn ip_slots_are_per_ip_and_given_back_when_dropped() {
+        let slots = IpSlots::new(1);
+        let ip = |s: &str| s.parse::<IpAddr>().unwrap();
+        let first = slots.take(ip("2001:db8::1")).unwrap();
+        assert!(slots.take(ip("2001:db8::2")).is_none(), "same /64");
+        let _other = slots.take(ip("192.0.2.1")).unwrap();
+        drop(first);
+        assert!(slots.take(ip("2001:db8::2")).is_some());
+        assert_eq!(slots.used.lock().unwrap().len(), 1);
+    }
 
     #[test]
     fn slots_are_given_back_when_dropped() {

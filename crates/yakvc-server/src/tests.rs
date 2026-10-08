@@ -231,6 +231,7 @@ fn code(code: CloseCode) -> u64 {
 
 fn verify(server: &Server, ticket: &SignedTicket) -> Ticket {
     TicketVerifier::new([server.issuer_id()])
+        .accept_dev(true)
         .verify(ticket, SystemTime::now())
         .unwrap()
 }
@@ -294,6 +295,91 @@ async fn address_updates_reach_matches() {
         ServerMsg::PeerAvailable { addr, .. } => assert_eq!(addr, new_addr),
         other => panic!("expected PeerAvailable, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn a_client_that_stops_reading_is_closed() {
+    let limits = Limits {
+        pair_updates_per_sec: 1_000_000,
+        ..Limits::default()
+    };
+    let server = builder()
+        .insecure_dev_auth()
+        .limits(limits)
+        .spawn()
+        .await
+        .unwrap();
+    let mut alice = Client::connect(&server, "alice").await;
+    let mut bob = Client::connect(&server, "bob").await;
+    alice.register().await;
+    bob.register().await;
+    alice
+        .send(ClientMsg::AddPairs(vec![alice.token_for(&bob)]))
+        .await;
+    bob.send(ClientMsg::AddPairs(vec![bob.token_for(&alice)]))
+        .await;
+    bob.expect_peer_available(&alice).await;
+
+    // Bob stops reading while Alice's address updates keep coming for him.
+    let addr = EndpointAddr::new(alice.id()).with_ip_addr("127.0.0.1:9".parse().unwrap());
+    let flood = async {
+        loop {
+            alice.send(ClientMsg::UpdateAddr(addr.clone())).await;
+        }
+    };
+    tokio::select! {
+        closed = bob.close_code() => assert_eq!(closed, code(CloseCode::LimitExceeded)),
+        () = flood => unreachable!(),
+    }
+}
+
+#[tokio::test]
+async fn only_known_relays_are_forwarded() {
+    let extra: RelayUrl = "https://extra.example.com".parse().unwrap();
+    let evil: RelayUrl = "https://evil.example.com".parse().unwrap();
+    let server = builder()
+        .insecure_dev_auth()
+        .relay(relay_options())
+        .extra_relays(vec![extra.clone()])
+        .spawn()
+        .await
+        .unwrap();
+    let own = server.relay_url().unwrap();
+    let mut alice = Client::connect(&server, "alice").await;
+    let mut bob = Client::connect(&server, "bob").await;
+    let ClientMsg::Hello(mut hello) = alice.hello(None) else {
+        unreachable!()
+    };
+    let ip = "127.0.0.1:9".parse().unwrap();
+    hello.addr = EndpointAddr::new(alice.id())
+        .with_ip_addr(ip)
+        .with_relay_url(evil.clone());
+    alice.send(ClientMsg::Hello(hello)).await;
+    alice.expect_registered().await;
+    bob.register().await;
+    alice
+        .send(ClientMsg::AddPairs(vec![alice.token_for(&bob)]))
+        .await;
+    bob.send(ClientMsg::AddPairs(vec![bob.token_for(&alice)]))
+        .await;
+
+    let mut next_addr = async || match bob.recv().await {
+        ServerMsg::PeerAvailable { addr, .. } => addr,
+        other => panic!("expected PeerAvailable, got {other:?}"),
+    };
+    // An unknown relay is dropped; the IP stays.
+    assert_eq!(
+        next_addr().await,
+        EndpointAddr::new(alice.id()).with_ip_addr(ip)
+    );
+    for relay in [extra, own] {
+        let addr = EndpointAddr::new(alice.id()).with_relay_url(relay);
+        alice.send(ClientMsg::UpdateAddr(addr.clone())).await;
+        assert_eq!(next_addr().await, addr);
+    }
+    let addr = EndpointAddr::new(alice.id()).with_relay_url(evil);
+    alice.send(ClientMsg::UpdateAddr(addr)).await;
+    assert_eq!(next_addr().await, EndpointAddr::new(alice.id()));
 }
 
 #[tokio::test]
@@ -400,6 +486,69 @@ async fn unregistered_connections_are_capped() {
 }
 
 #[tokio::test]
+async fn unregistered_connections_are_capped_per_ip() {
+    let limits = Limits {
+        max_unregistered_per_ip: 1,
+        ..Limits::default()
+    };
+    let server = builder()
+        .insecure_dev_auth()
+        .limits(limits)
+        .spawn()
+        .await
+        .unwrap();
+    let mut alice = Client::connect(&server, "alice").await;
+
+    let endpoint = loopback_endpoint().await;
+    let connect = endpoint.connect(server.endpoint_addr(), rdv::ALPN);
+    let refused = tokio::time::timeout(TIMEOUT, connect)
+        .await
+        .expect("connect timed out");
+    assert!(refused.is_err());
+
+    alice.register().await;
+    let mut bob = Client::connect(&server, "bob").await;
+    bob.register().await;
+}
+
+#[tokio::test]
+async fn sessions_are_capped_per_ip() {
+    let limits = Limits {
+        max_sessions_per_ip: 1,
+        ..Limits::default()
+    };
+    let server = builder()
+        .insecure_dev_auth()
+        .limits(limits)
+        .spawn()
+        .await
+        .unwrap();
+    let mut alice = Client::connect(&server, "alice").await;
+    let mut bob = Client::connect(&server, "bob").await;
+    alice.register().await;
+    bob.send(bob.hello(None)).await;
+    assert_eq!(bob.close_code().await, code(CloseCode::LimitExceeded));
+
+    // Alice leaving makes room.
+    alice.conn.close(0u32.into(), b"");
+    wait_for("alice's session to end", || server.stats().sessions == 0).await;
+    bob.reconnect(&server).await;
+    bob.register().await;
+}
+
+#[tokio::test]
+async fn large_messages_before_registering_are_a_protocol_error() {
+    let server = dev_server().await;
+    let mut client = Client::connect(&server, "alice").await;
+    let ClientMsg::Hello(mut hello) = client.hello(None) else {
+        unreachable!()
+    };
+    hello.mod_version = "x".repeat(5000);
+    client.send(ClientMsg::Hello(hello)).await;
+    assert_eq!(client.close_code().await, code(CloseCode::ProtocolError));
+}
+
+#[tokio::test]
 async fn too_many_pairs_closes_the_session() {
     let limits = Limits {
         max_pairs: 2,
@@ -420,6 +569,36 @@ async fn too_many_pairs_closes_the_session() {
         .await;
     client.send(ClientMsg::AddPairs(vec![token(3)])).await;
     assert_eq!(client.close_code().await, code(CloseCode::LimitExceeded));
+}
+
+#[tokio::test]
+async fn the_pair_limit_counts_distinct_tokens() {
+    let limits = Limits {
+        max_pairs: 2,
+        ..Limits::default()
+    };
+    let server = builder()
+        .insecure_dev_auth()
+        .limits(limits)
+        .spawn()
+        .await
+        .unwrap();
+    let mut alice = Client::connect(&server, "alice").await;
+    let mut bob = Client::connect(&server, "bob").await;
+    alice.register().await;
+    bob.register().await;
+    let ab = alice.token_for(&bob);
+    let other = PairToken::new(alice.uuid(), Uuid::from_u128(7));
+
+    // Duplicates, and tokens already held, don't count twice.
+    alice.send(ClientMsg::SetPairs(vec![ab, ab, ab])).await;
+    alice
+        .send(ClientMsg::AddPairs(vec![ab, other, other]))
+        .await;
+    alice.send(ClientMsg::AddPairs(vec![ab])).await;
+    bob.send(ClientMsg::AddPairs(vec![bob.token_for(&alice)]))
+        .await;
+    alice.expect_peer_available(&bob).await;
 }
 
 #[tokio::test]
@@ -1016,6 +1195,64 @@ async fn metrics_endpoint_serves_prometheus_text() {
     assert!(response.starts_with("HTTP/1.1 200 OK"));
     assert!(response.contains("\nyakvc_sessions 1\n"));
     assert!(response.contains("\nyakvc_auth_ok_total 1\n"));
+}
+
+#[tokio::test]
+async fn sessions_end_when_their_ticket_expires() {
+    let server = builder()
+        .insecure_dev_auth()
+        .ticket_lifetime(Duration::from_secs(1))
+        .spawn()
+        .await
+        .unwrap();
+    let mut alice = Client::connect(&server, "alice").await;
+    alice.register().await;
+    assert_eq!(alice.close_code().await, code(CloseCode::AuthFailed));
+    wait_for("the session to end", || server.stats().sessions == 0).await;
+}
+
+#[tokio::test]
+async fn a_renewal_extends_the_session() {
+    let server = builder()
+        .insecure_dev_auth()
+        .ticket_lifetime(Duration::from_secs(2))
+        .spawn()
+        .await
+        .unwrap();
+    let mut alice = Client::connect(&server, "alice").await;
+    let first = verify(&server, &alice.register().await);
+    // Renew once the first ticket's expiry has moved on a second.
+    while SystemTime::now() < SystemTime::UNIX_EPOCH + Duration::from_secs(first.issued_at + 1) {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    alice.send(ClientMsg::Renew).await;
+    let renewed = verify(&server, &alice.expect_registered().await);
+    assert!(renewed.expires_at > first.expires_at);
+    // Still registered after the first ticket expired.
+    let past_first = SystemTime::UNIX_EPOCH + Duration::from_secs(first.expires_at);
+    while SystemTime::now() < past_first + Duration::from_millis(200) {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(server.stats().sessions, 1);
+    assert_eq!(alice.close_code().await, code(CloseCode::AuthFailed));
+}
+
+#[tokio::test]
+async fn a_third_session_for_a_uuid_closes_the_oldest() {
+    let server = dev_server().await;
+    let mut first = Client::connect(&server, "alice").await;
+    let mut second = Client::connect(&server, "alice").await;
+    let mut third = Client::connect(&server, "alice").await;
+    first.register().await;
+    second.register().await;
+    third.register().await;
+    assert_eq!(first.close_code().await, code(CloseCode::Superseded));
+    wait_for("two sessions", || server.stats().sessions == 2).await;
+    // The other two stay.
+    third.reconnect(&server).await;
+    third.register().await;
+    second.send(ClientMsg::AddPairs(vec![])).await;
+    assert!(second.conn.close_reason().is_none());
 }
 
 #[tokio::test]
