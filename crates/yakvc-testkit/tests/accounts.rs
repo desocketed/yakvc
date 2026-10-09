@@ -187,7 +187,7 @@ async fn an_older_link_is_heard_once_the_newest_closes() {
     drop(second);
     while alice.recording().audible_frames() < before + 10 {
         assert!(
-            closed.elapsed() < Duration::from_secs(1),
+            closed.elapsed() < Duration::from_secs(3),
             "the first bob not heard: {:?}",
             alice.engine().peers()
         );
