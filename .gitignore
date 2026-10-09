@@ -4,3 +4,5 @@
 /.claude/worktrees/
 # Claude's own instructions stay local and are never committed.
 /CLAUDE.md
+# The maintainer's own Org export of the design, kept local.
+/docs/DESIGN.html
