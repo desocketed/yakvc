@@ -250,11 +250,6 @@ impl Voice {
             .update(|state, _| state.change_group_state(|s| s.label = label.to_owned()))
     }
 
-    pub(crate) fn vote_kick(&self, target: Uuid, yes: bool) -> Result<(), GroupError> {
-        self.shared
-            .update(|state, events| state.vote_kick(target, yes, Instant::now(), events))
-    }
-
     /// Our group and the public groups our peers announce.
     pub(crate) fn groups(&self) -> Vec<GroupInfo> {
         let announced = self.shared.announced();
@@ -492,17 +487,13 @@ async fn read_control(
                 drop(peers);
                 shared.refresh_group_mates();
             }
-            // The rest speak for the player only over its current link; a
-            // kick vote in particular counts only from the voter itself.
+            // The rest speak for the player only over its current link.
             _ if !shared.is_current(uuid, link_id) => {}
             VoiceMsg::Invite { key, state } => shared.update(|voice, events| {
                 voice.receive_invite(uuid, key, state, Instant::now(), events);
             }),
             VoiceMsg::GroupState(state) => shared.update(|voice, events| {
                 voice.receive_group_state(uuid, state, events);
-            }),
-            VoiceMsg::KickVote { target, yes } => shared.update(|voice, events| {
-                voice.receive_kick_vote(uuid, target, yes, Instant::now(), events);
             }),
         }
     }

@@ -114,7 +114,7 @@ public final class GameStateFeeder {
 	private int ticksUntilStats;
 	/** Whether the last tick had a server session, to leave our group once it ends. */
 	private boolean hadSession;
-	/** Invites, group changes and kick votes, told in chat and toasts. */
+	/** Invites and group changes, told in chat and toasts. */
 	private final GroupChat groupChat = new GroupChat(this);
 
 	public GameStateFeeder(NativeBridge bridge, MemorySegment engine, ClientConfig config, VoiceKeys keys,
@@ -290,11 +290,6 @@ public final class GameStateFeeder {
 	/** Sets our group's label: empty for none, at most {@link #MAX_LABEL_CHARS}. False if refused. */
 	public boolean setGroupLabel(String label) {
 		return groupCall(() -> bridge.setGroupLabel(engine, label));
-	}
-
-	/** Votes on kicking a group mate. False if we are in no group or {@code target} is not in it. */
-	public boolean voteKick(UUID target, boolean yes) {
-		return groupCall(() -> bridge.voteKick(engine, target, yes));
 	}
 
 	/**
@@ -490,11 +485,6 @@ public final class GameStateFeeder {
 				YakVcClient.LOGGER.info("Group {}: {} {}, by {}", notice.kind(), notice.uuid(), name(notice.uuid()),
 						notice.by());
 				groupChat.notice(notice);
-			}
-			case EngineEvent.KickVote vote -> {
-				YakVcClient.LOGGER.info("Kick vote on {} by {}: {} ({} of {})", vote.target(), vote.by(),
-						vote.yes() ? "yes" : "no", vote.votes(), vote.needed());
-				groupChat.kickVote(vote);
 			}
 		}
 	}

@@ -264,11 +264,6 @@ impl Engine {
         self.voice.set_group_label(label)
     }
 
-    /// Votes on kicking `target`, a group mate, from our group.
-    pub fn vote_kick(&self, target: Uuid, yes: bool) -> Result<(), GroupError> {
-        self.voice.vote_kick(target, yes)
-    }
-
     /// Our group and every group our peers announce.
     pub fn groups(&self) -> Vec<GroupInfo> {
         self.voice.groups()

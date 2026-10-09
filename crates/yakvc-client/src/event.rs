@@ -41,15 +41,6 @@ pub enum Event {
         uuid: Uuid,
         by: Uuid,
     },
-    /// A group member (`by`, possibly us) voted on kicking `target`. The
-    /// vote passes once `votes` reaches `needed`.
-    KickVote {
-        target: Uuid,
-        by: Uuid,
-        yes: bool,
-        votes: u32,
-        needed: u32,
-    },
     /// Local microphone level in dBFS, about 10 times a second.
     MicLevel(f32),
     /// A non-fatal problem worth showing the user.
@@ -61,11 +52,8 @@ pub enum Event {
 pub enum GroupNoticeKind {
     /// `uuid` became a group mate.
     Joined,
-    /// `uuid` is no longer a group mate: it left, its link closed, or a
-    /// kick vote removed it.
+    /// `uuid` is no longer a group mate: it left or its link closed.
     Left,
-    /// A kick vote removed us (`uuid`) from the group, and we left it.
-    KickedUs,
     /// `by` made the group public.
     MadePublic,
     /// `by` made the group private.

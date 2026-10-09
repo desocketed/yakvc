@@ -298,7 +298,7 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 
 	/**
 	 * The remote player invites us and the Group key, looking at them, accepts; they label the group, which the groups
-	 * screen shows; then {@code /yakvc kick} votes them out, as its clickable [Yes] in chat would.
+	 * screen shows; then they leave it.
 	 */
 	private static void checkGroups(ClientGameTestContext context, GameStateFeeder feeder, RemoteVoice remote,
 			UUID me) {
@@ -344,11 +344,9 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		screenshotScreen(context, "voice-groups");
 		context.setScreen(() -> null);
 
-		// A click on [Yes] sends the command the same way, through sendUnattendedCommand, which Fabric runs on the
-		// client. In a group of two our vote is enough.
-		context.runOnClient(mc -> mc.player.connection.sendUnattendedCommand("yakvc kick Remote yes", null));
+		remote.bridge.leaveGroup(remote.engine);
 		context.waitFor(mc -> !inGroupWith(feeder, REMOTE));
-		// The same for the vote's progress line and the toast, which are cleared below.
+		// The same for its toast, which is cleared below.
 		context.waitTicks(5);
 		context.runOnClient(mc -> {
 			feeder.leaveGroup();

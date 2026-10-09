@@ -81,7 +81,6 @@ class NativeBridgeTest {
 			assertUnavailable(() -> bridge.joinGroup(engine, "0".repeat(64)));
 			assertUnavailable(() -> bridge.setGroupPublic(engine, true));
 			assertUnavailable(() -> bridge.setGroupLabel(engine, "Miners"));
-			assertUnavailable(() -> bridge.voteKick(engine, other, true));
 			YakVcException notHex = assertThrows(YakVcException.class, () -> bridge.joinGroup(engine, "z".repeat(64)));
 			assertEquals(-1, notHex.code());
 			assertThrows(IllegalArgumentException.class, () -> bridge.joinGroup(engine, "00"));

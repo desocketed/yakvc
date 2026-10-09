@@ -101,7 +101,7 @@ Players in a group hear each other wherever they are on the server, as if standi
 
 ![An invite in chat](guide/group-invite.png)
 
-When someone joins or leaves your group, or changes it, a message shows in the top-right corner: *Alex joined the group*, *Alex left the group*, *Steve made the group public*, *Steve changed the group label*, or *You were kicked from the group*.
+When someone joins or leaves your group, or changes it, a message shows in the top-right corner: *Alex joined the group*, *Alex left the group*, *Steve made the group public*, or *Steve changed the group label*.
 
 **The groups screen.** Open **Groups…** in the voice menu. Each group is a box of its members' faces (point at a face to see the name), with its label above if it has one.
 
@@ -109,10 +109,10 @@ When someone joins or leaves your group, or changes it, a message shows in the t
 
 - **Your group** comes first. **Leave** leaves it. **Private** or **Public** switches who can see it: a private group is seen only by its members; a public one is listed for everyone on the server, and anyone may **Join** it. Type a label of up to 32 characters above the faces and press Enter to set it; leave it empty for none.
 - **Public groups** of other players follow, each with **Join**.
-- Groups have no leader: every member can invite, change the label or the public setting, or start a vote to kick someone. You can be in one group at a time, and you leave it when you leave the server.
+- Groups have no leader: every member can invite players and change the label or the public setting. You can be in one group at a time, and you leave it when you leave the server.
 - Mute, volume, deafen and blocking work in groups as everywhere else. What you say in a group is encrypted like all voice.
 
-**Kicking someone.** Type `/yakvc kick <player>` in chat (Tab suggests your group mates). The other members see *Steve wants to kick Alex from the group.* with **[Yes]** and **[No]** to click, and each vote shows how far it has got, for example *Vote to kick Alex: 2 of 3*. When more than half of the other members vote yes within a minute, Alex is out of the group. A kicked player can join a public group again; make it private to keep them out.
+**Someone you don't want in your group?** Nobody can be kicked out of a group. Leave it instead, and start a new private group with the players you want by inviting them, or mute that player in the voice menu.
 
 The game's own Voice/Speech slider (Options → Music & Sounds) sets the volume of all voices, together with Master.
 

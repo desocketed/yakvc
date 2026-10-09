@@ -1,9 +1,10 @@
 //! Group voice chat (DESIGN.md "Group voice chat"): our group, its shared
-//! state, invites and kick votes, as plain rules over [`VoiceState`]. The
-//! caller sends the events these return; the peer tasks send the messages
-//! [`VoiceState::news_for`] picks.
+//! state and invites, as plain rules over [`VoiceState`]. There is no
+//! kicking: a member who doesn't want someone in the group leaves or mutes
+//! them. The caller sends the events these return; the peer tasks send the
+//! messages [`VoiceState::news_for`] picks.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use yakvc_shared::group::label_fits;
@@ -16,8 +17,6 @@ use crate::event::{Event, GroupNoticeKind};
 
 /// How long a received invite can be accepted.
 const INVITE_LIFETIME: Duration = Duration::from_secs(120);
-/// How long a kick vote stays open.
-const KICK_VOTE_LIFETIME: Duration = Duration::from_secs(60);
 
 /// Why a group action was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -28,8 +27,6 @@ pub enum GroupError {
     UnknownGroup,
     #[error("not in a group")]
     NotInGroup,
-    #[error("that player is not in your group")]
-    NotAMember,
     #[error("the label is longer than 32 characters")]
     LabelTooLong,
 }
@@ -39,21 +36,6 @@ pub enum GroupError {
 pub(crate) struct OwnGroup {
     pub key: GroupKey,
     pub state: GroupState,
-    /// Members a kick vote removed. While the group is private they are
-    /// never group mates again, even if their client ignores the vote; a
-    /// public group lets anyone in, so they may rejoin it, which takes them
-    /// off the list.
-    pub removed: HashSet<Uuid>,
-    /// Open kick votes, by target.
-    pub votes: HashMap<Uuid, KickVote>,
-}
-
-/// One open vote on kicking a member.
-#[derive(Debug, Clone)]
-pub(crate) struct KickVote {
-    pub opened: Instant,
-    /// Each voter's latest ballot, ours included.
-    pub ballots: HashMap<Uuid, bool>,
 }
 
 /// An invite we may accept.
@@ -101,8 +83,6 @@ pub(crate) struct Told {
     pub group: Option<GroupAnnounce>,
     /// Our group's state, as last sent while the peer was a group mate.
     pub state: Option<GroupState>,
-    /// Our ballots, by target.
-    pub votes: HashMap<Uuid, bool>,
     /// When the latest invite we delivered to the peer was made.
     pub invite: Option<Instant>,
 }
@@ -115,7 +95,6 @@ impl Default for Told {
             wants_audio: true,
             group: None,
             state: None,
-            votes: HashMap::new(),
             invite: None,
         }
     }
@@ -123,30 +102,11 @@ impl Default for Told {
 
 impl OwnGroup {
     pub(crate) fn new(key: GroupKey, state: GroupState) -> OwnGroup {
-        OwnGroup {
-            key,
-            state,
-            removed: HashSet::new(),
-            votes: HashMap::new(),
-        }
+        OwnGroup { key, state }
     }
 
     pub(crate) fn id(&self) -> GroupId {
         self.key.id()
-    }
-
-    /// `member`'s yes votes on kicking `target` and how many are needed:
-    /// more than half of `members` other than the target.
-    fn tally(&self, target: Uuid, members: &HashSet<Uuid>) -> (u32, u32) {
-        let voters: HashSet<Uuid> = members.iter().copied().filter(|m| *m != target).collect();
-        let needed = voters.len() as u32 / 2 + 1;
-        let votes = self.votes.get(&target).map_or(0, |vote| {
-            vote.ballots
-                .iter()
-                .filter(|(voter, yes)| **yes && voters.contains(voter))
-                .count() as u32
-        });
-        (votes, needed)
     }
 }
 
@@ -220,7 +180,6 @@ impl VoiceState {
         announced
             .iter()
             .filter(|(uuid, announce)| own.key.has_member(*uuid, announce))
-            .filter(|(uuid, _)| own.state.public || !own.removed.contains(uuid))
             .filter(|(uuid, _)| Some(*uuid) != self.own_uuid)
             .map(|(uuid, _)| *uuid)
             .collect()
@@ -237,11 +196,6 @@ impl VoiceState {
             for &uuid in self.group_mates.difference(&mates) {
                 events.push(notice(GroupNoticeKind::Left, uuid, Uuid::nil()));
             }
-        }
-        if let Some(own) = &mut self.group
-            && own.state.public
-        {
-            own.removed.retain(|uuid| !mates.contains(uuid));
         }
         self.mates_of = id;
         let changed = mates != self.group_mates;
@@ -394,90 +348,6 @@ impl VoiceState {
         Ok(())
     }
 
-    /// Records our own ballot on kicking `target`, a group mate.
-    pub(crate) fn vote_kick(
-        &mut self,
-        target: Uuid,
-        yes: bool,
-        now: Instant,
-        events: &mut Vec<Event>,
-    ) -> Result<(), GroupError> {
-        if self.group.is_none() {
-            return Err(GroupError::NotInGroup);
-        }
-        if !self.is_group_mate(target) {
-            return Err(GroupError::NotAMember);
-        }
-        let me = self.own_uuid.unwrap_or_default();
-        self.record_ballot(me, target, yes, now, events);
-        Ok(())
-    }
-
-    /// A group mate's ballot, received over its own link.
-    pub(crate) fn receive_kick_vote(
-        &mut self,
-        from: Uuid,
-        target: Uuid,
-        yes: bool,
-        now: Instant,
-        events: &mut Vec<Event>,
-    ) {
-        let target_in_group = self.is_group_mate(target) || Some(target) == self.own_uuid;
-        if self.is_group_mate(from) && target_in_group && from != target {
-            self.record_ballot(from, target, yes, now, events);
-        }
-    }
-
-    /// Records a ballot, reports it, and carries the vote out once it passes.
-    fn record_ballot(
-        &mut self,
-        voter: Uuid,
-        target: Uuid,
-        yes: bool,
-        now: Instant,
-        events: &mut Vec<Event>,
-    ) {
-        let me = self.own_uuid.unwrap_or_default();
-        let members: HashSet<Uuid> = self.group_mates.iter().copied().chain([me]).collect();
-        let Some(group) = &mut self.group else {
-            return;
-        };
-        group
-            .votes
-            .retain(|_, vote| now.duration_since(vote.opened) < KICK_VOTE_LIFETIME);
-        group
-            .votes
-            .entry(target)
-            .or_insert_with(|| KickVote {
-                opened: now,
-                ballots: HashMap::new(),
-            })
-            .ballots
-            .insert(voter, yes);
-        let (votes, needed) = group.tally(target, &members);
-        events.push(Event::KickVote {
-            target,
-            by: voter,
-            yes,
-            votes,
-            needed,
-        });
-        if votes < needed {
-            return;
-        }
-        if target == me {
-            self.set_group(None);
-            events.push(notice(GroupNoticeKind::KickedUs, me, Uuid::nil()));
-        } else {
-            // The vote stays until it expires, so the target still gets our
-            // ballot and can count it too.
-            group.removed.insert(target);
-            let mut mates = self.group_mates.clone();
-            mates.remove(&target);
-            self.update_mates(mates, events);
-        }
-    }
-
     /// Our group plus the public groups `announced`, merged by id, in a
     /// stable order: ours first, then by label and id.
     pub(crate) fn groups(&self, announced: &[(Uuid, GroupAnnounce)]) -> Vec<GroupInfo> {
@@ -499,8 +369,7 @@ impl VoiceState {
                 continue;
             };
             let id = group.key.id();
-            // Our own group's members are our mates, which leaves out
-            // anyone a vote removed.
+            // Our own group is listed above, from our mates.
             if groups.first().is_some_and(|own| own.id == id)
                 || !group.key.has_member(*uuid, announce)
                 || !label_fits(&group.label)
@@ -527,9 +396,8 @@ impl VoiceState {
     }
 
     /// The messages `peer` hasn't been sent yet: whether we want its audio,
-    /// our group, and for a group mate our group's state and our kick
-    /// ballots, and our latest invite to it unless it is older than `now`
-    /// allows.
+    /// our group, for a group mate our group's state, and our latest invite
+    /// to it unless it is older than `now` allows.
     pub(crate) fn news_for(&self, peer: Uuid, told: &mut Told, now: Instant) -> Vec<VoiceMsg> {
         let mut news = Vec::new();
         let wants_audio = self.wants_audio_from(peer);
@@ -542,32 +410,14 @@ impl VoiceState {
             news.push(VoiceMsg::Group(group.clone()));
             told.group = group;
         }
-        let mate = self.is_group_mate(peer);
         match &self.group {
-            // A member we just voted out still needs our ballots, which may
-            // have passed the vote here before they went out.
-            Some(own) if mate || own.removed.contains(&peer) => {
-                if mate && told.state.as_ref() != Some(&own.state) {
+            Some(own) if self.is_group_mate(peer) => {
+                if told.state.as_ref() != Some(&own.state) {
                     news.push(VoiceMsg::GroupState(own.state.clone()));
                     told.state = Some(own.state.clone());
                 }
-                let me = self.own_uuid.unwrap_or_default();
-                let ours: HashMap<Uuid, bool> = own
-                    .votes
-                    .iter()
-                    .filter_map(|(target, vote)| Some((*target, *vote.ballots.get(&me)?)))
-                    .collect();
-                for (&target, &yes) in &ours {
-                    if told.votes.get(&target) != Some(&yes) {
-                        news.push(VoiceMsg::KickVote { target, yes });
-                    }
-                }
-                told.votes = ours;
             }
-            _ => {
-                told.state = None;
-                told.votes.clear();
-            }
+            _ => told.state = None,
         }
         if let Some(invite) = self.invites_sent.get(&peer)
             && told.invite != Some(invite.sent)
@@ -831,97 +681,6 @@ mod tests {
     }
 
     #[test]
-    fn a_kick_passes_with_more_than_half_of_the_others() {
-        let mut clients = group_of(3);
-        let now = Instant::now();
-        let mut events = Vec::new();
-        // Alice votes to kick Carol: 1 of the 2 others isn't enough.
-        clients[0]
-            .vote_kick(uuid(3), true, now, &mut events)
-            .unwrap();
-        assert_eq!(
-            events,
-            [Event::KickVote {
-                target: uuid(3),
-                by: uuid(1),
-                yes: true,
-                votes: 1,
-                needed: 2,
-            }]
-        );
-        // Carol's own vote doesn't count.
-        events.clear();
-        clients[0].receive_kick_vote(uuid(3), uuid(3), false, now, &mut events);
-        assert!(events.is_empty());
-        // Bob agrees: Carol is out on Alice's side.
-        clients[0].receive_kick_vote(uuid(2), uuid(3), true, now, &mut events);
-        assert!(!clients[0].is_group_mate(uuid(3)));
-        assert_eq!(
-            events.last(),
-            Some(&notice(GroupNoticeKind::Left, uuid(3), Uuid::nil()))
-        );
-        // She stays out even though her proof still checks out.
-        let announced = [announce(&clients[1]), announce(&clients[2])];
-        assert_eq!(clients[0].mates_among(&announced), HashSet::from([uuid(2)]));
-
-        // Carol counts the same votes and leaves.
-        let id = clients[2].group.as_ref().unwrap().id();
-        events.clear();
-        clients[2].receive_kick_vote(uuid(1), uuid(3), true, now, &mut events);
-        assert!(clients[2].group.is_some());
-        clients[2].receive_kick_vote(uuid(2), uuid(3), true, now, &mut events);
-        assert!(clients[2].group.is_none());
-        assert_eq!(
-            events.last(),
-            Some(&notice(GroupNoticeKind::KickedUs, uuid(3), Uuid::nil()))
-        );
-        // Once the group is public, she may come back like anyone else.
-        clients[0].change_group_state(|s| s.public = true).unwrap();
-        let public = [announce(&clients[0])];
-        clients[2].join_public(id, &public).unwrap();
-        let announced = [announce(&clients[1]), announce(&clients[2])];
-        let mates = clients[0].mates_among(&announced);
-        clients[0].update_mates(mates, &mut events);
-        assert!(clients[0].is_group_mate(uuid(3)));
-        assert!(clients[0].group.as_ref().unwrap().removed.is_empty());
-    }
-
-    #[test]
-    fn kick_votes_expire_and_only_mates_vote() {
-        let mut clients = group_of(3);
-        let now = Instant::now();
-        let mut events = Vec::new();
-        clients[0]
-            .vote_kick(uuid(3), true, now, &mut events)
-            .unwrap();
-        // A stranger's ballot is ignored.
-        events.clear();
-        clients[0].receive_kick_vote(uuid(9), uuid(3), true, now, &mut events);
-        assert!(events.is_empty());
-        // A minute later Alice's vote has expired, so Bob's alone is short.
-        let later = now + KICK_VOTE_LIFETIME;
-        clients[0].receive_kick_vote(uuid(2), uuid(3), true, later, &mut events);
-        assert!(clients[0].is_group_mate(uuid(3)));
-        assert_eq!(
-            clients[0].vote_kick(uuid(9), true, now, &mut events),
-            Err(GroupError::NotAMember)
-        );
-    }
-
-    #[test]
-    fn in_a_group_of_two_a_kick_is_leaving() {
-        let mut clients = group_of(2);
-        let now = Instant::now();
-        let mut events = Vec::new();
-        clients[0]
-            .vote_kick(uuid(2), true, now, &mut events)
-            .unwrap();
-        assert!(!clients[0].is_group_mate(uuid(2)));
-        clients[1].receive_kick_vote(uuid(1), uuid(2), true, now, &mut events);
-        assert!(clients[1].group.is_none());
-    }
-
-    #[test]
     fn news_sends_each_change_once() {
         let mut clients = group_of(2);
         let now = Instant::now();
@@ -933,11 +692,12 @@ mod tests {
         ));
         assert!(clients[0].news_for(uuid(2), &mut told, now).is_empty());
 
-        clients[0]
-            .vote_kick(uuid(2), false, now, &mut Vec::new())
-            .unwrap();
+        clients[0].change_group_state(|s| s.public = true).unwrap();
         let news = clients[0].news_for(uuid(2), &mut told, now);
-        assert!(matches!(news[..], [VoiceMsg::KickVote { yes: false, .. }]));
+        assert!(matches!(
+            news[..],
+            [VoiceMsg::Group(Some(_)), VoiceMsg::GroupState(_)]
+        ));
 
         // A player outside the group is told we don't want its audio.
         let mut stranger = Told::default();

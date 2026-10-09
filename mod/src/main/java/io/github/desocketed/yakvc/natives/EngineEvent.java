@@ -35,19 +35,13 @@ public sealed interface EngineEvent {
 	record Invite(UUID from) implements EngineEvent {}
 
 	/**
-	 * Something another player changed in our group. {@code uuid} is the member it is about (joined, left, kicked us);
+	 * Something another player changed in our group. {@code uuid} is the member it is about (joined or left);
 	 * {@code by} is who made the group public or private or changed its label. The unused one is all zeros.
 	 */
 	record GroupNotice(NoticeKind kind, UUID uuid, UUID by) implements EngineEvent {}
 
-	/**
-	 * A ballot on kicking {@code target} from our group, our own included: {@code by} voted {@code yes} or no, and
-	 * {@code votes} of the {@code needed} yes votes are in.
-	 */
-	record KickVote(UUID target, UUID by, boolean yes, int votes, int needed) implements EngineEvent {}
-
 	/** In {@code YAKVC_GROUP_*} order. */
-	enum NoticeKind { JOINED, LEFT, KICKED_US, MADE_PUBLIC, MADE_PRIVATE, LABEL_CHANGED }
+	enum NoticeKind { JOINED, LEFT, MADE_PUBLIC, MADE_PRIVATE, LABEL_CHANGED }
 
 	/** In {@code YAKVC_RDV_*} order. */
 	enum RendezvousState { CONNECTING, AUTHENTICATING, REGISTERED, RETRYING, DISCONNECTED }
@@ -94,9 +88,6 @@ public sealed interface EngineEvent {
 						UUID by = uuid(payload);
 						yield kind == null ? null : new GroupNotice(kind, uuid, by);
 					}
-					// Arguments are evaluated left to right, in record order.
-					case 9 -> new KickVote(uuid(payload), uuid(payload), payload.get() != 0, payload.getInt(),
-							payload.getInt());
 					default -> null;
 				};
 				if (event != null) events.add(event);

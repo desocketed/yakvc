@@ -15,8 +15,9 @@
  * 4: group voice chat (`yakvc_join_group` and the rest).
  * 5: groups reworked: random keys instead of names and passwords, invites,
  * shared group state and kick votes; group-only voice in a group.
+ * 6: kick votes removed (`yakvc_vote_kick`, the kick vote event and notice).
  */
-#define YAKVC_ABI_VERSION 5
+#define YAKVC_ABI_VERSION 6
 
 #define YAKVC_OK 0
 
@@ -59,8 +60,8 @@
 
 /**
  * A group action that can't be done now: no invite from that player in the
- * last two minutes, no public group with that id, not in a group, or the
- * target is not a group mate. The message says which.
+ * last two minutes, no public group with that id, or not in a group. The
+ * message says which.
  */
 #define YAKVC_ERR_UNAVAILABLE -8
 
@@ -88,37 +89,30 @@
 
 #define YAKVC_EVENT_GROUP_NOTICE 8
 
-#define YAKVC_EVENT_KICK_VOTE 9
-
 /**
  * `uuid` became a group mate.
  */
 #define YAKVC_GROUP_JOINED 0
 
 /**
- * `uuid` is no longer a group mate (left, link closed, or kicked).
+ * `uuid` is no longer a group mate (left or link closed).
  */
 #define YAKVC_GROUP_LEFT 1
 
 /**
- * A kick vote removed us (`uuid`); we left the group.
- */
-#define YAKVC_GROUP_KICKED_US 2
-
-/**
  * `by` made the group public.
  */
-#define YAKVC_GROUP_MADE_PUBLIC 3
+#define YAKVC_GROUP_MADE_PUBLIC 2
 
 /**
  * `by` made the group private.
  */
-#define YAKVC_GROUP_MADE_PRIVATE 4
+#define YAKVC_GROUP_MADE_PRIVATE 3
 
 /**
  * `by` changed the label.
  */
-#define YAKVC_GROUP_LABEL_CHANGED 5
+#define YAKVC_GROUP_LABEL_CHANGED 4
 
 #define YAKVC_RDV_CONNECTING 0
 
@@ -304,15 +298,6 @@ int32_t yakvc_set_group_public(struct YakVcEngine *engine, bool public_);
  * `engine` must be live; `label` must be readable for `len` bytes.
  */
 int32_t yakvc_set_group_label(struct YakVcEngine *engine, const uint8_t *label, size_t len);
-
-/**
- * Votes on kicking `target` from our group. `YAKVC_ERR_UNAVAILABLE` if we
- * are in no group or `target` is not a group mate.
- *
- * # Safety
- * `engine` must be live; `target` must point to 16 bytes.
- */
-int32_t yakvc_vote_kick(struct YakVcEngine *engine, const uint8_t *target, bool yes);
 
 /**
  * Writes the groups we know of as JSON, with the buffer protocol of
