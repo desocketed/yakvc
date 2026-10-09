@@ -9,8 +9,8 @@
 
 use std::collections::{HashMap, HashSet};
 
-use yakvc_shared::rdv::ServerMsg;
-use yakvc_shared::{EndpointAddr, EndpointId, PairToken, SignedTicket, Uuid};
+use yakvc_proto::rdv::ServerMsg;
+use yakvc_proto::{EndpointAddr, EndpointId, PairToken, SignedTicket, Uuid};
 
 /// A message for one session.
 #[derive(Debug, Clone)]
@@ -246,7 +246,7 @@ fn peer_available(session: &Session) -> ServerMsg {
 mod tests {
     use std::time::{Duration, SystemTime};
 
-    use yakvc_shared::{IssuerKey, SecretKey, TicketBody};
+    use yakvc_proto::{IssuerKey, SecretKey, TicketBody};
 
     use super::*;
 

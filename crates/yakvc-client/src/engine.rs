@@ -7,7 +7,7 @@ use iroh::endpoint::presets;
 use iroh::{Endpoint, EndpointAddr, RelayMode, SecretKey};
 use tokio::runtime::Runtime;
 use yakvc_audio::{Devices, FrameSink, FrameSource, StreamStats};
-use yakvc_shared::{GroupId, IssuerKey, ProtocolId, TicketBody, TicketVerifier, Uuid};
+use yakvc_proto::{GroupId, IssuerKey, ProtocolId, TicketBody, TicketVerifier, Uuid};
 
 use crate::config::{Config, ConfigError};
 use crate::event::{self, Event, EventSender, Events, JoinId, PeerState, RendezvousState};
@@ -72,7 +72,7 @@ pub struct NetReport {
     /// peers fall back to the relay.
     pub symmetric_nat: Option<bool>,
     /// Round-trip time to each configured relay.
-    pub relay_latency: Vec<(yakvc_shared::RelayUrl, Duration)>,
+    pub relay_latency: Vec<(yakvc_proto::RelayUrl, Duration)>,
 }
 
 impl NetReport {
@@ -88,7 +88,7 @@ impl NetReport {
             };
         };
         // Iroh measures each relay several ways; keep the fastest.
-        let mut relay_latency: Vec<(yakvc_shared::RelayUrl, Duration)> = Vec::new();
+        let mut relay_latency: Vec<(yakvc_proto::RelayUrl, Duration)> = Vec::new();
         for (_, url, latency) in report.relay_latency.iter() {
             match relay_latency.iter_mut().find(|(known, _)| known == url) {
                 Some((_, best)) => *best = (*best).min(latency),
@@ -507,7 +507,7 @@ async fn bind_endpoint(key: SecretKey, config: &Config) -> Result<Endpoint, Star
     };
     let mut builder = Endpoint::builder(presets::Minimal)
         .secret_key(key)
-        .alpns(vec![yakvc_shared::peer::ALPN.to_vec()])
+        .alpns(vec![yakvc_proto::peer::ALPN.to_vec()])
         .relay_mode(relay_mode);
     if config.relay_only {
         builder = builder.clear_ip_transports();
@@ -854,7 +854,7 @@ mod tests {
     }
 
     /// A plain-HTTP relay on loopback that admits everyone.
-    async fn relay() -> (iroh_relay::server::Server, yakvc_shared::RelayUrl) {
+    async fn relay() -> (iroh_relay::server::Server, yakvc_proto::RelayUrl) {
         use iroh_relay::server::{RelayConfig, Server, ServerConfig};
         let mut config = ServerConfig::default();
         config.relay = Some(RelayConfig::new(([127, 0, 0, 1], 0)));
@@ -865,7 +865,7 @@ mod tests {
 
     /// Config that uses `relay`. There is no rendezvous behind it, which a
     /// direct call doesn't need.
-    fn relay_config(relay: &yakvc_shared::RelayUrl, relay_only: bool) -> Config {
+    fn relay_config(relay: &yakvc_proto::RelayUrl, relay_only: bool) -> Config {
         Config {
             rendezvous: Some(RendezvousConfig {
                 endpoint_id: SecretKey::generate().public(),

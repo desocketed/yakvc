@@ -13,7 +13,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 serde_json.workspace = true
 yakvc-client.workspace = true
-yakvc-shared.workspace = true
+yakvc-proto.workspace = true
 
 [dev-dependencies]
 toml.workspace = true

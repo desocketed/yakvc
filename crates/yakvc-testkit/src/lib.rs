@@ -30,8 +30,8 @@ use yakvc_client::{
     Config, Engine, Event, Events, Input, PeerState, Pose, RendezvousState, StreamStats, Uuid,
     Vec3, World,
 };
+use yakvc_proto::{IssuerKey, SecretKey, offline_uuid};
 use yakvc_server::{RelayOptions, Server, ServerBuilder, SessionServer};
-use yakvc_shared::{IssuerKey, SecretKey, offline_uuid};
 
 /// Default time [`TestClient`] waits for an expected event.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);

@@ -94,7 +94,7 @@ minecraft-p2p-vc/
 ├── .cargo/config.toml      # `cargo xtask` alias, per-target linker settings
 ├── xtask/                  # build/packaging utility (the only root-level Rust)
 ├── crates/
-│   ├── yakvc-shared/       # lib: protocol, tickets, pair tokens, Mojang client
+│   ├── yakvc-proto/        # lib: protocol, tickets, pair tokens, Mojang client
 │   ├── yakvc-audio/        # lib: capture, playback, Opus, jitter buffer, spatial mixer
 │   ├── yakvc-client/       # lib: the voice engine (Iroh endpoint, peers, rendezvous session)
 │   ├── yakvc-ffi/          # cdylib: C ABI bridge called by the mod through FFM
@@ -115,12 +115,12 @@ minecraft-p2p-vc/
 
 | Crate | Kind | Depends on (internal) | Owns |
 | --- | --- | --- | --- |
-| `yakvc-shared` | lib | none | Wire messages + versioning, ALPN constants, datagram header, `SignedTicket` signing and `TicketVerifier`, pair-token derivation, the auth challenge digest, control-stream framing |
+| `yakvc-proto` | lib | none | Wire messages + versioning, ALPN constants, datagram header, `SignedTicket` signing and `TicketVerifier`, pair-token derivation, the auth challenge digest, control-stream framing |
 | `yakvc-audio` | lib | none | `cpal` devices, Opus encode/decode, resampling to 48 kHz, jitter buffer, per-source gain/pan mixer, VAD. No networking. Also hardware-free I/O for tests: WAV and tone sources, and a recording null sink. |
-| `yakvc-client` | lib | shared, audio | `Engine`, in two layers: `net` (Iroh endpoint, rendezvous session, peer manager, protocol routing) and `voice` (send/receive loop, recipient selection, spatial input). Also the world model (positions, tab list), command/event API, and a `sim` feature for network impairment |
+| `yakvc-client` | lib | proto, audio | `Engine`, in two layers: `net` (Iroh endpoint, rendezvous session, peer manager, protocol routing) and `voice` (send/receive loop, recipient selection, spatial input). Also the world model (positions, tab list), command/event API, and a `sim` feature for network impairment |
 | `yakvc-ffi` | cdylib | client | `extern "C"` exports + `cbindgen` header, handle management, panic barrier, error codes, event queue encoding |
 | `yakvc-cli` | bin | client, audio | Manual audio and network diagnostics (see yakvc-cli section) |
-| `yakvc-server` | bin + lib | shared | Rendezvous protocol, Mojang verification, ticket signing, matcher, embedded `iroh-relay`, metrics |
+| `yakvc-server` | bin + lib | proto | Rendezvous protocol, Mojang verification, ticket signing, matcher, embedded `iroh-relay`, metrics |
 | `yakvc-testkit` | lib (dev) | server, client, audio | Spawns a server and simulated clients in one process for integration tests, with optional per-peer network impairment |
 | `xtask` | bin (root) | none | `cargo xtask natives`, `header`, `dist`, `server-image`, `dev`: cross-builds `yakvc-ffi`, regenerates its C header, stages libraries into the mod, runs Gradle |
 
@@ -140,16 +140,16 @@ Each of the seven crates is needed: `yakvc-ffi` must be its own cdylib, `yakvc-t
                      ▼       ╲                                        │
                 yakvc-audio   ╲                                       │
                                ▼                                      │
-                             yakvc-shared ◄───────────────────────────┘
+                             yakvc-proto ◄────────────────────────────┘
 ```
 
-`yakvc-shared` and `yakvc-audio` are the leaves; `xtask` sits outside the graph and only builds `yakvc-ffi` for packaging. Not drawn: `yakvc-cli` and `yakvc-testkit` also depend on `yakvc-audio` directly, for its devices and test I/O.
+`yakvc-proto` and `yakvc-audio` are the leaves; `xtask` sits outside the graph and only builds `yakvc-ffi` for packaging. Not drawn: `yakvc-cli` and `yakvc-testkit` also depend on `yakvc-audio` directly, for its devices and test I/O.
 
 **Dependency rules**
 
-- The graph is a strict DAG: `shared` and `audio` are leaves; `client` is the only crate that combines them.
+- The graph is a strict DAG: `proto` and `audio` are leaves; `client` is the only crate that combines them.
 - `yakvc-server` never depends on `audio` or `client`, so the server build pulls in no ALSA/CoreAudio or Opus.
-- `yakvc-shared` depends on `iroh-base` (key and EndpointId types) rather than full `iroh`. The Mojang `hasJoined` client lives in `yakvc-server`, its only user.
+- `yakvc-proto` depends on `iroh-base` (key and EndpointId types) rather than full `iroh`. The Mojang `hasJoined` client lives in `yakvc-server`, its only user.
 - Binaries contain no logic beyond argument parsing and wiring; anything worth testing lives in a lib.
 - Inside `yakvc-client`, `net` knows nothing about audio. It provides verified peers (EndpointId ↔ UUID), per-peer connections, and a `Protocol` trait that receives a peer's control stream and datagrams for one protocol ID. `voice` is the only `Protocol` in v1 and uses `net` only through that trait. This keeps groups, and a possible generic API for other mods (see milestones), as new protocols rather than changes to `net`. `net` could later move into its own crate without touching `voice`.
 - The shipped natives use the `dist` cargo profile (`cargo xtask natives`/`dist`): `opt-level = "s"`, fat LTO, one codegen unit and stripped, with the audio crates kept at `opt-level = 3`. Measured on Linux x86_64 (2026-10-05): the library went from 26.5 MB to 14.5 MB at unchanged audio CPU cost, while plain "s" cost 46% more CPU. `panic` stays `unwind`, because the FFI guard relies on `catch_unwind`.
@@ -177,7 +177,7 @@ A client proves its UUID to the rendezvous once with a Mojang session challenge 
 
 A Mojang account is not required; it only adds standing. A client that can't complete the challenge (no account, an offline launcher, Mojang down) may decline it and gets an *unverified* ticket, without any Mojang call. Tickets say which they are (`verified`).
 
-- **Unverified tickets are valid only for the offline UUID of their name:** `UUID.nameUUIDFromBytes("OfflinePlayer:" + name)` (`yakvc_shared::offline_uuid`, a version-3 UUID), which only offline-mode servers hand out. Online-mode servers give every player their account UUID (version 4), so an unverified claim can never match anyone there. On an offline-mode server anyone can already join under any name, so an unverified identity is no weaker than the server's own. `TicketVerifier` enforces this (`is_offline_player`), on the rendezvous and at every peer. Checking the name, not just the UUID version, keeps anyone from pairing another player's offline UUID with a different name.
+- **Unverified tickets are valid only for the offline UUID of their name:** `UUID.nameUUIDFromBytes("OfflinePlayer:" + name)` (`yakvc_proto::offline_uuid`, a version-3 UUID), which only offline-mode servers hand out. Online-mode servers give every player their account UUID (version 4), so an unverified claim can never match anyone there. On an offline-mode server anyone can already join under any name, so an unverified identity is no weaker than the server's own. `TicketVerifier` enforces this (`is_offline_player`), on the rendezvous and at every peer. Checking the name, not just the UUID version, keeps anyone from pairing another player's offline UUID with a different name.
 - **Signed-in players on offline-mode servers** get a verified ticket for their offline UUID: the rendezvous accepts a claimed UUID that equals either the account UUID or the offline UUID of the account's name.
 - **What an account adds:** a verified badge on peers in the voice menu and talking indicator; priority, where a verified claim to a UUID evicts unverified claims to it at the rendezvous and at peers; and the client setting `verified_only` (default off), which refuses every unverified peer.
 - **Known gap:** offline-mode servers whose plugins give players without accounts version-4 UUIDs get no voice for those players.
@@ -558,7 +558,7 @@ Build order runs Rust-first: every networking and audio milestone is provable wi
    - Exit: `cargo test --workspace` is green; `cargo tree -p yakvc-server -e normal` shows no `cpal`/`opus`.
 2. **M1 Audio.** `yakvc-audio` (devices, Opus, jitter buffer, mixer) and `cli audio loopback`.
    - Exit: loopback runs 10 min with no underruns; added latency ≤ 60 ms.
-3. **M2 Direct call.** Datagram header in `shared`, voice send/receive in `client`, `cli call listen/dial`, `cli net report`.
+3. **M2 Direct call.** Datagram header in `proto`, voice send/receive in `client`, `cli call listen/dial`, `cli net report`.
    - Exit: two machines on different home networks talk; with UDP blocked the call continues over the relay.
 4. **M3 Rendezvous (dev auth).** Server protocol, matcher, tickets; client rendezvous session; `yakvc-testkit` integration tests.
    - Exit: in a testkit test, three clients with overlapping fake tab lists connect only to mutual matches, and gain/pan follow their moves. A testkit test with 5% bursty loss and 30 ms of jitter plays continuous audio: every lost frame is covered by FEC or PLC, and playout delay stays within the jitter-buffer bounds.

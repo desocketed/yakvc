@@ -120,7 +120,7 @@ async fn only_the_newest_link_for_a_player_is_heard() {
             .engine()
             .peers()
             .iter()
-            .all(|p| p.voice_version == Some(yakvc_shared::voice::VERSION))
+            .all(|p| p.voice_version == Some(yakvc_proto::voice::VERSION))
     );
 
     // A second, silent "bob" links up after the first.

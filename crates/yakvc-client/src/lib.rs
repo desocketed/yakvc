@@ -19,7 +19,7 @@ mod voice;
 mod world;
 
 pub use yakvc_audio::{DeviceChoice, DeviceInfo, Devices, FrameSink, FrameSource, StreamStats};
-pub use yakvc_shared::{EndpointAddr, GroupId, Uuid};
+pub use yakvc_proto::{EndpointAddr, GroupId, Uuid};
 
 pub use crate::config::{
     Activation, AudioConfig, Config, ConfigError, DevConfig, InvitesFrom, RendezvousConfig,

@@ -22,8 +22,8 @@ use yakvc_audio::{
     InputProcessor, JitterConfig, Microphone, Mixer, MonoFrame, Packet, Pulled, ReceiveStream,
     Speakers, StereoFrame, StreamStats, level_db,
 };
-use yakvc_shared::voice::{VERSION, VoiceHeader, VoiceMsg};
-use yakvc_shared::{GroupAnnounce, GroupId, ProtocolId, Uuid};
+use yakvc_proto::voice::{VERSION, VoiceHeader, VoiceMsg};
+use yakvc_proto::{GroupAnnounce, GroupId, ProtocolId, Uuid};
 
 use crate::config::{AudioConfig, Config};
 use crate::engine::PeerAudio;
