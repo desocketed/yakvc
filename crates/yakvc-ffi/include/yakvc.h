@@ -346,11 +346,13 @@ int32_t yakvc_list_devices(struct YakVcEngine *engine, uint8_t *buf, size_t cap,
  * second, not for every frame. Fields:
  *
  * - `endpoint_id`: our Iroh endpoint ID, hex
+ * - `voice_version`: the voice protocol version we speak
  * - `audio`: `microphone_open`, `speakers_open`, `transmitting` (bools);
  *   `bitrate` (bit/s in use); `overruns`, `underruns` (counts since the
  *   device opened)
  * - `peers`: per connected peer, `uuid` (hyphenated), `rtt_ms` (number or
- *   null), and once audio has arrived `received`, `late`, `fec_recovered`,
+ *   null), `voice_version` (the one it offered; null until linked), and
+ *   once audio has arrived `received`, `late`, `fec_recovered`,
  *   `concealed` (frame counts) and `playout_delay_ms`
  *
  * # Safety

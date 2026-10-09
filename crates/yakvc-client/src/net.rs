@@ -173,6 +173,8 @@ pub(crate) struct PeerSummary {
     pub verified: bool,
     pub state: PeerState,
     pub rtt: Option<Duration>,
+    /// The protocols and versions the peer offered, while linked.
+    pub offered: Vec<(ProtocolId, u16)>,
 }
 
 /// The network half of the engine: the Iroh endpoint, verified peer
@@ -242,6 +244,8 @@ struct Link {
     /// Whether the endpoint with the lower id dialed it, which decides
     /// which of two duplicate connections survives.
     dialed_by_lower: bool,
+    /// The protocols and versions the peer offered in its hello.
+    offered: Vec<(ProtocolId, u16)>,
 }
 
 /// Outstanding `joinServer` requests from rendezvous challenges.
@@ -437,6 +441,11 @@ impl Net {
                     .link
                     .as_ref()
                     .and_then(|link| selected_rtt(&link.conn)),
+                offered: entry
+                    .link
+                    .as_ref()
+                    .map(|link| link.offered.clone())
+                    .unwrap_or_default(),
             })
             .collect()
     }

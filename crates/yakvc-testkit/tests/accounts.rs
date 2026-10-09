@@ -114,6 +114,14 @@ async fn only_the_newest_link_for_a_player_is_heard() {
     alice.move_to(Vec3::new(0.0, 64.0, 0.0));
     first.move_to(Vec3::new(5.0, 64.0, 0.0));
     links_to(&alice, bob, 1).await;
+    // Each link reports the voice version the peer offered, for the debug overlay.
+    assert!(
+        alice
+            .engine()
+            .peers()
+            .iter()
+            .all(|p| p.voice_version == Some(yakvc_shared::voice::VERSION))
+    );
 
     // A second, silent "bob" links up after the first.
     let second = net.client().name("bob").offline().start().await;

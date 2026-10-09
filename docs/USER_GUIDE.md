@@ -191,13 +191,13 @@ For testing, or to attach to a bug report, the debug overlay shows what Yak VC i
 | --- | --- |
 | Rendezvous | The connection to the Yak VC server: `connecting`, `authenticating`, `registered` (with how long your sign-in ticket has left), `retrying in` some seconds, or `disconnected`. |
 | Account | Whether the server verified your Minecraft account. |
-| Endpoint | The start of your Yak VC address, which other players' logs show too; `relay only` when **Relay Only** is on. |
+| Endpoint | The start of your Yak VC address, which other players' logs show too; `relay only` when **Relay Only** is on; and the version of the voice protocol your Yak VC speaks (`voice v4`). |
 | Microphone, Speakers | The device from the settings, and whether it is open. `not open` means Yak VC can't use it; the game log says why. |
 | Level | Your microphone's loudness, and how you talk: push to talk, or voice above the activation threshold. |
 | Sending | Whether your voice is going out right now; also `muted` or `deafened`. |
 | Bitrate | The quality your voice is sent at now, and the setting. It drops below the setting when the relay is busy. |
 | Overruns, underruns | Glitches since the device opened: microphone audio Yak VC was too slow to pick up, and moments the speakers ran dry. A count that keeps rising means crackling. |
-| Peers | One line per Yak VC player you are connected to: `direct` or `relayed` (or `connecting`, `failed`, `relay full`), `verified` if their account is, the round trip time (`rtt`), the share of their voice lost on the way (`loss`), packets that came too late to play (`late`), and how much audio is held back to smooth out uneven arrival (`buffer`). Loss and late appear once they have talked. |
+| Peers | One line per Yak VC player you are connected to: `direct` or `relayed` (or `connecting`, `failed`, `relay full`), `verified` if their account is, `voice v3` (for example) if their Yak VC speaks another voice version than yours, in which case talking with them may not work until you both run the same version, the round trip time (`rtt`), the share of their voice lost on the way (`loss`), packets that came too late to play (`late`), and how much audio is held back to smooth out uneven arrival (`buffer`). Loss and late appear once they have talked. |
 
 ## The config file
 

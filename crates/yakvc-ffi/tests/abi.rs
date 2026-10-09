@@ -272,6 +272,10 @@ fn engine_lifecycle_through_the_c_abi() {
     assert_eq!(code, YAKVC_OK);
     let stats: serde_json::Value = serde_json::from_slice(&json).unwrap();
     assert_eq!(stats["endpoint_id"].as_str().map(str::len), Some(64));
+    assert_eq!(
+        stats["voice_version"].as_u64(),
+        Some(yakvc_shared::voice::VERSION.into())
+    );
     assert!(stats["audio"]["bitrate"].is_u64());
     assert!(stats["peers"].is_array());
 

@@ -659,11 +659,13 @@ pub unsafe extern "C" fn yakvc_list_devices(
 /// second, not for every frame. Fields:
 ///
 /// - `endpoint_id`: our Iroh endpoint ID, hex
+/// - `voice_version`: the voice protocol version we speak
 /// - `audio`: `microphone_open`, `speakers_open`, `transmitting` (bools);
 ///   `bitrate` (bit/s in use); `overruns`, `underruns` (counts since the
 ///   device opened)
 /// - `peers`: per connected peer, `uuid` (hyphenated), `rtt_ms` (number or
-///   null), and once audio has arrived `received`, `late`, `fec_recovered`,
+///   null), `voice_version` (the one it offered; null until linked), and
+///   once audio has arrived `received`, `late`, `fec_recovered`,
 ///   `concealed` (frame counts) and `playout_delay_ms`
 ///
 /// # Safety
@@ -699,6 +701,7 @@ fn stats_json(engine: &Engine) -> serde_json::Value {
             let mut json = serde_json::json!({
                 "uuid": peer.uuid.to_string(),
                 "rtt_ms": peer.rtt.map(|rtt| rtt.as_secs_f64() * 1000.0),
+                "voice_version": peer.voice_version,
             });
             if let Some(stream) = peer.stream {
                 json["received"] = stream.received.into();
@@ -712,6 +715,7 @@ fn stats_json(engine: &Engine) -> serde_json::Value {
         .collect();
     serde_json::json!({
         "endpoint_id": engine.endpoint_id(),
+        "voice_version": yakvc_shared::voice::VERSION,
         "audio": {
             "microphone_open": audio.microphone_open,
             "speakers_open": audio.speakers_open,
