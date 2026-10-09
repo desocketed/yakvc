@@ -48,7 +48,7 @@ Agents don't negotiate with each other directly; all coordination goes through t
 
 | Agent | Crates | Milestone work |
 | --- | --- | --- |
-| protocol | `yakvc-shared`, `yakvc-server` | M3 server side |
+| protocol | `yakvc-proto`, `yakvc-server` | M3 server side |
 | audio | `yakvc-audio` | M1 |
 | engine | `yakvc-client` (`net` + `voice`) | M2, M3 client side |
 | harness | `yakvc-cli`, `yakvc-testkit`, `yakvc-ffi` | CLI diagnostics for M1–M2, testkit, FFI growth |
@@ -57,7 +57,7 @@ Agents don't negotiate with each other directly; all coordination goes through t
 
 | Provider → consumers | Contract |
 | --- | --- |
-| `shared` → client, server | Message types, `Ticket` sign/verify, `PairToken`, datagram header |
+| `proto` → client, server | Message types, `Ticket` sign/verify, `PairToken`, datagram header |
 | `audio` → client | Capture/playback streams, `Encoder`/`Decoder`, `JitterBuffer`, `Mixer` (per-source pose and gain) |
 | `client` → ffi, cli, testkit | `Engine::start`, `EngineHandle` operations, `Event` enum, `sim` hooks |
 | `server` → testkit | `Server::builder(config).spawn()` and test-facing accessors |

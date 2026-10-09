@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, Once};
 use std::time::{Duration, SystemTime};
 
 use tokio::sync::mpsc;
-use yakvc_shared::Uuid;
+use yakvc_proto::Uuid;
 
 /// Notifications from the engine, in order.
 #[derive(Debug, Clone, PartialEq)]

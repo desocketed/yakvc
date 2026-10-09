@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use tokio::time::{Instant, sleep};
 use yakvc_client::{PeerState, Uuid, Vec3};
-use yakvc_shared::peer::CloseCode;
+use yakvc_proto::peer::CloseCode;
 use yakvc_testkit::{TRACKING_RANGE, TestClient, TestNet};
 
 const TOO_MANY_PEERS: Option<u64> = Some(CloseCode::TooManyPeers as u64);

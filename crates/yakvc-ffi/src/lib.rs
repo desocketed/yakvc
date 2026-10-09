@@ -715,7 +715,7 @@ fn stats_json(engine: &Engine) -> serde_json::Value {
         .collect();
     serde_json::json!({
         "endpoint_id": engine.endpoint_id(),
-        "voice_version": yakvc_shared::voice::VERSION,
+        "voice_version": yakvc_proto::voice::VERSION,
         "audio": {
             "microphone_open": audio.microphone_open,
             "speakers_open": audio.speakers_open,

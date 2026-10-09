@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 
 use serde::{Deserialize, Serialize};
-use yakvc_shared::{EndpointAddr, EndpointId, IssuerId, RelayUrl, Uuid};
+use yakvc_proto::{EndpointAddr, EndpointId, IssuerId, RelayUrl, Uuid};
 
 /// Engine configuration, parsed from the engine's keys in
 /// `client.toml`. Unknown keys are ignored, because the Java side keeps its
