@@ -353,7 +353,12 @@ fn print_event(event: &Event) {
         Event::Peer { .. } | Event::Rendezvous(_) | Event::Error(_) => eprintln!("{event:?}"),
         // Talking and mic level are too frequent to be useful here, and
         // the CLI has no Mojang session to answer join requests with.
-        Event::Talking { .. } | Event::MicLevel(_) | Event::JoinRequest { .. } => {}
+        Event::Talking { .. }
+        | Event::MicLevel(_)
+        | Event::JoinRequest { .. }
+        | Event::Invite { .. }
+        | Event::GroupNotice { .. }
+        | Event::KickVote { .. } => {}
     }
 }
 

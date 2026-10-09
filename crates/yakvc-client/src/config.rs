@@ -28,6 +28,8 @@ pub struct Config {
     pub voice_range: f32,
     /// When set, only these players are heard and sent to.
     pub friends_only: Option<Vec<Uuid>>,
+    /// Who may invite us to a group.
+    pub invites: InvitesFrom,
     pub audio: AudioConfig,
     /// Test audio for machines without sound hardware. Needs `dev_mode`.
     pub dev: DevConfig,
@@ -81,6 +83,16 @@ pub struct DevConfig {
     pub tone_hz: Option<f32>,
     /// Discard the output instead of opening speakers.
     pub null_output: bool,
+}
+
+/// Who may invite us to a group (DESIGN.md "Group voice chat").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InvitesFrom {
+    Everyone,
+    /// Only players on the `friends_only` list; nobody when it is unset.
+    Friends,
+    Nobody,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -178,6 +190,7 @@ impl Default for Config {
             relay_only: false,
             voice_range: 48.0,
             friends_only: None,
+            invites: InvitesFrom::Everyone,
             audio: AudioConfig::default(),
             dev: DevConfig::default(),
         }
@@ -228,6 +241,7 @@ mod tests {
             relay_only = true
             dev_mode = true
             friends_only = ["00000000-0000-0000-0000-000000000001"]
+            invites = "friends"
             # Java's own settings live in the same file.
             show_talking_indicator = true
 
@@ -243,6 +257,7 @@ mod tests {
         assert_eq!(config.voice_range, 32.0);
         assert!(config.relay_only && config.dev_mode);
         assert_eq!(config.friends_only, Some(vec![Uuid::from_u128(1)]));
+        assert_eq!(config.invites, InvitesFrom::Friends);
         assert_eq!(config.audio.activation, Activation::Voice);
         assert_eq!(config.audio.bitrate, 32_000);
         assert_eq!(config.audio.input_gain, 1.0, "unset keys keep defaults");
