@@ -19,12 +19,12 @@ mod voice;
 mod world;
 
 pub use yakvc_audio::{DeviceChoice, DeviceInfo, Devices, FrameSink, FrameSource, StreamStats};
-pub use yakvc_shared::{EndpointAddr, GroupId, GroupKey, Uuid};
+pub use yakvc_shared::{EndpointAddr, GroupId, Uuid};
 
 pub use crate::config::{
-    Activation, AudioConfig, Config, ConfigError, DevConfig, RendezvousConfig,
+    Activation, AudioConfig, Config, ConfigError, DevConfig, InvitesFrom, RendezvousConfig,
 };
 pub use crate::engine::{Engine, EngineBuilder, NetReport, PeerAudio, PeerInfo, StartError};
-pub use crate::event::{Event, Events, JoinId, PeerState, RendezvousState};
-pub use crate::voice::{AudioStats, GroupInfo};
+pub use crate::event::{Event, Events, GroupNoticeKind, JoinId, PeerState, RendezvousState};
+pub use crate::voice::{AudioStats, GroupError, GroupInfo};
 pub use crate::world::{Input, Pose, Vec3, World};

@@ -5,6 +5,7 @@
 //! its audio. The audio thread ([`AudioLoop`]) captures, encodes and sends
 //! frames to the recipients [`rules`] picks, and mixes what it receives.
 
+mod group;
 mod rules;
 
 use std::collections::{HashMap, HashSet};
@@ -22,7 +23,7 @@ use yakvc_audio::{
     Speakers, StereoFrame, StreamStats, level_db,
 };
 use yakvc_shared::voice::{VERSION, VoiceHeader, VoiceMsg};
-use yakvc_shared::{GroupAnnounce, GroupId, GroupKey, ProtocolId, Uuid};
+use yakvc_shared::{GroupAnnounce, GroupId, ProtocolId, Uuid};
 
 use crate::config::{AudioConfig, Config};
 use crate::engine::PeerAudio;
@@ -30,8 +31,10 @@ use crate::event::{Event, EventSender};
 use crate::net::{ControlRecv, Peer, PeerLink, Protocol};
 use crate::world::{Input, World};
 
+use self::group::Told;
+pub use self::group::{GroupError, GroupInfo};
 pub(crate) use self::rules::VoiceState;
-use self::rules::{OwnGroup, plan_send};
+use self::rules::plan_send;
 
 /// How often the audio thread wakes to move frames.
 const AUDIO_TICK: Duration = Duration::from_millis(5);
@@ -63,20 +66,6 @@ pub struct AudioStats {
     pub overruns: u64,
     /// Speaker underruns since they were last opened.
     pub underruns: u64,
-}
-
-/// A group someone on the server is in, for the voice menu.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GroupInfo {
-    pub id: GroupId,
-    pub name: String,
-    /// It has a password.
-    pub locked: bool,
-    /// Who announced it, us included. A peer's claim isn't checked unless
-    /// we are in the group too.
-    pub members: Vec<Uuid>,
-    /// We are in it.
-    pub joined: bool,
 }
 
 /// The voice engine half: the [`Protocol`] for peers plus the audio thread.
@@ -150,12 +139,14 @@ impl Voice {
     /// Starts the audio thread.
     pub(crate) fn start(config: &Config, io: AudioIo, events: EventSender) -> Voice {
         let (to_audio, from_net) = std_mpsc::sync_channel(AUDIO_QUEUE);
+        let mut state = VoiceState::new(
+            config.audio.clone(),
+            config.voice_range,
+            config.friends_only.clone(),
+        );
+        state.invites_from = config.invites;
         let shared = Arc::new(Shared {
-            state: Mutex::new(VoiceState::new(
-                config.audio.clone(),
-                config.voice_range,
-                config.friends_only.clone(),
-            )),
+            state: Mutex::new(state),
             peers: Mutex::new(HashMap::new()),
             to_audio: Mutex::new(to_audio),
             receive_policy: watch::Sender::new(()),
@@ -224,77 +215,58 @@ impl Voice {
         self.shared.receive_policy.send_replace(());
     }
 
-    /// Joins `key`'s group, leaving any other, with nearby voice on.
-    pub(crate) fn join_group(&self, key: GroupKey, locked: bool) {
-        self.shared.state.lock().unwrap().group = Some(OwnGroup {
-            key,
-            locked,
-            nearby: true,
-        });
-        self.shared.refresh_group_mates();
-        // Peer tasks announce the new group.
-        self.shared.receive_policy.send_replace(());
+    /// Invites `target` to our group, or while we are in none, to a new
+    /// group we join once it accepts. Its peer task delivers the invite.
+    pub(crate) fn invite(&self, target: Uuid) {
+        self.shared
+            .update(|state, _| state.invite(target, Instant::now()));
+    }
+
+    /// Joins the group `from` invited us to, leaving any other.
+    pub(crate) fn accept_invite(&self, from: Uuid) -> Result<(), GroupError> {
+        self.shared
+            .update(|state, _| state.accept_invite(from, Instant::now()))
+    }
+
+    /// Joins the public group `id` from the list, leaving any other.
+    pub(crate) fn join_group(&self, id: GroupId) -> Result<(), GroupError> {
+        let announced = self.shared.announced();
+        self.shared
+            .update(|state, _| state.join_public(id, &announced))
     }
 
     pub(crate) fn leave_group(&self) {
-        self.shared.state.lock().unwrap().group = None;
-        self.shared.refresh_group_mates();
-        self.shared.receive_policy.send_replace(());
+        self.shared.update(|state, _| state.set_group(None));
     }
 
-    /// Whether nearby players outside the group are heard and sent to.
-    /// Ignored outside a group.
-    pub(crate) fn set_group_nearby(&self, nearby: bool) {
-        if let Some(group) = &mut self.shared.state.lock().unwrap().group {
-            group.nearby = nearby;
-        }
-        self.shared.receive_policy.send_replace(());
+    pub(crate) fn set_group_public(&self, public: bool) -> Result<(), GroupError> {
+        self.shared
+            .update(|state, _| state.change_group_state(|s| s.public = public))
     }
 
-    /// Every group we know of: ours, and those our peers announce.
+    /// Empty for none; at most 32 characters.
+    pub(crate) fn set_group_label(&self, label: &str) -> Result<(), GroupError> {
+        self.shared
+            .update(|state, _| state.change_group_state(|s| s.label = label.to_owned()))
+    }
+
+    pub(crate) fn vote_kick(&self, target: Uuid, yes: bool) -> Result<(), GroupError> {
+        self.shared
+            .update(|state, events| state.vote_kick(target, yes, Instant::now(), events))
+    }
+
+    /// Our group and the public groups our peers announce.
     pub(crate) fn groups(&self) -> Vec<GroupInfo> {
-        let state = self.shared.state.lock().unwrap().clone();
-        let mut groups: Vec<GroupInfo> = Vec::new();
-        let mut add = |id: GroupId, name: &str, locked: bool, member: Uuid| match groups
-            .iter_mut()
-            .find(|g| g.id == id)
-        {
-            Some(group) => group.members.push(member),
-            None => groups.push(GroupInfo {
-                id,
-                name: name.to_owned(),
-                locked,
-                members: vec![member],
-                joined: false,
-            }),
-        };
-        if let (Some(own), Some(me)) = (&state.group, state.own_uuid) {
-            add(own.key.id(), own.key.name(), own.locked, me);
-        }
-        for p in current(&self.shared.peers.lock().unwrap()) {
-            if let Some(announce) = &p.group {
-                let uuid = p.peer.uuid();
-                add(announce.id, &announce.name, announce.locked, uuid);
-            }
-        }
-        for group in &mut groups {
-            group.joined = state
-                .group
-                .as_ref()
-                .is_some_and(|own| own.key.id() == group.id);
-            group.members.sort();
-        }
-        // A stable order, so a menu showing the list only changes when it does.
-        groups.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id)));
-        groups
+        let announced = self.shared.announced();
+        self.shared.state.lock().unwrap().groups(&announced)
     }
 
     pub(crate) fn group_mates(&self) -> HashSet<Uuid> {
         self.shared.state.lock().unwrap().group_mates.clone()
     }
 
-    pub(crate) fn set_direct(&self, direct: bool) {
-        self.shared.state.lock().unwrap().direct = direct;
+    pub(crate) fn set_ignore_world(&self, ignore: bool) {
+        self.shared.state.lock().unwrap().ignore_world = ignore;
     }
 
     /// The audio thread reopens devices whose configured name changed.
@@ -304,6 +276,7 @@ impl Voice {
             state.audio = config.audio.clone();
             state.voice_range = config.voice_range;
             state.friends_only = config.friends_only.clone();
+            state.invites_from = config.invites;
         }
         self.shared.receive_policy.send_replace(());
     }
@@ -348,26 +321,48 @@ impl Shared {
             .is_some_and(|p| p.peer.link_id() == link_id)
     }
 
+    /// What each player's current link last announced.
+    fn announced(&self) -> Vec<(Uuid, GroupAnnounce)> {
+        current(&self.peers.lock().unwrap())
+            .filter_map(|p| Some((p.peer.uuid(), p.group.clone()?)))
+            .collect()
+    }
+
     /// Works out again which peers are in our group, after an announcement,
     /// a peer leaving, or a change of our own group.
     fn refresh_group_mates(&self) {
-        let announced: Vec<(Uuid, GroupAnnounce)> = current(&self.peers.lock().unwrap())
-            .filter_map(|p| Some((p.peer.uuid(), p.group.clone()?)))
-            .collect();
-        let mut state = self.state.lock().unwrap();
-        let mates: HashSet<Uuid> = match &state.group {
-            Some(own) => announced
-                .iter()
-                .filter(|(uuid, announce)| own.key.has_member(*uuid, announce))
-                .map(|(uuid, _)| *uuid)
-                .collect(),
-            None => HashSet::new(),
+        // Peers before state, never the other way round, so the two locks
+        // can't deadlock.
+        let announced = self.announced();
+        let mut events = Vec::new();
+        let changed = {
+            let mut state = self.state.lock().unwrap();
+            let had_group = state.group.is_some();
+            state.join_pending(&announced);
+            let joined = !had_group && state.group.is_some();
+            let mates = state.mates_among(&announced);
+            state.update_mates(mates, &mut events) || joined
         };
-        if mates != state.group_mates {
-            state.group_mates = mates;
-            drop(state);
+        for event in events {
+            self.events.send(event);
+        }
+        if changed {
             self.receive_policy.send_replace(());
         }
+    }
+
+    /// Changes the voice state, reports the events `change` adds, then
+    /// works out the group mates again and has every peer task tell its
+    /// peer what changed.
+    fn update<T>(&self, change: impl FnOnce(&mut VoiceState, &mut Vec<Event>) -> T) -> T {
+        let mut events = Vec::new();
+        let result = change(&mut self.state.lock().unwrap(), &mut events);
+        for event in events {
+            self.events.send(event);
+        }
+        self.refresh_group_mates();
+        self.receive_policy.send_replace(());
+        result
     }
 }
 
@@ -423,31 +418,17 @@ async fn serve_peer(shared: Arc<Shared>, link: PeerLink) {
     #[cfg(feature = "sim")]
     let mut impairer = shared.impairment.clone().map(crate::sim::Impairer::new);
 
-    // Peers assume we want their audio, and that we are in no group, until
-    // told otherwise.
-    let mut told_wants_audio = true;
-    let mut told_group = None;
-    loop {
-        let (wants, group) = {
-            let state = shared.state.lock().unwrap();
-            (state.wants_audio_from(uuid), state.announcement())
-        };
-        if wants != told_wants_audio {
-            let msg = VoiceMsg::ReceiveState { wants_audio: wants };
-            if control_send.send(&msg).await.is_err() {
-                break;
+    let mut told = Told::default();
+    'serve: loop {
+        let news = shared
+            .state
+            .lock()
+            .unwrap()
+            .news_for(uuid, &mut told, Instant::now());
+        for msg in &news {
+            if control_send.send(msg).await.is_err() {
+                break 'serve;
             }
-            told_wants_audio = wants;
-        }
-        if group != told_group {
-            if control_send
-                .send(&VoiceMsg::Group(group.clone()))
-                .await
-                .is_err()
-            {
-                break;
-            }
-            told_group = group;
         }
         tokio::select! {
             datagram = datagrams.recv() => {
@@ -511,6 +492,18 @@ async fn read_control(
                 drop(peers);
                 shared.refresh_group_mates();
             }
+            // The rest speak for the player only over its current link; a
+            // kick vote in particular counts only from the voter itself.
+            _ if !shared.is_current(uuid, link_id) => {}
+            VoiceMsg::Invite { key, state } => shared.update(|voice, events| {
+                voice.receive_invite(uuid, key, state, Instant::now(), events);
+            }),
+            VoiceMsg::GroupState(state) => shared.update(|voice, events| {
+                voice.receive_group_state(uuid, state, events);
+            }),
+            VoiceMsg::KickVote { target, yes } => shared.update(|voice, events| {
+                voice.receive_kick_vote(uuid, target, yes, Instant::now(), events);
+            }),
         }
     }
 }
@@ -741,10 +734,11 @@ impl AudioLoop {
             return;
         };
         let peers = self.shared.peers.lock().unwrap();
-        let candidates = current(&peers)
+        let candidates: Vec<_> = current(&peers)
             .filter(|p| p.wants_audio.load(Ordering::Relaxed))
             .filter_map(|p| state.send_to(p.peer.uuid(), p.peer.is_relayed()))
             .collect();
+        let groups: HashMap<Uuid, bool> = candidates.iter().map(|c| (c.uuid, c.group)).collect();
         let plan = plan_send(candidates, state.audio.bitrate);
         for p in current(&peers).filter(|p| p.peer.is_relayed()) {
             p.peer
@@ -770,28 +764,18 @@ impl AudioLoop {
                 return;
             }
         };
-        // The same frame, with and without the `group` flag.
-        let datagram = |group: bool| {
+        for uuid in &plan.recipients {
             let header = VoiceHeader {
                 seq: self.seq,
                 ts: self.ts,
                 end_of_talk,
-                group,
+                group: groups[uuid],
             };
             let mut datagram = Vec::with_capacity(VoiceHeader::LEN + payload.len());
             datagram.extend_from_slice(&header.to_bytes());
             datagram.extend_from_slice(payload);
-            datagram
-        };
-        let (nearby, group) = (datagram(false), datagram(true));
-        for uuid in &plan.recipients {
-            let datagram = if state.is_group_mate(*uuid) {
-                &group
-            } else {
-                &nearby
-            };
             // A peer that just closed simply misses the frame.
-            let _ = peers[uuid][0].peer.send_datagram(datagram);
+            let _ = peers[uuid][0].peer.send_datagram(&datagram);
         }
         self.seq = self.seq.wrapping_add(1);
         if end_of_talk {
@@ -855,10 +839,9 @@ impl AudioLoop {
         for (&uuid, remote) in &mut self.remotes {
             let mut frame: MonoFrame = [0.0; FRAME_SAMPLES];
             let pulled = remote.stream.pull(&mut frame, now);
-            let spatial = match (pulled, remote.group) {
-                (Pulled::Voice, true) => state.group_playback(uuid),
-                (Pulled::Voice, false) => state.playback(uuid),
-                (Pulled::Silence, _) => None,
+            let spatial = match pulled {
+                Pulled::Voice => state.playback(uuid, remote.group),
+                Pulled::Silence => None,
             };
             let talking_frame = spatial.is_some() && level_db(&frame) > TALKING_LEVEL_DB;
             if let Some(spatial) = spatial {
