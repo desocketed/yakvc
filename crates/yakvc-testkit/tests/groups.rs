@@ -1,11 +1,12 @@
-//! Group voice chat (DESIGN.md "Group voice chat", #28): group mates hear
-//! each other at any distance, unpositioned, and "group only" cuts nearby
-//! players off both ways.
+//! Group voice chat (DESIGN.md "Group voice chat", #28): an accepted invite
+//! makes a group whose members hear each other at any distance, unpositioned,
+//! and only each other; public groups can be joined from the list; a kick
+//! vote removes a member.
 
 use std::time::Duration;
 
 use tokio::time::{Instant, sleep};
-use yakvc_client::{PeerState, Vec3};
+use yakvc_client::{Event, GroupNoticeKind, InvitesFrom, PeerState, Uuid, Vec3};
 use yakvc_testkit::{TestClient, TestNet, see_each_other};
 
 /// Peak level above which a sample counts as audible: -60 dBFS.
@@ -24,6 +25,10 @@ async fn listen(client: &TestClient) -> Vec<[f32; 2]> {
     client.recording().take()
 }
 
+async fn hears(client: &TestClient) -> bool {
+    !is_silent(&listen(client).await)
+}
+
 fn is_silent(samples: &[[f32; 2]]) -> bool {
     !samples.iter().flatten().any(|s| s.abs() > AUDIBLE)
 }
@@ -36,23 +41,33 @@ fn levels(samples: &[[f32; 2]]) -> (f32, f32) {
     (left.sqrt(), right.sqrt())
 }
 
-/// Waits until `client` lists a group of `members`.
+/// Waits until `client`'s own group has exactly `members`.
 async fn wait_for_group(client: &TestClient, members: &[&TestClient]) {
     let mut wanted: Vec<_> = members.iter().map(|c| c.uuid()).collect();
     wanted.sort();
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        let found = client.engine().groups().into_iter().any(|group| {
-            let mut have = group.members;
-            have.sort();
-            have == wanted
-        });
-        if found {
+        let mine = client.engine().groups().into_iter().find(|g| g.mine);
+        if mine.as_ref().is_some_and(|g| g.members == wanted) {
             return;
         }
-        assert!(Instant::now() < deadline, "no group of {wanted:?}");
+        assert!(
+            Instant::now() < deadline,
+            "no group of {wanted:?}: {mine:?}"
+        );
         sleep(Duration::from_millis(20)).await;
     }
+}
+
+/// `inviter` invites `invitee`, which accepts once the invite arrives.
+async fn invite(inviter: &TestClient, invitee: &mut TestClient) {
+    let from = inviter.uuid();
+    inviter.engine().invite(invitee.uuid());
+    invitee
+        .wait_for("an invite", |e| *e == Event::Invite { from })
+        .await
+        .unwrap();
+    invitee.engine().accept_invite(from).unwrap();
 }
 
 /// Starts named clients that see each other, all connected directly.
@@ -78,70 +93,176 @@ async fn clients(net: &TestNet, names: &[&str]) -> Vec<TestClient> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn group_mates_hear_each_other_at_any_distance() {
+async fn an_accepted_invite_makes_a_group_heard_at_any_distance() {
     let net = TestNet::start().await;
-    let [alice, bob, carol]: [TestClient; 3] = clients(&net, &["alice", "bob", "carol"])
+    let [alice, mut bob, carol]: [TestClient; 3] = clients(&net, &["alice", "bob", "carol"])
         .await
         .try_into()
         .unwrap();
-    // Far beyond voice and tracking range of each other.
+    // Bob is far away; Carol stands next to Alice.
     alice.move_to(at(0.0, 0.0));
+    carol.move_to(at(2.0, 0.0));
     bob.move_to(at(1000.0, 0.0));
-    carol.move_to(at(-1000.0, 0.0));
     alice.talk(true);
     sleep(SETTLE).await;
-    assert!(is_silent(&listen(&bob).await), "heard without a group");
+    assert!(!hears(&bob).await, "heard without a group");
 
-    alice.engine().join_group("Miners", "pw").unwrap();
-    bob.engine().join_group("Miners", "pw").unwrap();
-    // Same name, wrong password: a different group.
-    carol.engine().join_group("Miners", "guess").unwrap();
-    wait_for_group(&bob, &[&alice, &bob]).await;
-    wait_for_group(&bob, &[&carol]).await;
+    // Inviting alone changes nothing: Alice stays in proximity voice.
+    alice.engine().invite(bob.uuid());
+    let from = alice.uuid();
+    bob.wait_for("an invite", |e| *e == Event::Invite { from })
+        .await
+        .unwrap();
     sleep(SETTLE).await;
+    assert!(alice.engine().groups().is_empty());
+    assert!(hears(&carol).await, "the inviter left proximity voice");
+    assert!(!hears(&bob).await);
 
+    // Once Bob accepts, both are in the group.
+    bob.engine().accept_invite(from).unwrap();
+    wait_for_group(&alice, &[&alice, &bob]).await;
+    wait_for_group(&bob, &[&alice, &bob]).await;
+    sleep(SETTLE).await;
     let heard = listen(&bob).await;
     assert!(!is_silent(&heard), "a group mate wasn't heard");
     let (left, right) = levels(&heard);
     assert!((left - right).abs() < left * 0.05, "group voice is panned");
-    assert!(
-        is_silent(&listen(&carol).await),
-        "the wrong password let carol hear the group"
-    );
 
-    // Leaving the group stops it.
-    bob.engine().leave_group();
-    sleep(SETTLE).await;
-    assert!(is_silent(&listen(&bob).await), "heard after leaving");
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn group_only_cuts_nearby_players_off_both_ways() {
-    let net = TestNet::start().await;
-    let [alice, bob, carol]: [TestClient; 3] = clients(&net, &["alice", "bob", "carol"])
-        .await
-        .try_into()
-        .unwrap();
-    // Carol stands next to alice but isn't in the group; bob is far away.
-    alice.move_to(at(0.0, 0.0));
-    carol.move_to(at(2.0, 0.0));
-    bob.move_to(at(1000.0, 0.0));
-    alice.engine().join_group("Miners", "").unwrap();
-    bob.engine().join_group("Miners", "").unwrap();
-    wait_for_group(&alice, &[&alice, &bob]).await;
-
-    // Nearby on (the default): carol hears alice as usual.
-    alice.talk(true);
-    sleep(SETTLE).await;
-    assert!(!is_silent(&listen(&carol).await));
-
-    alice.engine().set_group_nearby(false);
-    sleep(SETTLE).await;
-    assert!(is_silent(&listen(&carol).await), "carol still hears alice");
-    assert!(!is_silent(&listen(&bob).await), "bob lost the group");
-
+    // In a group, voice is group-only: Carol no longer hears Alice, and
+    // Alice no longer hears Carol.
+    assert!(!hears(&carol).await, "carol still hears alice");
     alice.talk(false);
     carol.talk(true);
     sleep(SETTLE).await;
-    assert!(is_silent(&listen(&alice).await), "alice still hears carol");
+    assert!(!hears(&alice).await, "alice still hears carol");
+
+    // Bob talks back across the distance; leaving ends it.
+    carol.talk(false);
+    bob.talk(true);
+    sleep(SETTLE).await;
+    assert!(hears(&alice).await, "alice doesn't hear bob");
+    alice.engine().leave_group();
+    sleep(SETTLE).await;
+    assert!(!hears(&alice).await, "heard after leaving");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn only_public_groups_are_listed_and_joinable() {
+    let net = TestNet::start().await;
+    let [alice, mut bob, carol]: [TestClient; 3] = clients(&net, &["alice", "bob", "carol"])
+        .await
+        .try_into()
+        .unwrap();
+    invite(&alice, &mut bob).await;
+    wait_for_group(&alice, &[&alice, &bob]).await;
+    sleep(SETTLE).await;
+    // Private: Carol sees only proofs she can't place.
+    assert!(carol.engine().groups().is_empty());
+
+    alice.engine().set_group_public(true).unwrap();
+    alice.engine().set_group_label("Miners").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let listed = loop {
+        let groups = carol.engine().groups();
+        if let Some(group) = groups.first()
+            && group.members.len() == 2
+            && group.label == "Miners"
+        {
+            break group.clone();
+        }
+        assert!(Instant::now() < deadline, "not listed: {groups:?}");
+        sleep(Duration::from_millis(20)).await;
+    };
+    assert!(listed.public && !listed.mine);
+    // Bob got the change from Alice.
+    assert!(bob.engine().groups()[0].public);
+
+    carol.engine().join_group(listed.id).unwrap();
+    wait_for_group(&alice, &[&alice, &bob, &carol]).await;
+    wait_for_group(&carol, &[&alice, &bob, &carol]).await;
+    carol.move_to(at(-1000.0, 0.0));
+    carol.talk(true);
+    sleep(SETTLE).await;
+    assert!(hears(&alice).await);
+    assert!(hears(&bob).await);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_kick_vote_removes_a_member() {
+    let net = TestNet::start().await;
+    let [mut alice, mut bob, mut carol]: [TestClient; 3] =
+        clients(&net, &["alice", "bob", "carol"])
+            .await
+            .try_into()
+            .unwrap();
+    invite(&alice, &mut bob).await;
+    wait_for_group(&alice, &[&alice, &bob]).await;
+    invite(&alice, &mut carol).await;
+    for client in [&alice, &bob, &carol] {
+        wait_for_group(client, &[&alice, &bob, &carol]).await;
+    }
+    carol.talk(true);
+    sleep(SETTLE).await;
+    assert!(hears(&bob).await);
+
+    // Alice starts the vote; one of the two others isn't enough.
+    let target = carol.uuid();
+    alice.engine().vote_kick(target, true).unwrap();
+    bob.wait_for(
+        "alice's vote",
+        |e| matches!(e, Event::KickVote { by, votes: 1, needed: 2, .. } if *by == alice.uuid()),
+    )
+    .await
+    .unwrap();
+    // Bob agrees: it passes everywhere, and Carol leaves.
+    bob.engine().vote_kick(target, true).unwrap();
+    carol
+        .wait_for("the kick", |e| {
+            is_notice(e, GroupNoticeKind::KickedUs, target)
+        })
+        .await
+        .unwrap();
+    alice
+        .wait_for("carol leaving", |e| {
+            is_notice(e, GroupNoticeKind::Left, target)
+        })
+        .await
+        .unwrap();
+    wait_for_group(&alice, &[&alice, &bob]).await;
+    wait_for_group(&bob, &[&alice, &bob]).await;
+    assert!(carol.engine().groups().is_empty());
+    // Out of the group and far away, Carol isn't heard.
+    carol.move_to(at(1000.0, 0.0));
+    sleep(SETTLE).await;
+    assert!(!hears(&bob).await, "bob still hears carol");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn invites_from_nobody_are_dropped() {
+    let net = TestNet::start().await;
+    let alice = net.client().name("alice").start().await;
+    let mut bob = net
+        .client()
+        .name("bob")
+        .config(|config| config.invites = InvitesFrom::Nobody)
+        .start()
+        .await;
+    see_each_other(&[&alice, &bob]);
+    bob.wait_for_peer(alice.uuid(), PeerState::Direct)
+        .await
+        .unwrap();
+
+    alice.engine().invite(bob.uuid());
+    let from = alice.uuid();
+    let invited = tokio::time::timeout(
+        Duration::from_secs(2),
+        bob.wait_for("an invite", |e| *e == Event::Invite { from }),
+    )
+    .await;
+    assert!(!matches!(invited, Ok(Ok(_))), "the invite got through");
+    assert!(bob.engine().accept_invite(from).is_err());
+}
+
+fn is_notice(event: &Event, want: GroupNoticeKind, who: Uuid) -> bool {
+    matches!(event, Event::GroupNotice { kind, uuid, .. } if *kind == want && *uuid == who)
 }

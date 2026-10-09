@@ -110,9 +110,13 @@ fn every_engine_call_rejects_a_null_engine() {
             yakvc_update_config(null, ptr::null(), 0),
             yakvc_list_devices(null, buf.as_mut_ptr(), buf.len(), &mut len),
             yakvc_stats(null, buf.as_mut_ptr(), buf.len(), &mut len),
-            yakvc_join_group(null, b"g".as_ptr(), 1, ptr::null(), 0),
+            yakvc_invite(null, uuid.as_ptr()),
+            yakvc_accept_invite(null, uuid.as_ptr()),
+            yakvc_join_group(null, [b'0'; 64].as_ptr()),
             yakvc_leave_group(null),
-            yakvc_set_group_nearby(null, false),
+            yakvc_set_group_public(null, true),
+            yakvc_set_group_label(null, ptr::null(), 0),
+            yakvc_vote_kick(null, uuid.as_ptr(), true),
             yakvc_list_groups(null, buf.as_mut_ptr(), buf.len(), &mut len),
         ]
     };
@@ -363,39 +367,44 @@ fn groups_through_the_c_abi() {
         YAKVC_ABI_VERSION,
     );
     assert_eq!(code, YAKVC_OK, "{}", last_error());
-    let uuid = [7u8; 16];
-    let (name, password) = (b"Miners", b"pw");
-    let mut id = [0u8; 64];
+    let me = [7u8; 16];
+    let bob = [8u8; 16];
     let mut buf = vec![0u8; 4096];
     let mut len = 0usize;
     // SAFETY: `engine` is live and every buffer is valid for its length.
     unsafe {
         assert_eq!(
-            yakvc_set_identity(engine, uuid.as_ptr(), b"alice".as_ptr(), 5),
+            yakvc_set_identity(engine, me.as_ptr(), b"alice".as_ptr(), 5),
             YAKVC_OK
         );
-        let code = yakvc_join_group(engine, name.as_ptr(), 6, password.as_ptr(), 2);
-        assert_eq!(code, YAKVC_OK, "{}", last_error());
-        assert_eq!(yakvc_set_group_nearby(engine, false), YAKVC_OK);
-        let code = yakvc_group_id(name.as_ptr(), 6, password.as_ptr(), 2, id.as_mut_ptr());
-        assert_eq!(code, YAKVC_OK, "{}", last_error());
-        let code = yakvc_list_groups(engine, buf.as_mut_ptr(), buf.len(), &mut len);
-        assert_eq!(code, YAKVC_OK, "{}", last_error());
-
-        let groups: serde_json::Value = serde_json::from_slice(&buf[..len]).unwrap();
-        let group = &groups[0];
-        assert_eq!(group["id"], std::str::from_utf8(&id).unwrap());
-        assert_eq!(group["name"], "Miners");
-        assert_eq!(group["locked"], true);
-        assert_eq!(group["joined"], true);
-        assert_eq!(group["members"][0], "07070707-0707-0707-0707-070707070707");
-
-        let blank = b"  ";
-        let code = yakvc_join_group(engine, blank.as_ptr(), 2, ptr::null(), 0);
-        assert_eq!(code, YAKVC_ERR_INVALID_ARGUMENT);
-        assert_eq!(yakvc_leave_group(engine), YAKVC_OK);
+        // Inviting needs no group, and doesn't put us in one.
+        assert_eq!(yakvc_invite(engine, bob.as_ptr()), YAKVC_OK);
         yakvc_list_groups(engine, buf.as_mut_ptr(), buf.len(), &mut len);
         assert_eq!(&buf[..len], b"[]");
+
+        // What needs a group, an invite or a listed group is unavailable.
+        assert_eq!(
+            yakvc_accept_invite(engine, bob.as_ptr()),
+            YAKVC_ERR_UNAVAILABLE
+        );
+        assert_eq!(yakvc_set_group_public(engine, true), YAKVC_ERR_UNAVAILABLE);
+        assert_eq!(
+            yakvc_set_group_label(engine, b"Miners".as_ptr(), 6),
+            YAKVC_ERR_UNAVAILABLE
+        );
+        assert_eq!(
+            yakvc_vote_kick(engine, bob.as_ptr(), true),
+            YAKVC_ERR_UNAVAILABLE
+        );
+        assert_eq!(last_error(), "not in a group");
+        let id = [b'a'; 64];
+        assert_eq!(yakvc_join_group(engine, id.as_ptr()), YAKVC_ERR_UNAVAILABLE);
+        let bad = [b'z'; 64];
+        assert_eq!(
+            yakvc_join_group(engine, bad.as_ptr()),
+            YAKVC_ERR_INVALID_ARGUMENT
+        );
+        assert_eq!(yakvc_leave_group(engine), YAKVC_OK);
         yakvc_destroy(engine);
     }
 }

@@ -7,12 +7,12 @@ use iroh::endpoint::presets;
 use iroh::{Endpoint, EndpointAddr, RelayMode, SecretKey};
 use tokio::runtime::Runtime;
 use yakvc_audio::{Devices, FrameSink, FrameSource, StreamStats};
-use yakvc_shared::{GroupId, GroupKey, IssuerKey, TicketBody, TicketVerifier, Uuid};
+use yakvc_shared::{GroupId, IssuerKey, TicketBody, TicketVerifier, Uuid};
 
 use crate::config::{Config, ConfigError};
 use crate::event::{self, Event, EventSender, Events, JoinId, PeerState, RendezvousState};
 use crate::net::{Identity, Net, Trust};
-use crate::voice::{AudioIo, AudioStats, GroupInfo, Voice};
+use crate::voice::{AudioIo, AudioStats, GroupError, GroupInfo, Voice};
 use crate::world::{Input, World, distance};
 
 /// A running voice engine. Dropping it shuts down gracefully, waiting at most
@@ -231,24 +231,42 @@ impl Engine {
         NetReport::from_iroh(self.net.net_report().await)
     }
 
-    /// Joins the group with this name and password (empty for an open
-    /// group), leaving any other. Nearby voice starts on. `None` if the name
-    /// is empty or longer than 32 characters.
-    pub fn join_group(&self, name: &str, password: &str) -> Option<GroupId> {
-        let key = GroupKey::new(name, password)?;
-        let id = key.id();
-        self.voice.join_group(key, !password.is_empty());
-        Some(id)
+    /// Invites `target` to our group. While we are in none, the invite is
+    /// to a new group we join only once `target` accepts; until then we
+    /// stay in proximity voice. The invite lasts two minutes.
+    pub fn invite(&self, target: Uuid) {
+        self.voice.invite(target);
+    }
+
+    /// Joins the group of the last invite from `from` (see
+    /// [`Event::Invite`]), leaving any other. In a group, voice is
+    /// group-only.
+    pub fn accept_invite(&self, from: Uuid) -> Result<(), GroupError> {
+        self.voice.accept_invite(from)
+    }
+
+    /// Joins a public group from [`Engine::groups`], leaving any other.
+    pub fn join_group(&self, id: GroupId) -> Result<(), GroupError> {
+        self.voice.join_group(id)
     }
 
     pub fn leave_group(&self) {
         self.voice.leave_group();
     }
 
-    /// While in a group, whether nearby players outside it are heard and
-    /// sent to.
-    pub fn set_group_nearby(&self, nearby: bool) {
-        self.voice.set_group_nearby(nearby);
+    /// Makes our group public (anyone may join it) or private.
+    pub fn set_group_public(&self, public: bool) -> Result<(), GroupError> {
+        self.voice.set_group_public(public)
+    }
+
+    /// Sets our group's label: empty for none, at most 32 characters.
+    pub fn set_group_label(&self, label: &str) -> Result<(), GroupError> {
+        self.voice.set_group_label(label)
+    }
+
+    /// Votes on kicking `target`, a group mate, from our group.
+    pub fn vote_kick(&self, target: Uuid, yes: bool) -> Result<(), GroupError> {
+        self.voice.vote_kick(target, yes)
     }
 
     /// Our group and every group our peers announce.
@@ -331,7 +349,7 @@ impl Engine {
         self.net
             .enable_direct_calls(IssuerKey::generate().sign(&body));
         self.set_identity(uuid, name);
-        self.voice.set_direct(true);
+        self.voice.set_ignore_world(true);
     }
 
     /// Our address, for the other side of a direct call.
@@ -793,8 +811,8 @@ mod tests {
         let mut alice = player(1, "rules-alice");
         let mut bob = player(2, "rules-bob");
         // Direct-call trust, but positions from the world as in the game.
-        alice.engine.voice.set_direct(false);
-        bob.engine.voice.set_direct(false);
+        alice.engine.voice.set_ignore_world(false);
+        bob.engine.voice.set_ignore_world(false);
         call(&mut alice, &mut bob).await;
 
         alice.stand(0.0, 2, 10.0);

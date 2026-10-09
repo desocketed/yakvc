@@ -17,7 +17,7 @@ pub use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey};
 pub use uuid::Uuid;
 
 pub use crate::auth::{is_offline_player, offline_uuid};
-pub use crate::group::{GroupAnnounce, GroupId, GroupKey};
+pub use crate::group::{GroupAnnounce, GroupId, GroupKey, GroupState, PublicGroup};
 pub use crate::pair::PairToken;
 pub use crate::ticket::{
     IssuerId, IssuerKey, SignedTicket, Ticket, TicketBody, TicketError, TicketVerifier,

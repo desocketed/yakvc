@@ -13,8 +13,10 @@
  * 2: verified flags in the rendezvous and peer state events.
  * 3: `yakvc_stats`.
  * 4: group voice chat (`yakvc_join_group` and the rest).
+ * 5: groups reworked: random keys instead of names and passwords, invites,
+ * shared group state and kick votes; group-only voice in a group.
  */
-#define YAKVC_ABI_VERSION 4
+#define YAKVC_ABI_VERSION 5
 
 #define YAKVC_OK 0
 
@@ -55,6 +57,13 @@
  */
 #define YAKVC_ERR_POISONED -7
 
+/**
+ * A group action that can't be done now: no invite from that player in the
+ * last two minutes, no public group with that id, not in a group, or the
+ * target is not a group mate. The message says which.
+ */
+#define YAKVC_ERR_UNAVAILABLE -8
+
 #define YAKVC_INPUT_PUSH_TO_TALK (1 << 0)
 
 #define YAKVC_INPUT_MUTED (1 << 1)
@@ -74,6 +83,42 @@
 #define YAKVC_EVENT_MIC_LEVEL 5
 
 #define YAKVC_EVENT_ERROR 6
+
+#define YAKVC_EVENT_INVITE 7
+
+#define YAKVC_EVENT_GROUP_NOTICE 8
+
+#define YAKVC_EVENT_KICK_VOTE 9
+
+/**
+ * `uuid` became a group mate.
+ */
+#define YAKVC_GROUP_JOINED 0
+
+/**
+ * `uuid` is no longer a group mate (left, link closed, or kicked).
+ */
+#define YAKVC_GROUP_LEFT 1
+
+/**
+ * A kick vote removed us (`uuid`); we left the group.
+ */
+#define YAKVC_GROUP_KICKED_US 2
+
+/**
+ * `by` made the group public.
+ */
+#define YAKVC_GROUP_MADE_PUBLIC 3
+
+/**
+ * `by` made the group private.
+ */
+#define YAKVC_GROUP_MADE_PRIVATE 4
+
+/**
+ * `by` changed the label.
+ */
+#define YAKVC_GROUP_LABEL_CHANGED 5
 
 #define YAKVC_RDV_CONNECTING 0
 
@@ -205,18 +250,35 @@ int32_t yakvc_set_peer_volume(struct YakVcEngine *engine,
 int32_t yakvc_complete_join(struct YakVcEngine *engine, uint32_t request_id, bool ok);
 
 /**
- * Joins the group with this name and password (empty for an open group),
- * leaving any other, with nearby voice on. `YAKVC_ERR_INVALID_ARGUMENT` if
- * the name is empty or longer than 32 characters.
+ * Invites `target` to our group. While we are in none, the invite is to a
+ * new group we join only once `target` accepts; until then we stay in
+ * proximity voice. Sent over the peer's link if there is one; the invite
+ * lasts two minutes.
  *
  * # Safety
- * `engine` must be live; `name` and `password` must be readable.
+ * `engine` must be live; `target` must point to 16 bytes.
  */
-int32_t yakvc_join_group(struct YakVcEngine *engine,
-                         const uint8_t *name,
-                         size_t name_len,
-                         const uint8_t *password,
-                         size_t password_len);
+int32_t yakvc_invite(struct YakVcEngine *engine, const uint8_t *target);
+
+/**
+ * Joins the group of the last invite (`YAKVC_EVENT_INVITE`) from `from`,
+ * leaving any other. `YAKVC_ERR_UNAVAILABLE` if there was none in the last
+ * two minutes.
+ *
+ * # Safety
+ * `engine` must be live; `from` must point to 16 bytes.
+ */
+int32_t yakvc_accept_invite(struct YakVcEngine *engine, const uint8_t *from);
+
+/**
+ * Joins a public group from `yakvc_list_groups` by its `id`, 64 hex
+ * characters, leaving any other.
+ * `YAKVC_ERR_UNAVAILABLE` if no peer announces it any more.
+ *
+ * # Safety
+ * `engine` must be live; `id_hex` must point to 64 bytes.
+ */
+int32_t yakvc_join_group(struct YakVcEngine *engine, const uint8_t *id_hex);
 
 /**
  * # Safety
@@ -225,35 +287,38 @@ int32_t yakvc_join_group(struct YakVcEngine *engine,
 int32_t yakvc_leave_group(struct YakVcEngine *engine);
 
 /**
- * While in a group, whether nearby players outside it are heard and sent
- * to. Off means only the group hears us and is heard.
+ * Makes our group public (anyone may join) or private.
+ * `YAKVC_ERR_UNAVAILABLE` outside a group.
  *
  * # Safety
  * `engine` must be live.
  */
-int32_t yakvc_set_group_nearby(struct YakVcEngine *engine, bool nearby);
+int32_t yakvc_set_group_public(struct YakVcEngine *engine, bool public_);
 
 /**
- * Writes the id of the group with this name and password into `out`, as 64
- * hex characters, without joining it: the voice menu checks a password
- * against a listed group this way. `YAKVC_ERR_INVALID_ARGUMENT` for a name
- * that can't be a group's.
+ * Sets our group's label, UTF-8: empty for none, at most 32 characters
+ * (`YAKVC_ERR_INVALID_ARGUMENT` if longer). `YAKVC_ERR_UNAVAILABLE` outside
+ * a group.
  *
  * # Safety
- * `name` and `password` must be readable; `out` must be writable for 64
- * bytes.
+ * `engine` must be live; `label` must be readable for `len` bytes.
  */
-int32_t yakvc_group_id(const uint8_t *name,
-                       size_t name_len,
-                       const uint8_t *password,
-                       size_t password_len,
-                       uint8_t *out);
+int32_t yakvc_set_group_label(struct YakVcEngine *engine, const uint8_t *label, size_t len);
+
+/**
+ * Votes on kicking `target` from our group. `YAKVC_ERR_UNAVAILABLE` if we
+ * are in no group or `target` is not a group mate.
+ *
+ * # Safety
+ * `engine` must be live; `target` must point to 16 bytes.
+ */
+int32_t yakvc_vote_kick(struct YakVcEngine *engine, const uint8_t *target, bool yes);
 
 /**
  * Writes the groups we know of as JSON, with the buffer protocol of
- * [`yakvc_list_devices`]: an array of `{ "id": hex, "name", "locked",
- * "joined", "members": [hyphenated UUIDs] }`. Ours, plus every group our
- * peers announce.
+ * [`yakvc_list_devices`]: an array of `{ "id": 64 hex characters, "label",
+ * "public", "mine", "members": [hyphenated UUIDs] }`. Ours first (members
+ * include us), then the public groups our peers announce.
  *
  * # Safety
  * `engine` must be live; `buf` must be writable for `cap` bytes; `needed`
