@@ -22,7 +22,6 @@
 //! | [`YAKVC_EVENT_ERROR`] | message as UTF-8 |
 //! | [`YAKVC_EVENT_INVITE`] | `uuid[16]` of the player who invited us |
 //! | [`YAKVC_EVENT_GROUP_NOTICE`] | `u8 YAKVC_GROUP_*`, `uuid[16]` the member it is about, `uuid[16] by` who made the change; all-zero when not applicable |
-//! | [`YAKVC_EVENT_KICK_VOTE`] | `uuid[16] target`, `uuid[16] by` (the voter, possibly us), `u8` 1 yes / 0 no, `u32 votes` (yes votes counted), `u32 needed` |
 
 #![allow(unsafe_code)]
 
@@ -49,7 +48,8 @@ use crate::guard::{
 /// 4: group voice chat (`yakvc_join_group` and the rest).
 /// 5: groups reworked: random keys instead of names and passwords, invites,
 /// shared group state and kick votes; group-only voice in a group.
-pub const YAKVC_ABI_VERSION: u32 = 5;
+/// 6: kick votes removed (`yakvc_vote_kick`, the kick vote event and notice).
+pub const YAKVC_ABI_VERSION: u32 = 6;
 
 pub const YAKVC_OK: i32 = 0;
 /// A null pointer, bad UUID, invalid UTF-8 or out-of-range value.
@@ -69,8 +69,8 @@ pub const YAKVC_ERR_PANIC: i32 = -6;
 /// `yakvc_destroy` is still allowed.
 pub const YAKVC_ERR_POISONED: i32 = -7;
 /// A group action that can't be done now: no invite from that player in the
-/// last two minutes, no public group with that id, not in a group, or the
-/// target is not a group mate. The message says which.
+/// last two minutes, no public group with that id, or not in a group. The
+/// message says which.
 pub const YAKVC_ERR_UNAVAILABLE: i32 = -8;
 
 pub const YAKVC_INPUT_PUSH_TO_TALK: u32 = 1 << 0;
@@ -86,20 +86,17 @@ pub const YAKVC_EVENT_MIC_LEVEL: u16 = 5;
 pub const YAKVC_EVENT_ERROR: u16 = 6;
 pub const YAKVC_EVENT_INVITE: u16 = 7;
 pub const YAKVC_EVENT_GROUP_NOTICE: u16 = 8;
-pub const YAKVC_EVENT_KICK_VOTE: u16 = 9;
 
 /// `uuid` became a group mate.
 pub const YAKVC_GROUP_JOINED: u8 = 0;
-/// `uuid` is no longer a group mate (left, link closed, or kicked).
+/// `uuid` is no longer a group mate (left or link closed).
 pub const YAKVC_GROUP_LEFT: u8 = 1;
-/// A kick vote removed us (`uuid`); we left the group.
-pub const YAKVC_GROUP_KICKED_US: u8 = 2;
 /// `by` made the group public.
-pub const YAKVC_GROUP_MADE_PUBLIC: u8 = 3;
+pub const YAKVC_GROUP_MADE_PUBLIC: u8 = 2;
 /// `by` made the group private.
-pub const YAKVC_GROUP_MADE_PRIVATE: u8 = 4;
+pub const YAKVC_GROUP_MADE_PRIVATE: u8 = 3;
 /// `by` changed the label.
-pub const YAKVC_GROUP_LABEL_CHANGED: u8 = 5;
+pub const YAKVC_GROUP_LABEL_CHANGED: u8 = 4;
 
 pub const YAKVC_RDV_CONNECTING: u8 = 0;
 pub const YAKVC_RDV_AUTHENTICATING: u8 = 1;
@@ -528,27 +525,6 @@ pub unsafe extern "C" fn yakvc_set_group_label(
             // SAFETY: the caller guarantees `label` is readable.
             let label = str_arg(label, len, "label")?;
             e.engine.set_group_label(label).map_err(group_error)
-        })
-    }
-}
-
-/// Votes on kicking `target` from our group. `YAKVC_ERR_UNAVAILABLE` if we
-/// are in no group or `target` is not a group mate.
-///
-/// # Safety
-/// `engine` must be live; `target` must point to 16 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn yakvc_vote_kick(
-    engine: *mut YakVcEngine,
-    target: *const u8,
-    yes: bool,
-) -> i32 {
-    // SAFETY: the caller guarantees `engine` is live.
-    unsafe {
-        with_engine(engine, |e| {
-            // SAFETY: the caller guarantees `target` points to 16 bytes.
-            let target = uuids_arg(target, 1, "target")?[0];
-            e.engine.vote_kick(target, yes).map_err(group_error)
         })
     }
 }

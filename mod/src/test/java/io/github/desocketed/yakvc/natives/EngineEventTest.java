@@ -43,16 +43,15 @@ class EngineEventTest {
 		ByteArrayOutputStream out = new ByteArrayOutputStream();
 		record(out, 7, UUID_BYTES);
 		record(out, 8, new byte[] {0}, UUID_BYTES, nil);
-		record(out, 8, new byte[] {5}, nil, otherBytes);
+		record(out, 8, new byte[] {4}, nil, otherBytes);
 		record(out, 8, new byte[] {9}, UUID_BYTES, nil);
-		record(out, 9, UUID_BYTES, otherBytes, new byte[] {1}, le(8).putInt(2).putInt(3).array());
 		byte[] buf = out.toByteArray();
 
 		assertEquals(List.of(
 				new EngineEvent.Invite(ID),
 				new EngineEvent.GroupNotice(EngineEvent.NoticeKind.JOINED, ID, new UUID(0, 0)),
-				new EngineEvent.GroupNotice(EngineEvent.NoticeKind.LABEL_CHANGED, new UUID(0, 0), other),
-				new EngineEvent.KickVote(ID, other, true, 2, 3)), EngineEvent.decode(buf, buf.length));
+				new EngineEvent.GroupNotice(EngineEvent.NoticeKind.LABEL_CHANGED, new UUID(0, 0), other)),
+				EngineEvent.decode(buf, buf.length));
 	}
 
 	@Test

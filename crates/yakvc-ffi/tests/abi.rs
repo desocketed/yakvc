@@ -116,7 +116,6 @@ fn every_engine_call_rejects_a_null_engine() {
             yakvc_leave_group(null),
             yakvc_set_group_public(null, true),
             yakvc_set_group_label(null, ptr::null(), 0),
-            yakvc_vote_kick(null, uuid.as_ptr(), true),
             yakvc_list_groups(null, buf.as_mut_ptr(), buf.len(), &mut len),
         ]
     };
@@ -390,10 +389,6 @@ fn groups_through_the_c_abi() {
         assert_eq!(yakvc_set_group_public(engine, true), YAKVC_ERR_UNAVAILABLE);
         assert_eq!(
             yakvc_set_group_label(engine, b"Miners".as_ptr(), 6),
-            YAKVC_ERR_UNAVAILABLE
-        );
-        assert_eq!(
-            yakvc_vote_kick(engine, bob.as_ptr(), true),
             YAKVC_ERR_UNAVAILABLE
         );
         assert_eq!(last_error(), "not in a group");

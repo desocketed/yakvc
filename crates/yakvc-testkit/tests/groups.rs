@@ -1,12 +1,11 @@
 //! Group voice chat (DESIGN.md "Group voice chat", #28): an accepted invite
 //! makes a group whose members hear each other at any distance, unpositioned,
-//! and only each other; public groups can be joined from the list; a kick
-//! vote removes a member.
+//! and only each other; public groups can be joined from the list.
 
 use std::time::Duration;
 
 use tokio::time::{Instant, sleep};
-use yakvc_client::{Event, GroupNoticeKind, InvitesFrom, PeerState, Uuid, Vec3};
+use yakvc_client::{Event, InvitesFrom, PeerState, Vec3};
 use yakvc_testkit::{TestClient, TestNet, see_each_other};
 
 /// Peak level above which a sample counts as audible: -60 dBFS.
@@ -188,56 +187,6 @@ async fn only_public_groups_are_listed_and_joinable() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_kick_vote_removes_a_member() {
-    let net = TestNet::start().await;
-    let [mut alice, mut bob, mut carol]: [TestClient; 3] =
-        clients(&net, &["alice", "bob", "carol"])
-            .await
-            .try_into()
-            .unwrap();
-    invite(&alice, &mut bob).await;
-    wait_for_group(&alice, &[&alice, &bob]).await;
-    invite(&alice, &mut carol).await;
-    for client in [&alice, &bob, &carol] {
-        wait_for_group(client, &[&alice, &bob, &carol]).await;
-    }
-    carol.talk(true);
-    sleep(SETTLE).await;
-    assert!(hears(&bob).await);
-
-    // Alice starts the vote; one of the two others isn't enough.
-    let target = carol.uuid();
-    alice.engine().vote_kick(target, true).unwrap();
-    bob.wait_for(
-        "alice's vote",
-        |e| matches!(e, Event::KickVote { by, votes: 1, needed: 2, .. } if *by == alice.uuid()),
-    )
-    .await
-    .unwrap();
-    // Bob agrees: it passes everywhere, and Carol leaves.
-    bob.engine().vote_kick(target, true).unwrap();
-    carol
-        .wait_for("the kick", |e| {
-            is_notice(e, GroupNoticeKind::KickedUs, target)
-        })
-        .await
-        .unwrap();
-    alice
-        .wait_for("carol leaving", |e| {
-            is_notice(e, GroupNoticeKind::Left, target)
-        })
-        .await
-        .unwrap();
-    wait_for_group(&alice, &[&alice, &bob]).await;
-    wait_for_group(&bob, &[&alice, &bob]).await;
-    assert!(carol.engine().groups().is_empty());
-    // Out of the group and far away, Carol isn't heard.
-    carol.move_to(at(1000.0, 0.0));
-    sleep(SETTLE).await;
-    assert!(!hears(&bob).await, "bob still hears carol");
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn invites_from_nobody_are_dropped() {
     let net = TestNet::start().await;
     let alice = net.client().name("alice").start().await;
@@ -261,8 +210,4 @@ async fn invites_from_nobody_are_dropped() {
     .await;
     assert!(!matches!(invited, Ok(Ok(_))), "the invite got through");
     assert!(bob.engine().accept_invite(from).is_err());
-}
-
-fn is_notice(event: &Event, want: GroupNoticeKind, who: Uuid) -> bool {
-    matches!(event, Event::GroupNotice { kind, uuid, .. } if *kind == want && *uuid == who)
 }

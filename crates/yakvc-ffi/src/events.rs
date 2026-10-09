@@ -129,7 +129,6 @@ pub(crate) fn encode(event: &Event) -> Vec<u8> {
             payload.push(match kind {
                 GroupNoticeKind::Joined => YAKVC_GROUP_JOINED,
                 GroupNoticeKind::Left => YAKVC_GROUP_LEFT,
-                GroupNoticeKind::KickedUs => YAKVC_GROUP_KICKED_US,
                 GroupNoticeKind::MadePublic => YAKVC_GROUP_MADE_PUBLIC,
                 GroupNoticeKind::MadePrivate => YAKVC_GROUP_MADE_PRIVATE,
                 GroupNoticeKind::LabelChanged => YAKVC_GROUP_LABEL_CHANGED,
@@ -137,20 +136,6 @@ pub(crate) fn encode(event: &Event) -> Vec<u8> {
             payload.extend(uuid.as_bytes());
             payload.extend(by.as_bytes());
             YAKVC_EVENT_GROUP_NOTICE
-        }
-        Event::KickVote {
-            target,
-            by,
-            yes,
-            votes,
-            needed,
-        } => {
-            payload.extend(target.as_bytes());
-            payload.extend(by.as_bytes());
-            payload.push(u8::from(*yes));
-            payload.extend(votes.to_le_bytes());
-            payload.extend(needed.to_le_bytes());
-            YAKVC_EVENT_KICK_VOTE
         }
         Event::MicLevel(db) => {
             payload.extend(db.to_le_bytes());
@@ -276,19 +261,6 @@ mod tests {
         payload.extend([0; 16]);
         payload.extend(UUID_BYTES);
         assert_eq!(encode(&notice), record(YAKVC_EVENT_GROUP_NOTICE, &payload));
-
-        let vote = Event::KickVote {
-            target: UUID,
-            by: Uuid::nil(),
-            yes: true,
-            votes: 2,
-            needed: 3,
-        };
-        let mut payload = UUID_BYTES.to_vec();
-        payload.extend([0; 16]);
-        payload.push(1);
-        payload.extend([2, 0, 0, 0, 3, 0, 0, 0]);
-        assert_eq!(encode(&vote), record(YAKVC_EVENT_KICK_VOTE, &payload));
     }
 
     #[test]

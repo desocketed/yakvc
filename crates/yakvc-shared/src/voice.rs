@@ -1,13 +1,12 @@
 //! Wire format of the voice protocol ([`ProtocolId::VOICE`](crate::ProtocolId::VOICE)).
 
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use crate::group::{GroupAnnounce, GroupKey, GroupState};
 
 /// 2 added group voice chat. 3 replaced named groups with random keys,
-/// invites, shared group state and kick votes.
-pub const VERSION: u16 = 3;
+/// invites, shared group state and kick votes. 4 dropped kick votes.
+pub const VERSION: u16 = 4;
 
 /// Messages on the voice control stream.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -24,9 +23,6 @@ pub enum VoiceMsg {
     /// The group's shared state, sent to group mates when they become mates
     /// and whenever it changes.
     GroupState(GroupState),
-    /// The sender's own vote on kicking `target` from the group. Never
-    /// passed on, since a passed-on vote could be forged.
-    KickVote { target: Uuid, yes: bool },
 }
 
 /// Header at the start of each voice datagram, after the peer layer's

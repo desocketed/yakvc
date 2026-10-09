@@ -357,8 +357,7 @@ fn print_event(event: &Event) {
         | Event::MicLevel(_)
         | Event::JoinRequest { .. }
         | Event::Invite { .. }
-        | Event::GroupNotice { .. }
-        | Event::KickVote { .. } => {}
+        | Event::GroupNotice { .. } => {}
     }
 }
 

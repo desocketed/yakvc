@@ -30,7 +30,7 @@ import java.util.UUID;
  */
 public final class NativeBridge {
 	/** Must equal {@code YAKVC_ABI_VERSION} in {@code yakvc.h}. */
-	public static final int ABI_VERSION = 5;
+	public static final int ABI_VERSION = 6;
 
 	public static final int INPUT_PUSH_TO_TALK = 1;
 	public static final int INPUT_MUTED = 1 << 1;
@@ -66,7 +66,6 @@ public final class NativeBridge {
 	private final MethodHandle leaveGroup;
 	private final MethodHandle setGroupPublic;
 	private final MethodHandle setGroupLabel;
-	private final MethodHandle voteKick;
 	private final MethodHandle listGroups;
 	private final MethodHandle lastError;
 
@@ -111,8 +110,6 @@ public final class NativeBridge {
 				FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_BOOLEAN));
 		setGroupLabel = linker.downcallHandle(find(library, "yakvc_set_group_label"),
 				FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, SIZE_T));
-		voteKick = linker.downcallHandle(find(library, "yakvc_vote_kick"),
-				FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_BOOLEAN));
 		listGroups = linker.downcallHandle(find(library, "yakvc_list_groups"),
 				FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, SIZE_T, ADDRESS));
 		lastError = linker.downcallHandle(find(library, "yakvc_last_error"),
@@ -274,13 +271,6 @@ public final class NativeBridge {
 		try (Arena arena = Arena.ofConfined()) {
 			MemorySegment bytes = utf8(arena, label);
 			check((int) invoke(setGroupLabel, engine, bytes, bytes.byteSize()));
-		}
-	}
-
-	/** Votes on kicking {@code target}, a group mate, out of our group. */
-	public void voteKick(MemorySegment engine, UUID target, boolean yes) {
-		try (Arena arena = Arena.ofConfined()) {
-			check((int) invoke(voteKick, engine, arena.allocateFrom(JAVA_BYTE, uuidBytes(List.of(target))), yes));
 		}
 	}
 
