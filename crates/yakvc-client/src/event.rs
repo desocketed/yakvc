@@ -29,10 +29,49 @@ pub enum Event {
         uuid: Uuid,
         talking: bool,
     },
+    /// `from` invited us to its group. Valid for two minutes; [`Engine::accept_invite`](crate::Engine::accept_invite)
+    /// joins it.
+    Invite {
+        from: Uuid,
+    },
+    /// Something happened in our group. See [`GroupNoticeKind`] for what
+    /// `uuid` and `by` mean; either is nil when it doesn't apply.
+    GroupNotice {
+        kind: GroupNoticeKind,
+        uuid: Uuid,
+        by: Uuid,
+    },
+    /// A group member (`by`, possibly us) voted on kicking `target`. The
+    /// vote passes once `votes` reaches `needed`.
+    KickVote {
+        target: Uuid,
+        by: Uuid,
+        yes: bool,
+        votes: u32,
+        needed: u32,
+    },
     /// Local microphone level in dBFS, about 10 times a second.
     MicLevel(f32),
     /// A non-fatal problem worth showing the user.
     Error(String),
+}
+
+/// What a [`Event::GroupNotice`] reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GroupNoticeKind {
+    /// `uuid` became a group mate.
+    Joined,
+    /// `uuid` is no longer a group mate: it left, its link closed, or a
+    /// kick vote removed it.
+    Left,
+    /// A kick vote removed us (`uuid`) from the group, and we left it.
+    KickedUs,
+    /// `by` made the group public.
+    MadePublic,
+    /// `by` made the group private.
+    MadePrivate,
+    /// `by` changed the label.
+    LabelChanged,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

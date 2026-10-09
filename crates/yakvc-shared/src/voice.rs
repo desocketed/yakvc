@@ -1,11 +1,13 @@
 //! Wire format of the voice protocol ([`ProtocolId::VOICE`](crate::ProtocolId::VOICE)).
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
-use crate::group::GroupAnnounce;
+use crate::group::{GroupAnnounce, GroupKey, GroupState};
 
-/// 2 added group voice chat.
-pub const VERSION: u16 = 2;
+/// 2 added group voice chat. 3 replaced named groups with random keys,
+/// invites, shared group state and kick votes.
+pub const VERSION: u16 = 3;
 
 /// Messages on the voice control stream.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,6 +17,16 @@ pub enum VoiceMsg {
     /// The group the sender is in, or `None` once it leaves. Sent when the
     /// link opens and on every change.
     Group(Option<GroupAnnounce>),
+    /// An invitation to the sender's group, which the receiver may accept
+    /// by joining it. A sender in no group invites to a new group it joins
+    /// only once the receiver does.
+    Invite { key: GroupKey, state: GroupState },
+    /// The group's shared state, sent to group mates when they become mates
+    /// and whenever it changes.
+    GroupState(GroupState),
+    /// The sender's own vote on kicking `target` from the group. Never
+    /// passed on, since a passed-on vote could be forged.
+    KickVote { target: Uuid, yes: bool },
 }
 
 /// Header at the start of each voice datagram, after the peer layer's
@@ -77,6 +89,7 @@ mod tests {
             group: true,
         };
         let mut datagram = header.to_bytes().to_vec();
+        assert_eq!(datagram[0], 0x03);
         datagram.extend_from_slice(b"opus");
         assert_eq!(VoiceHeader::parse(&datagram), Some((header, &b"opus"[..])));
         assert_eq!(VoiceHeader::parse(&datagram[..8]), None);
