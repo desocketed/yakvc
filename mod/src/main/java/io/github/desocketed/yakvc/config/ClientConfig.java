@@ -44,6 +44,17 @@ public record ClientConfig(String toml) {
 		return bool(value("", "verified_only"), false);
 	}
 
+	/** Who may invite us to a group: {@code "everyone"}, {@code "friends"} or {@code "nobody"}. */
+	public String invites() {
+		String value = string(value("", "invites"));
+		return value == null ? "everyone" : value;
+	}
+
+	/** The voice menu's first-run card was dismissed. Only the mod reads it; the engine ignores unknown keys. */
+	public boolean setupDone() {
+		return bool(value("", "setup_done"), false);
+	}
+
 	/** Blocks; the engine's default when unset. */
 	public double voiceRange() {
 		return number(value("", "voice_range"), 48);
@@ -229,6 +240,12 @@ public record ClientConfig(String toml) {
 			# Only talk with players whose Minecraft account is verified with Mojang. Players without an account
 			# (on offline-mode servers) are then neither heard nor sent your voice.
 			verified_only = false
+
+			# Who may invite you to a voice group: "everyone", "friends" (the players in friends_only) or "nobody".
+			invites = "everyone"
+
+			# The voice menu shows a short setup card until it is dismissed. A modpack can ship this as true.
+			setup_done = false
 
 			# Development against a local `yakvc-server` with `insecure_dev_auth = true`: uncomment these two lines
 			# and the [rendezvous] table below, filled in with the IDs the server prints at startup.

@@ -1,6 +1,8 @@
 package io.github.desocketed.yakvc.ui;
 
 import io.github.desocketed.yakvc.GameStateFeeder;
+import io.github.desocketed.yakvc.VoiceSession;
+import io.github.desocketed.yakvc.natives.VoiceGroup;
 import java.util.List;
 import java.util.UUID;
 import net.minecraft.ChatFormatting;
@@ -9,6 +11,7 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.ContainerObjectSelectionList;
 import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.components.PlayerFaceExtractor;
 import net.minecraft.client.gui.components.StringWidget;
 import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.components.events.GuiEventListener;
@@ -16,33 +19,41 @@ import net.minecraft.client.gui.layouts.HeaderAndFooterLayout;
 import net.minecraft.client.gui.layouts.LinearLayout;
 import net.minecraft.client.gui.narration.NarratableEntry;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.multiplayer.PlayerInfo;
+import net.minecraft.client.resources.DefaultPlayerSkin;
 import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.entity.player.PlayerSkin;
 import org.jspecify.annotations.Nullable;
 
 /**
- * Group voice chat: every group on the server with its members, joining and leaving, creating a group, and the switch
- * that cuts nearby players off. Group members hear each other at any distance (DESIGN.md "Group voice chat").
+ * Our group and the public groups on the server, each as a box of its members' faces with its label above. Our own
+ * comes first, with Leave, the public or private switch and the label to edit; public groups have Join. Groups are
+ * formed with the Group key, not here (DESIGN.md "Group voice chat").
  */
 public final class GroupsScreen extends Screen {
-	private static final int ROW_HEIGHT = 28;
+	private static final int ROW_HEIGHT = 50;
 	private static final int ROW_WIDTH = 310;
-	/** Group names longer than this many characters are refused by the engine. */
-	private static final int MAX_NAME_CHARS = 32;
+	private static final int BUTTON_WIDTH = 60;
+	private static final int FACE_SIZE = 16;
+	private static final int FACE_STEP = FACE_SIZE + 2;
+	private static final int BOX_HEIGHT = FACE_SIZE + 6;
 	/** How often the list is checked against the engine's, in ticks. */
 	private static final int REFRESH_TICKS = 10;
 
 	private final @Nullable Screen lastScreen;
 	private final GameStateFeeder feeder;
-	private final HeaderAndFooterLayout layout = new HeaderAndFooterLayout(this, 45, 60);
+	private final HeaderAndFooterLayout layout = new HeaderAndFooterLayout(this, 45, 33);
 	private @Nullable GroupList list;
-	private List<GameStateFeeder.Group> shown = List.of();
+	private List<VoiceGroup> shown = List.of();
 	private int ticksUntilRefresh = REFRESH_TICKS;
-	/** Why the last join or create failed, shown in the header until the next try. */
+	/** Why the last action failed, shown in the header until the list next changes. */
 	private @Nullable Component error;
-	// Kept across rebuilds, so typing survives the list refreshing.
-	private String typedName = "";
-	private String typedPassword = "";
+	/** Our group's label box, while we are in one. */
+	private @Nullable EditBox labelBox;
+	/** The label being typed, kept across rebuilds; null while it is untouched, so it follows other members' edits. */
+	private @Nullable String typedLabel;
 
 	public GroupsScreen(@Nullable Screen lastScreen, GameStateFeeder feeder) {
 		super(Component.translatable("yakvc.groups.title"));
@@ -52,6 +63,9 @@ public final class GroupsScreen extends Screen {
 
 	@Override
 	protected void init() {
+		// init runs again on every rebuild, and the layout would keep the old widgets.
+		layout.removeChildren();
+		labelBox = null;
 		shown = feeder.groups();
 		LinearLayout header = layout.addToHeader(LinearLayout.vertical().spacing(4));
 		header.defaultCellSetting().alignHorizontallyCenter();
@@ -59,34 +73,9 @@ public final class GroupsScreen extends Screen {
 		header.addChild(new StringWidget(status(), font));
 
 		list = layout.addToContents(new GroupList(minecraft));
-		for (GameStateFeeder.Group group : shown) list.add(new GroupRow(group));
+		for (VoiceGroup group : shown) list.add(new GroupRow(group));
 
-		LinearLayout footer = layout.addToFooter(LinearLayout.vertical().spacing(4));
-		LinearLayout create = footer.addChild(LinearLayout.horizontal().spacing(4));
-		EditBox name = new EditBox(font, 120, 20, Component.translatable("yakvc.groups.name"));
-		name.setHint(Component.translatable("yakvc.groups.name"));
-		name.setMaxLength(MAX_NAME_CHARS);
-		name.setValue(typedName);
-		name.setResponder(value -> typedName = value);
-		EditBox password = new EditBox(font, 120, 20, Component.translatable("yakvc.groups.password"));
-		password.setHint(Component.translatable("yakvc.groups.password"));
-		password.setValue(typedPassword);
-		password.setResponder(value -> typedPassword = value);
-		password.setTooltip(Tooltip.create(Component.translatable("yakvc.groups.password.tooltip")));
-		create.addChild(name);
-		create.addChild(password);
-		create.addChild(Button.builder(Component.translatable("yakvc.groups.create"), button -> {
-			join(typedName, typedPassword, null);
-		}).width(62).build());
-
-		LinearLayout bottom = footer.addChild(LinearLayout.horizontal().spacing(8));
-		Button nearby = bottom.addChild(Button.builder(nearbyLabel(), button -> {
-			feeder.setGroupNearby(!feeder.groupNearby());
-			button.setMessage(nearbyLabel());
-		}).width(150).tooltip(Tooltip.create(Component.translatable("yakvc.groups.nearby.tooltip"))).build());
-		nearby.active = inGroup();
-		bottom.addChild(Button.builder(CommonComponents.GUI_DONE, button -> onClose()).width(150).build());
-
+		layout.addToFooter(Button.builder(CommonComponents.GUI_DONE, button -> onClose()).width(200).build());
 		layout.visitWidgets(this::addRenderableWidget);
 		repositionElements();
 	}
@@ -101,7 +90,31 @@ public final class GroupsScreen extends Screen {
 	public void tick() {
 		if (--ticksUntilRefresh > 0) return;
 		ticksUntilRefresh = REFRESH_TICKS;
-		if (!feeder.groups().equals(shown)) rebuildWidgets();
+		if (feeder.groups().equals(shown)) return;
+		error = null;
+		boolean typing = labelBox != null && labelBox.isFocused();
+		rebuildWidgets();
+		if (typing && labelBox != null && list != null) {
+			// Keep typing through someone joining: focus the label box again, through the list and its row.
+			setFocused(list);
+			list.setFocused(list.children().getFirst());
+			list.children().getFirst().setFocused(labelBox);
+		}
+	}
+
+	@Override
+	public boolean keyPressed(KeyEvent event) {
+		if (labelBox != null && labelBox.isFocused() && event.isConfirmation()) {
+			applyLabel();
+			labelBox.setFocused(false);
+			return true;
+		}
+		return super.keyPressed(event);
+	}
+
+	@Override
+	public void removed() {
+		applyLabel();
 	}
 
 	@Override
@@ -109,41 +122,21 @@ public final class GroupsScreen extends Screen {
 		minecraft.gui.setScreen(lastScreen);
 	}
 
-	/**
-	 * Joins a group, or creates one when {@code listedId} is null. Shows why it failed, if it did.
-	 */
-	void join(String name, String password, @Nullable String listedId) {
-		error = feeder.joinGroup(name, password, listedId);
-		if (error == null) typedPassword = "";
-		rebuildWidgets();
-	}
-
-	private boolean inGroup() {
-		return shown.stream().anyMatch(GameStateFeeder.Group::joined);
+	/** Sends the typed label, if it changed. Labels are sent on Enter or when the screen closes, not per keystroke. */
+	private void applyLabel() {
+		if (typedLabel == null || shown.isEmpty() || !shown.getFirst().mine()) return;
+		if (!typedLabel.equals(shown.getFirst().label()) && !feeder.setGroupLabel(typedLabel)) {
+			error = Component.translatable("yakvc.groups.error.label");
+		}
+		typedLabel = null;
 	}
 
 	private Component status() {
 		if (error != null) return error.copy().withStyle(ChatFormatting.RED);
-		return shown.stream()
-				.filter(GameStateFeeder.Group::joined)
-				.findFirst()
-				.map(group -> Component.translatable("yakvc.groups.status.in", group.name()))
-				.orElse(Component.translatable("yakvc.groups.status.none"))
-				.withStyle(ChatFormatting.GRAY);
-	}
-
-	private Component nearbyLabel() {
-		return Component.translatable(feeder.groupNearby() ? "yakvc.groups.nearby.on" : "yakvc.groups.nearby.off");
-	}
-
-	/** Up to three names, then how many more. */
-	private String memberNames(List<UUID> members) {
-		List<String> names = members.stream().limit(3).map(feeder::name).toList();
-		String text = String.join(", ", names);
-		if (members.size() > names.size()) {
-			text = Component.translatable("yakvc.groups.more", text, members.size() - names.size()).getString();
-		}
-		return text;
+		boolean inGroup = !shown.isEmpty() && shown.getFirst().mine();
+		Component status = inGroup ? Component.translatable("yakvc.groups.status.in")
+				: Component.translatable("yakvc.groups.status.none", feeder.keys().group.getTranslatedKeyMessage());
+		return status.copy().withStyle(ChatFormatting.GRAY);
 	}
 
 	private final class GroupList extends ContainerObjectSelectionList<GroupRow> {
@@ -161,91 +154,104 @@ public final class GroupsScreen extends Screen {
 		}
 	}
 
-	/** Name and whether it has a password on top, members below, and Join or Leave on the right. */
+	/** The label (or, for our group, the box to edit it) over a box of faces, and the group's buttons on the right. */
 	private final class GroupRow extends ContainerObjectSelectionList.Entry<GroupRow> {
-		private final GameStateFeeder.Group group;
+		private final VoiceGroup group;
+		private final List<GuiEventListener> widgets;
+		private final @Nullable EditBox label;
 		private final Button action;
+		private final @Nullable Button visibility;
 
-		GroupRow(GameStateFeeder.Group group) {
+		GroupRow(VoiceGroup group) {
 			this.group = group;
-			if (group.joined()) {
+			if (group.mine()) {
+				label = new EditBox(font, 0, 0, ROW_WIDTH - BUTTON_WIDTH - 8, 16,
+						Component.translatable("yakvc.groups.label"));
+				label.setHint(Component.translatable("yakvc.groups.label"));
+				label.setMaxLength(GameStateFeeder.MAX_LABEL_CHARS);
+				label.setValue(typedLabel != null ? typedLabel : group.label());
+				label.setResponder(value -> typedLabel = value);
+				labelBox = label;
 				action = Button.builder(Component.translatable("yakvc.groups.leave"), button -> {
+					typedLabel = null;
 					feeder.leaveGroup();
 					rebuildWidgets();
-				}).width(56).build();
-			} else if (group.locked()) {
-				action = Button.builder(Component.translatable("yakvc.groups.join"), button -> minecraft.gui
-						.setScreen(new PasswordScreen(GroupsScreen.this, group))).width(56).build();
+				}).width(BUTTON_WIDTH).build();
+				visibility = Button.builder(Component.translatable(group.isPublic() ? "yakvc.groups.public"
+						: "yakvc.groups.private"), button -> {
+					if (!feeder.setGroupPublic(!group.isPublic())) error = Component.translatable("yakvc.groups.error.gone");
+					rebuildWidgets();
+				}).width(BUTTON_WIDTH).tooltip(Tooltip.create(Component.translatable("yakvc.groups.visibility.tooltip")))
+						.build();
+				widgets = List.of(label, action, visibility);
 			} else {
-				action = Button.builder(Component.translatable("yakvc.groups.join"),
-						button -> join(group.name(), "", group.id())).width(56).build();
+				label = null;
+				visibility = null;
+				action = Button.builder(Component.translatable("yakvc.groups.join"), button -> {
+					applyLabel();
+					typedLabel = null;
+					if (!feeder.joinGroup(group.id())) error = Component.translatable("yakvc.groups.error.gone");
+					rebuildWidgets();
+				}).width(BUTTON_WIDTH).build();
+				widgets = List.of(action);
 			}
 		}
 
 		@Override
 		public void extractContent(GuiGraphicsExtractor graphics, int mouseX, int mouseY, boolean hovered, float a) {
-			int x = getContentX() + 2;
+			int x = getContentX();
 			int y = getContentY();
-			graphics.text(font, group.name(), x, y + 3, group.joined() ? 0xFF55FF55 : 0xFFFFFFFF, false);
-			if (group.locked()) {
-				Component locked = Component.translatable("yakvc.groups.locked");
-				graphics.text(font, locked, x + font.width(group.name()) + 6, y + 3, 0xFFA0A0A0, false);
+			int right = getContentRight();
+			if (label != null) {
+				label.setPosition(x, y + 1);
+				label.extractRenderState(graphics, mouseX, mouseY, a);
+			} else if (!group.label().isEmpty()) {
+				graphics.text(font, group.label(), x + 2, y + 5, 0xFFFFFFFF, false);
 			}
-			int textWidth = getContentRight() - action.getWidth() - 8 - x;
-			graphics.text(font, font.plainSubstrByWidth(memberNames(group.members()), textWidth), x, y + 14,
-					0xFFA0A0A0, false);
-			action.setPosition(getContentRight() - action.getWidth(), y + 2);
+
+			int boxY = y + 20;
+			int boxRight = right - BUTTON_WIDTH - 8;
+			graphics.outline(x, boxY, boxRight - x, BOX_HEIGHT, group.mine() ? 0xFF55FF55 : 0xFFA0A0A0);
+			// As many faces as fit, then how many more there are.
+			int fit = (boxRight - x - 6) / FACE_STEP;
+			List<UUID> members = group.members();
+			int shownFaces = members.size() > fit ? fit - 1 : members.size();
+			int faceX = x + 3;
+			for (int i = 0; i < shownFaces; i++) {
+				UUID member = members.get(i);
+				PlayerFaceExtractor.extractRenderState(graphics, skin(member), faceX, boxY + 3, FACE_SIZE);
+				if (mouseX >= faceX && mouseX < faceX + FACE_SIZE && mouseY >= boxY + 3 && mouseY < boxY + 3 + FACE_SIZE) {
+					graphics.setTooltipForNextFrame(Component.literal(feeder.name(member)), mouseX, mouseY);
+				}
+				faceX += FACE_STEP;
+			}
+			if (shownFaces < members.size()) {
+				graphics.text(font, "+" + (members.size() - shownFaces), faceX + 2, boxY + 7, 0xFFA0A0A0, false);
+			}
+
+			action.setPosition(right - BUTTON_WIDTH, y + 1);
 			action.extractRenderState(graphics, mouseX, mouseY, a);
+			if (visibility != null) {
+				visibility.setPosition(right - BUTTON_WIDTH, y + 1 + 22);
+				visibility.extractRenderState(graphics, mouseX, mouseY, a);
+			}
+		}
+
+		/** The member's skin from the tab list, or the default one for their UUID if they aren't in it. */
+		private PlayerSkin skin(UUID uuid) {
+			VoiceSession session = feeder.session();
+			PlayerInfo info = session == null ? null : session.connection.getPlayerInfo(uuid);
+			return info == null ? DefaultPlayerSkin.get(uuid) : info.getSkin();
 		}
 
 		@Override
 		public List<? extends GuiEventListener> children() {
-			return List.of(action);
+			return widgets;
 		}
 
 		@Override
 		public List<? extends NarratableEntry> narratables() {
-			return List.of(action);
-		}
-	}
-
-	/** Asks for a listed group's password, then joins it through the groups screen. */
-	private static final class PasswordScreen extends Screen {
-		private final GroupsScreen groups;
-		private final GameStateFeeder.Group group;
-		private final HeaderAndFooterLayout layout = new HeaderAndFooterLayout(this, 45, 33);
-
-		PasswordScreen(GroupsScreen groups, GameStateFeeder.Group group) {
-			super(Component.translatable("yakvc.groups.password_title", group.name()));
-			this.groups = groups;
-			this.group = group;
-		}
-
-		@Override
-		protected void init() {
-			layout.addTitleHeader(title, font);
-			EditBox password = layout.addToContents(
-					new EditBox(font, 200, 20, Component.translatable("yakvc.groups.password")));
-			password.setHint(Component.translatable("yakvc.groups.password"));
-			LinearLayout footer = layout.addToFooter(LinearLayout.horizontal().spacing(8));
-			footer.addChild(Button.builder(Component.translatable("yakvc.groups.join"), button -> {
-				minecraft.gui.setScreen(groups);
-				groups.join(group.name(), password.getValue(), group.id());
-			}).width(100).build());
-			footer.addChild(Button.builder(CommonComponents.GUI_CANCEL, button -> onClose()).width(100).build());
-			layout.visitWidgets(this::addRenderableWidget);
-			layout.arrangeElements();
-			setInitialFocus(password);
-		}
-
-		@Override
-		protected void repositionElements() {
-			layout.arrangeElements();
-		}
-
-		@Override
-		public void onClose() {
-			minecraft.gui.setScreen(groups);
+			return visibility == null ? List.of(action) : List.of(action, visibility);
 		}
 	}
 }

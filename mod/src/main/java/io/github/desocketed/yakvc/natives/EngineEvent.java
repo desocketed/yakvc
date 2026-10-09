@@ -31,6 +31,24 @@ public sealed interface EngineEvent {
 	/** A non-fatal problem worth showing the user. */
 	record Error(String message) implements EngineEvent {}
 
+	/** {@code from} invited us to their group; {@code NativeBridge.acceptInvite} accepts it within two minutes. */
+	record Invite(UUID from) implements EngineEvent {}
+
+	/**
+	 * Something another player changed in our group. {@code uuid} is the member it is about (joined, left, kicked us);
+	 * {@code by} is who made the group public or private or changed its label. The unused one is all zeros.
+	 */
+	record GroupNotice(NoticeKind kind, UUID uuid, UUID by) implements EngineEvent {}
+
+	/**
+	 * A ballot on kicking {@code target} from our group, our own included: {@code by} voted {@code yes} or no, and
+	 * {@code votes} of the {@code needed} yes votes are in.
+	 */
+	record KickVote(UUID target, UUID by, boolean yes, int votes, int needed) implements EngineEvent {}
+
+	/** In {@code YAKVC_GROUP_*} order. */
+	enum NoticeKind { JOINED, LEFT, KICKED_US, MADE_PUBLIC, MADE_PRIVATE, LABEL_CHANGED }
+
 	/** In {@code YAKVC_RDV_*} order. */
 	enum RendezvousState { CONNECTING, AUTHENTICATING, REGISTERED, RETRYING, DISCONNECTED }
 
@@ -69,6 +87,16 @@ public sealed interface EngineEvent {
 					case 4 -> new Talking(uuid(payload), payload.get() != 0);
 					case 5 -> new MicLevel(payload.getFloat());
 					case 6 -> new Error(utf8(payload));
+					case 7 -> new Invite(uuid(payload));
+					case 8 -> {
+						NoticeKind kind = lookup(NoticeKind.values(), payload.get());
+						UUID uuid = uuid(payload);
+						UUID by = uuid(payload);
+						yield kind == null ? null : new GroupNotice(kind, uuid, by);
+					}
+					// Arguments are evaluated left to right, in record order.
+					case 9 -> new KickVote(uuid(payload), uuid(payload), payload.get() != 0, payload.getInt(),
+							payload.getInt());
 					default -> null;
 				};
 				if (event != null) events.add(event);

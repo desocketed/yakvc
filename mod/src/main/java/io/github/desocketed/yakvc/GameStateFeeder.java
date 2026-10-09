@@ -9,9 +9,11 @@ import io.github.desocketed.yakvc.config.PlayerVolumes;
 import io.github.desocketed.yakvc.input.VoiceKeys;
 import io.github.desocketed.yakvc.natives.EngineEvent;
 import io.github.desocketed.yakvc.natives.NativeBridge;
+import io.github.desocketed.yakvc.natives.VoiceGroup;
 import io.github.desocketed.yakvc.natives.VoiceStats;
 import io.github.desocketed.yakvc.natives.YakVcException;
 import io.github.desocketed.yakvc.ui.EngineErrorToasts;
+import io.github.desocketed.yakvc.ui.GroupChat;
 import io.github.desocketed.yakvc.ui.VoiceMenuScreen;
 import io.github.desocketed.yakvc.ui.VoiceToasts;
 import java.lang.foreign.MemorySegment;
@@ -51,6 +53,8 @@ public final class GameStateFeeder {
 	private static final int STATS_REFRESH_TICKS = 5;
 	/** The engine's level for a silent frame. */
 	public static final float SILENCE_DB = -100;
+	/** The longest group label the engine takes. */
+	public static final int MAX_LABEL_CHARS = 32;
 
 	private final NativeBridge bridge;
 	private final MemorySegment engine;
@@ -108,9 +112,10 @@ public final class GameStateFeeder {
 	private boolean debugOverlay;
 	private @Nullable VoiceStats stats;
 	private int ticksUntilStats;
-	/** We joined a group this server session, and whether nearby voice is on in it. */
-	private boolean inGroup;
-	private boolean groupNearby = true;
+	/** Whether the last tick had a server session, to leave our group once it ends. */
+	private boolean hadSession;
+	/** Invites, group changes and kick votes, told in chat and toasts. */
+	private final GroupChat groupChat = new GroupChat(this);
 
 	public GameStateFeeder(NativeBridge bridge, MemorySegment engine, ClientConfig config, VoiceKeys keys,
 			SessionJoiner joiner, PlayerVolumes volumes) {
@@ -159,9 +164,14 @@ public final class GameStateFeeder {
 		if (session != null) session.tick();
 		else talking.clear();
 		// Groups last one server session.
-		if (session == null && inGroup) step(this::leaveGroup);
+		if (session == null && hadSession) {
+			step(this::leaveGroup);
+			groupChat.clear();
+		}
+		hadSession = session != null;
 		LocalPlayer player = minecraft.player;
 		boolean active = session != null && session.active() && player != null && minecraft.level != null;
+		if (keys.groupPressed() && active) step(() -> groupChat.groupKeyPressed(minecraft));
 
 		Set<UUID> players = active ? new HashSet<>(session.connection.getOnlinePlayerIds()) : Set.of();
 		refreshBlocked(minecraft, players);
@@ -236,73 +246,70 @@ public final class GameStateFeeder {
 		return devices;
 	}
 
-	/** A group someone on the server is in, as {@code yakvc_list_groups} lists it. */
-	public record Group(String id, String name, boolean locked, boolean joined, List<UUID> members) {}
-
-	/** Our group and every group our peers announce. Empty if the engine is stopped. */
-	public List<Group> groups() {
+	/** Our group first, if we are in one, then the public groups our peers announce. Empty if the engine is stopped. */
+	public List<VoiceGroup> groups() {
 		if (closed) return List.of();
-		List<Group> groups = new ArrayList<>();
 		try {
-			for (JsonElement element : JsonParser.parseString(bridge.listGroups(engine)).getAsJsonArray()) {
-				JsonObject fields = element.getAsJsonObject();
-				List<UUID> members = new ArrayList<>();
-				for (JsonElement member : fields.getAsJsonArray("members")) {
-					members.add(UUID.fromString(member.getAsString()));
-				}
-				groups.add(new Group(fields.get("id").getAsString(), fields.get("name").getAsString(),
-						fields.get("locked").getAsBoolean(), fields.get("joined").getAsBoolean(), members));
-			}
+			return VoiceGroup.parse(bridge.listGroups(engine));
 		} catch (YakVcException e) {
 			fail(e);
+			return List.of();
 		}
-		return groups;
 	}
 
-	/**
-	 * Joins the group with this name and password, leaving any other. With {@code expectedId}, the listed group
-	 * being joined, a password that gives another id is refused instead of starting a second group of the same name.
-	 * Returns why it failed, or null.
-	 */
-	public @Nullable Component joinGroup(String name, String password, @Nullable String expectedId) {
-		if (closed) return Component.translatable("yakvc.groups.error.stopped");
-		try {
-			if (expectedId != null && !bridge.groupId(name, password).equals(expectedId)) {
-				return Component.translatable("yakvc.groups.error.wrong_password");
-			}
-			bridge.joinGroup(engine, name, password);
-		} catch (YakVcException e) {
-			if (e.poisoned()) fail(e);
-			return Component.translatable("yakvc.groups.error.name");
-		}
-		inGroup = true;
-		groupNearby = true;
-		return null;
+	/** Our own group, or null if we are in none. */
+	public @Nullable VoiceGroup myGroup() {
+		List<VoiceGroup> groups = groups();
+		return groups.isEmpty() || !groups.getFirst().mine() ? null : groups.getFirst();
+	}
+
+	/** Invites a player to our group, or to a new one if we are in none. False if the engine is stopped. */
+	public boolean invite(UUID target) {
+		return groupCall(() -> bridge.invite(engine, target));
+	}
+
+	/** Joins the group of {@code from}'s invite. False if there was none in the last two minutes. */
+	public boolean acceptInvite(UUID from) {
+		return groupCall(() -> bridge.acceptInvite(engine, from));
+	}
+
+	/** Joins a public group from {@link #groups}. False if nobody announces it any more. */
+	public boolean joinGroup(String id) {
+		return groupCall(() -> bridge.joinGroup(engine, id));
 	}
 
 	public void leaveGroup() {
-		if (closed) return;
-		inGroup = false;
-		groupNearby = true;
-		try {
-			bridge.leaveGroup(engine);
-		} catch (YakVcException e) {
-			fail(e);
-		}
+		groupCall(() -> bridge.leaveGroup(engine));
 	}
 
-	/** Whether nearby players outside our group hear us and are heard. Always true outside a group. */
-	public boolean groupNearby() {
-		return groupNearby;
+	/** False if we are in no group. */
+	public boolean setGroupPublic(boolean isPublic) {
+		return groupCall(() -> bridge.setGroupPublic(engine, isPublic));
 	}
 
-	public void setGroupNearby(boolean nearby) {
-		if (closed || !inGroup) return;
-		groupNearby = nearby;
+	/** Sets our group's label: empty for none, at most {@link #MAX_LABEL_CHARS}. False if refused. */
+	public boolean setGroupLabel(String label) {
+		return groupCall(() -> bridge.setGroupLabel(engine, label));
+	}
+
+	/** Votes on kicking a group mate. False if we are in no group or {@code target} is not in it. */
+	public boolean voteKick(UUID target, boolean yes) {
+		return groupCall(() -> bridge.voteKick(engine, target, yes));
+	}
+
+	/**
+	 * Runs a group action and returns whether it worked. A refusal (no such invite or group any more) is a normal
+	 * outcome the caller tells the player about, so it is only logged.
+	 */
+	private boolean groupCall(Runnable call) {
+		if (closed) return false;
 		try {
-			bridge.setGroupNearby(engine, nearby);
+			call.run();
+			return true;
 		} catch (YakVcException e) {
-			fail(e);
+			if (e.poisoned()) fail(e);
+			else YakVcClient.LOGGER.info("Group action refused: {}", e.getMessage());
+			return false;
 		}
 	}
 
@@ -475,6 +482,20 @@ public final class GameStateFeeder {
 				YakVcClient.LOGGER.warn("Engine: {}", message);
 				errorToasts.show(message);
 			}
+			case EngineEvent.Invite invite -> {
+				YakVcClient.LOGGER.info("Group invite from {} {}", invite.from(), name(invite.from()));
+				groupChat.invited(invite.from());
+			}
+			case EngineEvent.GroupNotice notice -> {
+				YakVcClient.LOGGER.info("Group {}: {} {}, by {}", notice.kind(), notice.uuid(), name(notice.uuid()),
+						notice.by());
+				groupChat.notice(notice);
+			}
+			case EngineEvent.KickVote vote -> {
+				YakVcClient.LOGGER.info("Kick vote on {} by {}: {} ({} of {})", vote.target(), vote.by(),
+						vote.yes() ? "yes" : "no", vote.votes(), vote.needed());
+				groupChat.kickVote(vote);
+			}
 		}
 	}
 
@@ -518,6 +539,10 @@ public final class GameStateFeeder {
 
 	public VoiceKeys keys() {
 		return keys;
+	}
+
+	public GroupChat groupChat() {
+		return groupChat;
 	}
 
 	/** Saved per-player volume and mute. Changes reach the engine on the next tick. */

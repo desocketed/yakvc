@@ -30,7 +30,7 @@ import java.util.UUID;
  */
 public final class NativeBridge {
 	/** Must equal {@code YAKVC_ABI_VERSION} in {@code yakvc.h}. */
-	public static final int ABI_VERSION = 4;
+	public static final int ABI_VERSION = 5;
 
 	public static final int INPUT_PUSH_TO_TALK = 1;
 	public static final int INPUT_MUTED = 1 << 1;
@@ -39,6 +39,8 @@ public final class NativeBridge {
 
 	public static final int ERR_PANIC = -6;
 	public static final int ERR_POISONED = -7;
+	/** A group action that cannot be done now, such as accepting an invite that expired. */
+	public static final int ERR_UNAVAILABLE = -8;
 
 	// size_t is 64 bits on every platform Minecraft runs on.
 	private static final ValueLayout.OfLong SIZE_T = JAVA_LONG;
@@ -58,10 +60,13 @@ public final class NativeBridge {
 	private final MethodHandle updateConfig;
 	private final MethodHandle listDevices;
 	private final MethodHandle stats;
+	private final MethodHandle invite;
+	private final MethodHandle acceptInvite;
 	private final MethodHandle joinGroup;
 	private final MethodHandle leaveGroup;
-	private final MethodHandle setGroupNearby;
-	private final MethodHandle groupId;
+	private final MethodHandle setGroupPublic;
+	private final MethodHandle setGroupLabel;
+	private final MethodHandle voteKick;
 	private final MethodHandle listGroups;
 	private final MethodHandle lastError;
 
@@ -96,13 +101,18 @@ public final class NativeBridge {
 				FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, SIZE_T, ADDRESS));
 		stats = linker.downcallHandle(find(library, "yakvc_stats"),
 				FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, SIZE_T, ADDRESS));
+		invite = linker.downcallHandle(find(library, "yakvc_invite"), FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+		acceptInvite = linker.downcallHandle(find(library, "yakvc_accept_invite"),
+				FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
 		joinGroup = linker.downcallHandle(find(library, "yakvc_join_group"),
-				FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, SIZE_T, ADDRESS, SIZE_T));
+				FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
 		leaveGroup = linker.downcallHandle(find(library, "yakvc_leave_group"), FunctionDescriptor.of(JAVA_INT, ADDRESS));
-		setGroupNearby = linker.downcallHandle(find(library, "yakvc_set_group_nearby"),
+		setGroupPublic = linker.downcallHandle(find(library, "yakvc_set_group_public"),
 				FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_BOOLEAN));
-		groupId = linker.downcallHandle(find(library, "yakvc_group_id"),
-				FunctionDescriptor.of(JAVA_INT, ADDRESS, SIZE_T, ADDRESS, SIZE_T, ADDRESS));
+		setGroupLabel = linker.downcallHandle(find(library, "yakvc_set_group_label"),
+				FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, SIZE_T));
+		voteKick = linker.downcallHandle(find(library, "yakvc_vote_kick"),
+				FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_BOOLEAN));
 		listGroups = linker.downcallHandle(find(library, "yakvc_list_groups"),
 				FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, SIZE_T, ADDRESS));
 		lastError = linker.downcallHandle(find(library, "yakvc_last_error"),
@@ -220,13 +230,33 @@ public final class NativeBridge {
 		return readJson(stats, engine);
 	}
 
-	/** Joins the group with this name and password (empty for an open group), leaving any other. */
-	public void joinGroup(MemorySegment engine, String name, String password) {
+	/**
+	 * Invites {@code target} to our group. Outside a group the invite is to a new one, which we join only once they
+	 * accept.
+	 */
+	public void invite(MemorySegment engine, UUID target) {
 		try (Arena arena = Arena.ofConfined()) {
-			MemorySegment nameBytes = utf8(arena, name);
-			MemorySegment passwordBytes = utf8(arena, password);
-			check((int) invoke(joinGroup, engine, nameBytes, nameBytes.byteSize(), passwordBytes,
-					passwordBytes.byteSize()));
+			check((int) invoke(invite, engine, arena.allocateFrom(JAVA_BYTE, uuidBytes(List.of(target)))));
+		}
+	}
+
+	/**
+	 * Joins the group of the last invite from {@code from}, leaving any other. Fails with {@link #ERR_UNAVAILABLE} if
+	 * there was none in the last two minutes.
+	 */
+	public void acceptInvite(MemorySegment engine, UUID from) {
+		try (Arena arena = Arena.ofConfined()) {
+			check((int) invoke(acceptInvite, engine, arena.allocateFrom(JAVA_BYTE, uuidBytes(List.of(from)))));
+		}
+	}
+
+	/** Joins a public group from {@link #listGroups} by its id, 64 hex characters, leaving any other. */
+	public void joinGroup(MemorySegment engine, String id) {
+		byte[] bytes = id.getBytes(StandardCharsets.US_ASCII);
+		// Native code reads exactly 64 bytes.
+		if (bytes.length != 64) throw new IllegalArgumentException("a group id is 64 hex characters: " + id);
+		try (Arena arena = Arena.ofConfined()) {
+			check((int) invoke(joinGroup, engine, arena.allocateFrom(JAVA_BYTE, bytes)));
 		}
 	}
 
@@ -234,19 +264,23 @@ public final class NativeBridge {
 		check((int) invoke(leaveGroup, engine));
 	}
 
-	/** While in a group, whether nearby players outside it are heard and sent to. */
-	public void setGroupNearby(MemorySegment engine, boolean nearby) {
-		check((int) invoke(setGroupNearby, engine, nearby));
+	/** Makes our group public (anyone may join) or private. */
+	public void setGroupPublic(MemorySegment engine, boolean isPublic) {
+		check((int) invoke(setGroupPublic, engine, isPublic));
 	}
 
-	/** The id, in hex, of the group with this name and password, without joining it. */
-	public String groupId(String name, String password) {
+	/** Sets our group's label, at most 32 characters; empty for none. */
+	public void setGroupLabel(MemorySegment engine, String label) {
 		try (Arena arena = Arena.ofConfined()) {
-			MemorySegment nameBytes = utf8(arena, name);
-			MemorySegment passwordBytes = utf8(arena, password);
-			MemorySegment out = arena.allocate(64);
-			check((int) invoke(groupId, nameBytes, nameBytes.byteSize(), passwordBytes, passwordBytes.byteSize(), out));
-			return new String(out.toArray(JAVA_BYTE), StandardCharsets.US_ASCII);
+			MemorySegment bytes = utf8(arena, label);
+			check((int) invoke(setGroupLabel, engine, bytes, bytes.byteSize()));
+		}
+	}
+
+	/** Votes on kicking {@code target}, a group mate, out of our group. */
+	public void voteKick(MemorySegment engine, UUID target, boolean yes) {
+		try (Arena arena = Arena.ofConfined()) {
+			check((int) invoke(voteKick, engine, arena.allocateFrom(JAVA_BYTE, uuidBytes(List.of(target))), yes));
 		}
 	}
 

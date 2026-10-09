@@ -14,7 +14,19 @@ public final class VoiceToasts {
 	 */
 	public static final SystemToast.SystemToastId ENGINE_ERROR = new SystemToast.SystemToastId(10_000L);
 
+	/**
+	 * Changes in our group, for 5 s. One slot of their own, so they never replace a failure; a newer one replaces an
+	 * older one, because joining a group brings one for every member already in it.
+	 */
+	public static final SystemToast.SystemToastId GROUP = new SystemToast.SystemToastId(5_000L);
+
 	private VoiceToasts() {}
+
+	/** Must run on the client thread. */
+	public static void showGroupNotice(Component message) {
+		SystemToast.addOrUpdate(Minecraft.getInstance().gui.toastManager(), GROUP,
+				Component.translatable("yakvc.toast.group_title"), message);
+	}
 
 	/** Must run on the client thread, after the game has started. */
 	public static void show(Component message) {

@@ -3,6 +3,7 @@ package io.github.desocketed.yakvc.ui;
 import io.github.desocketed.yakvc.GameStateFeeder;
 import io.github.desocketed.yakvc.VoiceSession;
 import io.github.desocketed.yakvc.YakVcClient;
+import io.github.desocketed.yakvc.config.ClientConfig;
 import io.github.desocketed.yakvc.config.PlayerVolumes;
 import io.github.desocketed.yakvc.input.VoiceKeys;
 import io.github.desocketed.yakvc.natives.EngineEvent;
@@ -15,6 +16,7 @@ import java.util.UUID;
 import java.util.function.Consumer;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.OptionInstance;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractSliderButton;
 import net.minecraft.client.gui.components.Button;
@@ -38,11 +40,15 @@ import org.jspecify.annotations.Nullable;
 public final class VoiceMenuScreen extends Screen {
 	private static final int ROW_HEIGHT = 28;
 	private static final int ROW_WIDTH = 310;
+	private static final int HEADER_HEIGHT = 45;
+	private static final int HEADER_HEIGHT_WITH_CARD = 100;
 
 	private final @Nullable Screen lastScreen;
 	private final GameStateFeeder feeder;
-	private final HeaderAndFooterLayout layout = new HeaderAndFooterLayout(this, 45, 33);
+	private final HeaderAndFooterLayout layout = new HeaderAndFooterLayout(this, HEADER_HEIGHT, 33);
 	private @Nullable PlayerList list;
+	/** The first-run card, while it shows. */
+	private @Nullable LinearLayout setupCard;
 	/** The players in the list, to rebuild it when someone joins or leaves. */
 	private List<UUID> shown = List.of();
 
@@ -54,10 +60,14 @@ public final class VoiceMenuScreen extends Screen {
 
 	@Override
 	protected void init() {
+		// init runs again on every rebuild, and the layout would keep the old widgets.
+		layout.removeChildren();
 		LinearLayout header = layout.addToHeader(LinearLayout.vertical().spacing(4));
 		header.defaultCellSetting().alignHorizontallyCenter();
 		header.addChild(new StringWidget(title, font));
 		header.addChild(new StringWidget(status().copy().withStyle(ChatFormatting.GRAY), font));
+		setupCard = feeder.config().setupDone() ? null : header.addChild(setupCard());
+		layout.setHeaderHeight(setupCard == null ? HEADER_HEIGHT : HEADER_HEIGHT_WITH_CARD);
 
 		list = layout.addToContents(new PlayerList(minecraft));
 		shown = players();
@@ -81,6 +91,38 @@ public final class VoiceMenuScreen extends Screen {
 
 		layout.visitWidgets(this::addRenderableWidget);
 		repositionElements();
+	}
+
+	/**
+	 * The first-run card: who may invite you to a group and how you talk, the two choices a new player should make
+	 * before anything else. OK saves both and sets {@code setup_done}, so the card doesn't come back.
+	 */
+	private LinearLayout setupCard() {
+		ClientConfig config = feeder.config();
+		OptionInstance<String> invites = VoiceSettingsScreen.invitesOption(config);
+		OptionInstance<String> activation = VoiceSettingsScreen.activationOption(config);
+		LinearLayout card = LinearLayout.vertical().spacing(4);
+		card.defaultCellSetting().alignHorizontallyCenter();
+		card.addChild(new StringWidget(Component.translatable("yakvc.setup.prompt"), font));
+		LinearLayout row = card.addChild(LinearLayout.horizontal().spacing(4));
+		row.addChild(invites.createButton(minecraft.options, 0, 0, 130));
+		row.addChild(activation.createButton(minecraft.options, 0, 0, 130));
+		row.addChild(Button.builder(Component.translatable("yakvc.setup.ok"), button -> {
+			ClientConfig changed = VoiceSettingsScreen.withActivationAndInvites(config, activation, invites)
+					.with("", "setup_done", "true");
+			VoiceSettingsScreen.applyAndSave(feeder, changed);
+			rebuildWidgets();
+		}).width(40).build());
+		return card;
+	}
+
+	@Override
+	public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float a) {
+		super.extractRenderState(graphics, mouseX, mouseY, a);
+		if (setupCard != null) {
+			graphics.outline(setupCard.getX() - 6, setupCard.getY() - 4, setupCard.getWidth() + 12,
+					setupCard.getHeight() + 8, 0xFFA0A0A0);
+		}
 	}
 
 	@Override

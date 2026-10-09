@@ -66,28 +66,34 @@ class NativeBridgeTest {
 	}
 
 	@Test
-	void joinsAndLeavesAGroup(@TempDir Path configDir) throws Exception {
+	void groupCallsOutsideAGroup(@TempDir Path configDir) throws Exception {
 		NativeBridge bridge = new NativeBridge(NativeLoader.load(configDir));
 		MemorySegment engine = bridge.create(configDir.toString(), DEV_CONFIG);
 		try {
 			UUID me = UUID.fromString("00112233-4455-6677-8899-aabbccddeeff");
+			UUID other = UUID.randomUUID();
 			bridge.setIdentity(engine, me, "alice");
-			bridge.joinGroup(engine, "Miners", "pw");
-			bridge.setGroupNearby(engine, false);
-			String id = bridge.groupId("Miners", "pw");
-			assertEquals(64, id.length());
-			String groups = bridge.listGroups(engine);
-			assertTrue(groups.contains("\"id\":\"" + id + "\""), groups);
-			assertTrue(groups.contains(me.toString()), groups);
-			assertTrue(!bridge.groupId("Miners", "other").equals(id));
-
-			YakVcException blank = assertThrows(YakVcException.class, () -> bridge.joinGroup(engine, " ", ""));
-			assertTrue(blank.getMessage().contains("1 to 32"), blank.getMessage());
-			bridge.leaveGroup(engine);
+			// Inviting doesn't put us in a group until they accept.
+			bridge.invite(engine, other);
 			assertEquals("[]", bridge.listGroups(engine));
+
+			assertUnavailable(() -> bridge.acceptInvite(engine, other));
+			assertUnavailable(() -> bridge.joinGroup(engine, "0".repeat(64)));
+			assertUnavailable(() -> bridge.setGroupPublic(engine, true));
+			assertUnavailable(() -> bridge.setGroupLabel(engine, "Miners"));
+			assertUnavailable(() -> bridge.voteKick(engine, other, true));
+			YakVcException notHex = assertThrows(YakVcException.class, () -> bridge.joinGroup(engine, "z".repeat(64)));
+			assertEquals(-1, notHex.code());
+			assertThrows(IllegalArgumentException.class, () -> bridge.joinGroup(engine, "00"));
+			bridge.leaveGroup(engine);
 		} finally {
 			bridge.destroy(engine);
 		}
+	}
+
+	private static void assertUnavailable(Runnable call) {
+		YakVcException e = assertThrows(YakVcException.class, call::run);
+		assertEquals(NativeBridge.ERR_UNAVAILABLE, e.code(), e.getMessage());
 	}
 
 	@Test

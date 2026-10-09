@@ -24,9 +24,19 @@ class ClientConfigTest {
 		assertEquals(ClientConfig.DEFAULT, Files.readString(dir.resolve(ClientConfig.FILE_NAME)));
 		assertTrue(config.respectChatRestrictions());
 		assertTrue(config.muteBlockedPlayers());
+		assertEquals("everyone", config.invites());
+		assertFalse(config.setupDone());
 
 		Files.writeString(dir.resolve(ClientConfig.FILE_NAME), "respect_chat_restrictions = false\n");
 		assertFalse(ClientConfig.load(dir).respectChatRestrictions());
+	}
+
+	@Test
+	void readsGroupInvitesAndSetup() {
+		ClientConfig config = new ClientConfig("invites = \"friends\"\nsetup_done = true\n");
+		assertEquals("friends", config.invites());
+		assertTrue(config.setupDone());
+		assertEquals("everyone", new ClientConfig("").invites());
 	}
 
 	@Test
