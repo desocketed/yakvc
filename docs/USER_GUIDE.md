@@ -31,6 +31,7 @@ The keys are in Options → Controls → Key Binds, under **Yak VC**.
 | Key | Default | What it does |
 | --- | --- | --- |
 | Push to Talk | V | Hold to talk. |
+| Group | B | Look at a player and press it to invite them to a [group](#groups), or to accept their invite. |
 | Toggle Mute | not bound | Turns your microphone off and on. |
 | Toggle Deafen | not bound | Stops you hearing anyone. Your microphone still works unless you mute it too. |
 | Open Voice Menu | not bound | Opens the [voice menu](#the-voice-menu), and from there the settings. |
@@ -44,12 +45,12 @@ While you are in a world, a few icons in the top-left corner show how voice is d
 
 | | |
 | --- | --- |
-| ![White microphone, green bars](guide/hud-ready.png) | Ready. The microphone is white while you are silent, and the green bars mean you are connected to the Yak VC server. |
+| ![White microphone](guide/hud-ready.png) | Ready. The microphone is white while you are silent. |
 | ![Green microphone](guide/hud-talking.png) | Talking: your voice is going out. |
 | ![Red microphone](guide/hud-muted.png) | Muted. |
 | ![Red headphones](guide/hud-deafened.png) | Deafened. |
 
-The bars are yellow while Yak VC is connecting to its server (or trying again), and red when it can't reach it. A grey microphone with a short message means voice is off in this world:
+Signal bars appear next to the microphone only while Yak VC isn't connected to its server: yellow while it is connecting (or trying again), and red when it can't reach it. A grey microphone with a short message means voice is off in this world:
 
 - **Waiting for the server**: just after joining a server, until the server sends its details (at most 5 seconds).
 - **Voice off: chat is disabled for this account**: see [chat restrictions](#privacy).
@@ -69,6 +70,10 @@ A green speaker floats over the head of every player who is talking, above their
 ## The voice menu
 
 Press your **Open Voice Menu** key. The top line says whether voice is connected. Below it is every other player on the server, players with voice first.
+
+The first time you open it, a card at the top asks two things: who may invite you to a [group](#groups) (**Everyone**, **Friends** or **Nobody**) and how you talk (**Push to Talk** or **Voice**). **OK** saves both, and the card doesn't come back; both are in the [settings](#settings) too.
+
+![The voice menu with the first-run card](guide/voice-menu-setup.png)
 
 ![The voice menu](guide/voice-menu.png)
 
@@ -90,15 +95,24 @@ At the bottom: **Mute Mic**, **Deafen**, **Groups…**, **Settings…** and **Do
 
 ## Groups
 
-Players in a group hear each other wherever they are on the server, as if standing next to each other, without direction. Open **Groups…** in the voice menu.
+Players in a group hear each other wherever they are on the server, as if standing next to each other, without direction, and only each other: while you are in a group, players near you who aren't in it don't hear you, and you don't hear them. Push to Talk (or *Voice* activation) works the same as outside a group.
+
+**Making a group.** Look at a player and press **Group** (B). They see in chat that you invited them, for example *Steve invited you to a group. Look at them and press B.* When they look at you and press their Group key within two minutes, you are both in the group. Anyone in a group can invite more players the same way, and accepting an invite leaves the group you were in. A group is made face to face, so the player has to be in view; who may invite you is the **Group Invites** setting.
+
+![An invite in chat](guide/group-invite.png)
+
+When someone joins or leaves your group, or changes it, a message shows in the top-right corner: *Alex joined the group*, *Alex left the group*, *Steve made the group public*, *Steve changed the group label*, or *You were kicked from the group*.
+
+**The groups screen.** Open **Groups…** in the voice menu. Each group is a box of its members' faces (point at a face to see the name), with its label above if it has one.
 
 ![The groups screen](guide/voice-groups.png)
 
-- **The list** shows every group on the server, who is in it, and **(password)** if it has one. **Join** joins a group (asking for the password if it has one), and **Leave** leaves yours. You can be in one group at a time, and you leave it when you leave the server.
-- **Create** makes a group from the name (up to 32 characters) and the optional password typed at the bottom. Joining a group nobody is in yet is the same as creating it. The same name with a different password is a different group, so check the password when you create one.
-- **Nearby Players** is on by default: you still hear, and are heard by, players near you who aren't in your group. Turn it off to talk only to your group: then nobody outside the group hears you, and you hear nobody outside it.
-- Mute, volume, deafen and blocking work in groups as everywhere else.
-- **Passwords keep strangers out, but they aren't secret.** Everyone on the server can try to guess a group's password, so never reuse a real one. What you say in a group is encrypted like all voice.
+- **Your group** comes first. **Leave** leaves it. **Private** or **Public** switches who can see it: a private group is seen only by its members; a public one is listed for everyone on the server, and anyone may **Join** it. Type a label of up to 32 characters above the faces and press Enter to set it; leave it empty for none.
+- **Public groups** of other players follow, each with **Join**.
+- Groups have no leader: every member can invite, change the label or the public setting, or start a vote to kick someone. You can be in one group at a time, and you leave it when you leave the server.
+- Mute, volume, deafen and blocking work in groups as everywhere else. What you say in a group is encrypted like all voice.
+
+**Kicking someone.** Type `/yakvc kick <player>` in chat (Tab suggests your group mates). The other members see *Steve wants to kick Alex from the group.* with **[Yes]** and **[No]** to click, and each vote shows how far it has got, for example *Vote to kick Alex: 2 of 3*. When more than half of the other members vote yes within a minute, Alex is out of the group. A kicked player can join a public group again; make it private to keep them out.
 
 The game's own Voice/Speech slider (Options → Music & Sounds) sets the volume of all voices, together with Master.
 
@@ -126,6 +140,7 @@ Open the settings from **Options → Music & Sounds → Voice Chat…**, at the 
 - **Relay Only**: sends all voice through the Yak VC relay, so other players don't learn your IP address (see [privacy](#privacy)). Off by default. It takes effect after you restart the game.
 - **Obey Chat Limits**: turns voice off while your Microsoft account or launcher disables chat. On by default.
 - **Mute Blocked**: players you block in Social Interactions can't hear you, and you don't hear them. On by default.
+- **Group Invites**: who may invite you to a [group](#groups): *Everyone* (the default), *Friends* (the players in `friends_only` in the [config file](#the-config-file)) or *Nobody*. Invites from anyone else are ignored.
 
 Under **Account** the settings say whether your Minecraft account is verified (see [Installing](#installing)).
 
@@ -138,7 +153,7 @@ Under **Troubleshooting**:
 ## Privacy
 
 - **Other players learn your IP address.** Voice goes straight from player to player, and Yak VC connects to every Yak VC player on the server as soon as you both join, so all of them can see your IP address, not just the ones near you. On a server network with one shared player list, that is every Yak VC player on the network. Turn on **Relay Only** to hide it: everything then goes through the Yak VC relay. A relay has limited room, so with Relay Only about 11 nearby players can hear you at once; the nearest get it first.
-- **You talk only to players you can see nearby.** Yak VC sends your voice only to players your game shows within range, and plays only theirs. Spectators neither hear nor are heard. Voice is encrypted from player to player; the relay only passes on encrypted data.
+- **You talk only to players you can see nearby, or to your group.** Yak VC sends your voice only to players your game shows within range, and plays only theirs; in a [group](#groups), only to and from its members, wherever they are. Outside a group, spectators neither hear nor are heard. Voice is encrypted from player to player; the relay only passes on encrypted data.
 - **The Yak VC server** learns which Yak VC players are on a server together and their IP addresses, but never hears what you say, and it keeps no record of who played with whom. Your game sends it the rest of the player list only as scrambled codes, but player IDs are public, so it could work out who is on your list.
 - **Chat restrictions.** If your Microsoft account (for example a child account) or your launcher turns chat off, Yak VC turns voice off too. **Obey Chat Limits** controls this.
 - **Blocked players.** Anyone you block in Social Interactions is muted both ways. **Mute Blocked** controls this.
@@ -197,6 +212,7 @@ The keys that the settings screen shows:
 | `respect_chat_restrictions` | `true` | Obey Chat Limits |
 | `mute_blocked_players` | `true` | Mute Blocked |
 | `verified_only` | `false` | Only Verified Players |
+| `invites` | `"everyone"` | Group Invites (`"everyone"`, `"friends"` or `"nobody"`) |
 | `[audio]` `activation` | `"push_to_talk"` | Activation (`"push_to_talk"` or `"voice"`) |
 | `[audio]` `bitrate` | `24000` | Bitrate, in bits per second |
 | `[audio]` `input_device` | unset | Microphone, by device id |
@@ -207,6 +223,7 @@ A few more are only in the file:
 | Key | Default | What it does |
 | --- | --- | --- |
 | `friends_only` | unset | A list of player UUIDs, like `["11111111-2222-3333-4444-555555555555"]`. When set, you hear and talk to only these players. |
+| `setup_done` | `false` | Set once the voice menu's first-run card is dismissed, so it shows only once. |
 | `[audio]` `noise_suppression` | `true` | Filters background noise out of your microphone. |
 | `[audio]` `input_gain` | `1.0` | Microphone volume, from 0 to 10. |
 | `[audio]` `vad_threshold_db` | `-45.0` | How loud you must be for *Voice* activation to send, from -100 (everything) to 0 (very loud only). |
