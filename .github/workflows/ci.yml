@@ -9,8 +9,9 @@ on:
     # A version tag (v<workspace version>) also publishes the release.
     tags: ["v*"]
     paths-ignore: ["**.md", "docs/**", "LICENSE-*"]
+  # Pull requests always run, so the required `ci-ok` check reports even
+  # when `changes` finds only docs and the build is skipped.
   pull_request:
-    paths-ignore: ["**.md", "docs/**", "LICENSE-*"]
   workflow_dispatch:
 
 # Actions from outside GitHub's own `actions/` are pinned to a commit, since
@@ -22,7 +23,29 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Whether a pull request touches more than docs (the same files a push to
+  # main ignores). Pushes and manual runs always build.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -z "$BASE" ] || git diff --name-only "$BASE" HEAD | grep -qvE '(\.md$|^docs/|^LICENSE-)'; then
+            echo code=true >> "$GITHUB_OUTPUT"
+          else
+            echo code=false >> "$GITHUB_OUTPUT"
+          fi
+
   rust:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -49,6 +72,8 @@ jobs:
           fi
 
   deny:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -57,6 +82,8 @@ jobs:
   # yakvc-ffi for every platform, plus yakvc-cli for the release. Each OS
   # builds its own targets; the mod job merges them into one jar.
   natives:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -189,6 +216,8 @@ jobs:
           path: mod/build/run/clientGameTest/screenshots/
 
   server:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -241,11 +270,28 @@ jobs:
   # The flake's server package (with its tests) and NixOS module. Runners
   # build in Nix's sandbox, unlike the dev container.
   nix:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
       - run: nix flake check --print-build-logs
+
+  # The one check branch protection requires: green when every job passed,
+  # or was skipped because a pull request only touches docs.
+  ci-ok:
+    if: always()
+    needs: [changes, rust, deny, natives, mod, server, nix]
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "$RESULTS"
+          for result in $RESULTS; do
+            [ "$result" = success ] || [ "$result" = skipped ] || exit 1
+          done
 
   # On a version tag: the GitHub release (jar, yakvc-cli, static
   # yakvc-server), the image on GHCR, and the jar on Modrinth and
