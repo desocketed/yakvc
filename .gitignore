@@ -2,3 +2,5 @@
 /dist
 /result
 /.claude/worktrees/
+# Claude's own instructions stay local and are never committed.
+/CLAUDE.md
