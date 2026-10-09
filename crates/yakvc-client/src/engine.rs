@@ -7,7 +7,7 @@ use iroh::endpoint::presets;
 use iroh::{Endpoint, EndpointAddr, RelayMode, SecretKey};
 use tokio::runtime::Runtime;
 use yakvc_audio::{Devices, FrameSink, FrameSource, StreamStats};
-use yakvc_shared::{GroupId, IssuerKey, TicketBody, TicketVerifier, Uuid};
+use yakvc_shared::{GroupId, IssuerKey, ProtocolId, TicketBody, TicketVerifier, Uuid};
 
 use crate::config::{Config, ConfigError};
 use crate::event::{self, Event, EventSender, Events, JoinId, PeerState, RendezvousState};
@@ -54,6 +54,9 @@ pub struct PeerInfo {
     pub state: PeerState,
     pub rtt: Option<Duration>,
     pub stream: Option<StreamStats>,
+    /// The voice protocol version the peer offered, to spot a peer on
+    /// another Yak VC build. `None` until linked.
+    pub voice_version: Option<u16>,
 }
 
 /// How this machine reaches the network. `Display` prints a short
@@ -304,6 +307,11 @@ impl Engine {
                 verified: peer.verified,
                 state: peer.state,
                 rtt: peer.rtt,
+                voice_version: peer
+                    .offered
+                    .iter()
+                    .find(|(id, _)| *id == ProtocolId::VOICE)
+                    .map(|(_, version)| *version),
             })
             .collect()
     }

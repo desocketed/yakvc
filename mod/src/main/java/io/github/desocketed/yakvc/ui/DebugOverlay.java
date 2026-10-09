@@ -57,6 +57,7 @@ public final class DebugOverlay implements HudElement {
 		lines.add("Rendezvous: " + rendezvous());
 		lines.add("Account: " + (feeder.verified() ? "verified" : "not verified"));
 		lines.add("Endpoint: " + (stats == null ? "…" : stats.endpointId().substring(0, 10))
+				+ (stats == null ? "" : ", voice v" + stats.voiceVersion())
 				+ (config.relayOnly() ? ", relay only" : ""));
 
 		lines.add("");
@@ -81,7 +82,7 @@ public final class DebugOverlay implements HudElement {
 		lines.add("");
 		lines.add("Peers: " + peerStats.size());
 		for (Map.Entry<UUID, VoiceStats.Peer> entry : peerStats.entrySet()) {
-			lines.add(peer(entry.getKey(), entry.getValue()));
+			lines.add(peer(entry.getKey(), entry.getValue(), stats.voiceVersion()));
 		}
 		return lines;
 	}
@@ -107,12 +108,15 @@ public final class DebugOverlay implements HudElement {
 		return secs >= 3600 ? secs / 3600 + " h" : secs / 60 + " min";
 	}
 
-	/** One peer: name, path, round trip, loss and jitter buffer delay. */
-	private String peer(UUID uuid, VoiceStats.Peer stats) {
+	/** One peer: name, path, voice version if it differs from ours, round trip, loss and jitter buffer delay. */
+	private String peer(UUID uuid, VoiceStats.Peer stats, int ourVersion) {
 		EngineEvent.PeerState state = feeder.peerState(uuid);
 		StringBuilder line = new StringBuilder(feeder.name(uuid)).append(": ")
 				.append(state == null ? "?" : state.name().toLowerCase().replace('_', ' '));
 		if (feeder.peerVerified(uuid)) line.append(", verified");
+		// Only a mismatch is worth the space: that peer runs another Yak VC build, and voice with it may not work.
+		Integer version = stats.voiceVersion();
+		if (version != null && version != ourVersion) line.append(", voice v").append(version);
 		if (stats.rttMs() != null) line.append(String.format(", rtt %.0f ms", stats.rttMs()));
 		VoiceStats.Stream stream = stats.stream();
 		if (stream != null) {

@@ -18,7 +18,7 @@ use tokio::sync::{Semaphore, mpsc, watch};
 use tokio::task::JoinSet;
 use tokio::time::Instant;
 use yakvc_shared::peer::{ALPN, CloseCode, PeerHello, PeerMsg};
-use yakvc_shared::{SignedTicket, Ticket, Uuid, wire};
+use yakvc_shared::{ProtocolId, SignedTicket, Ticket, Uuid, wire};
 
 use super::{
     Bans, ControlRecv, ControlSend, Inner, Link, Peer, PeerEntry, PeerLink, PeerStatus, Protocol,
@@ -55,6 +55,8 @@ struct Hello {
     ticket: SignedTicket,
     /// When the peer's ticket expires.
     expires: Instant,
+    /// The protocols and versions the peer offered, for the debug overlay.
+    offered: Vec<(ProtocolId, u16)>,
     /// Protocols both sides speak, with the agreed version.
     agreed: Vec<(Arc<dyn Protocol>, u16)>,
     control_send: SendStream,
@@ -263,6 +265,7 @@ async fn handshake(
         name: ticket.name.clone(),
         verified: ticket.verified,
         expires: expiry_instant(&ticket),
+        offered: theirs.protocols,
         ticket: theirs.ticket,
         agreed,
         control_send: send,
@@ -282,6 +285,7 @@ async fn serve(inner: Arc<Inner>, conn: Connection, dialed: bool, hello: Hello) 
         hello.uuid,
         &hello.name,
         hello.verified,
+        &hello.offered,
     ) {
         Ok(status) => status,
         Err(code) => {
@@ -376,6 +380,7 @@ fn register(
     uuid: Uuid,
     name: &str,
     verified: bool,
+    offered: &[(ProtocolId, u16)],
 ) -> Result<Arc<PeerStatus>, CloseCode> {
     let remote = conn.remote_id();
     let dialed_by_lower = dialed == (inner.endpoint.id() < remote);
@@ -402,6 +407,7 @@ fn register(
     entry.link = Some(Link {
         conn: conn.clone(),
         dialed_by_lower,
+        offered: offered.to_vec(),
     });
     entry.retry_after = None;
     let relayed = is_relayed(conn);
@@ -789,9 +795,9 @@ mod tests {
         let (second, second_b) = connect(a, &b).await;
 
         // Pretend the first was dialed by the lower id and the second wasn't.
-        assert!(register(inner, &first, a_is_lower, uuid(2), "bob", true).is_ok());
+        assert!(register(inner, &first, a_is_lower, uuid(2), "bob", true, &[]).is_ok());
         assert!(matches!(
-            register(inner, &second, !a_is_lower, uuid(2), "bob", true),
+            register(inner, &second, !a_is_lower, uuid(2), "bob", true, &[]),
             Err(CloseCode::Duplicate)
         ));
         assert_eq!(
@@ -808,7 +814,7 @@ mod tests {
         // A newer connection that was also dialed by the lower id replaces
         // the old one, which is closed as a duplicate.
         let (third, _third_b) = connect(a, &b).await;
-        assert!(register(inner, &third, a_is_lower, uuid(2), "bob", true).is_ok());
+        assert!(register(inner, &third, a_is_lower, uuid(2), "bob", true, &[]).is_ok());
         assert!(closed_with(first_b.closed().await, CloseCode::Duplicate));
 
         // The stale connection ending doesn't remove the peer; the current
@@ -834,7 +840,7 @@ mod tests {
         let b = loopback_endpoint().await;
         let (conn, conn_b) = connect(&inner.endpoint, &b).await;
         net.set_tab_list(HashSet::from([uuid(2)]));
-        register(inner, &conn, true, uuid(2), "bob", true).unwrap();
+        register(inner, &conn, true, uuid(2), "bob", true, &[]).unwrap();
 
         net.set_tab_list(HashSet::from([uuid(3)]));
         assert!(closed_with(conn_b.closed().await, CloseCode::NotVisible));
@@ -846,7 +852,7 @@ mod tests {
         let inner = net.inner();
         let b = loopback_endpoint().await;
         let (conn, conn_b) = connect(&inner.endpoint, &b).await;
-        register(inner, &conn, true, uuid(2), "bob", false).unwrap();
+        register(inner, &conn, true, uuid(2), "bob", false, &[]).unwrap();
         let _connected = events.try_next();
 
         inner.peer_gone(b.id());
@@ -869,7 +875,7 @@ mod tests {
         let idle = loopback_endpoint().await;
         let relisted = loopback_endpoint().await;
         let (conn, _conn_b) = connect(&inner.endpoint, &linked).await;
-        register(inner, &conn, true, uuid(2), "bob", true).unwrap();
+        register(inner, &conn, true, uuid(2), "bob", true, &[]).unwrap();
         for (endpoint, n) in [(&linked, 2), (&idle, 3), (&relisted, 4)] {
             let mut peers = inner.peers.lock().unwrap();
             let entry = peers

@@ -9,7 +9,8 @@ import java.util.UUID;
 import org.jspecify.annotations.Nullable;
 
 /** The engine's diagnostics snapshot from {@code yakvc_stats}, for the debug overlay. */
-public record VoiceStats(String endpointId, Audio audio, Map<UUID, Peer> peers) {
+/** {@code voiceVersion} is the voice protocol version we speak. */
+public record VoiceStats(String endpointId, int voiceVersion, Audio audio, Map<UUID, Peer> peers) {
 	/**
 	 * The audio thread. {@code bitrate} is what the encoder uses now, which is lower than configured while the relay
 	 * budget is tight. Overruns and underruns count from when the device was last opened.
@@ -17,8 +18,11 @@ public record VoiceStats(String endpointId, Audio audio, Map<UUID, Peer> peers) 
 	public record Audio(boolean microphoneOpen, boolean speakersOpen, boolean transmitting, int bitrate, long overruns,
 			long underruns) {}
 
-	/** A connected peer. {@code rttMs} is null until the path has one; {@code stream} until audio arrived. */
-	public record Peer(@Nullable Double rttMs, @Nullable Stream stream) {}
+	/**
+	 * A connected peer. {@code rttMs} is null until the path has one; {@code stream} until audio arrived;
+	 * {@code voiceVersion} (the voice protocol version it offered) until it is linked.
+	 */
+	public record Peer(@Nullable Double rttMs, @Nullable Stream stream, @Nullable Integer voiceVersion) {}
 
 	/** Receive counters in 20 ms frames, and the jitter buffer's current delay. */
 	public record Stream(long received, long late, long fecRecovered, long concealed, double playoutDelayMs) {
@@ -43,14 +47,17 @@ public record VoiceStats(String endpointId, Audio audio, Map<UUID, Peer> peers) 
 		for (JsonElement element : root.getAsJsonArray("peers")) {
 			JsonObject p = element.getAsJsonObject();
 			JsonElement rtt = p.get("rtt_ms");
+			JsonElement version = p.get("voice_version");
 			Stream stream = p.has("received")
 					? new Stream(p.get("received").getAsLong(), p.get("late").getAsLong(),
 							p.get("fec_recovered").getAsLong(), p.get("concealed").getAsLong(),
 							p.get("playout_delay_ms").getAsDouble())
 					: null;
 			peers.put(UUID.fromString(p.get("uuid").getAsString()),
-					new Peer(rtt == null || rtt.isJsonNull() ? null : rtt.getAsDouble(), stream));
+					new Peer(rtt == null || rtt.isJsonNull() ? null : rtt.getAsDouble(), stream,
+							version == null || version.isJsonNull() ? null : version.getAsInt()));
 		}
-		return new VoiceStats(root.get("endpoint_id").getAsString(), audio, peers);
+		return new VoiceStats(root.get("endpoint_id").getAsString(), root.get("voice_version").getAsInt(), audio,
+				peers);
 	}
 }
