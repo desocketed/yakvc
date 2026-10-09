@@ -158,11 +158,11 @@ fn offline_config() -> String {
     let config = yakvc_client::Config {
         dev_mode: true,
         rendezvous: Some(yakvc_client::RendezvousConfig {
-            endpoint_id: yakvc_shared::SecretKey::generate().public(),
+            endpoint_id: yakvc_proto::SecretKey::generate().public(),
             addrs: vec!["127.0.0.1:9".parse().unwrap()],
             relay: None,
         }),
-        trusted_issuers: vec![yakvc_shared::IssuerKey::generate().id()],
+        trusted_issuers: vec![yakvc_proto::IssuerKey::generate().id()],
         ..Default::default()
     };
     toml::to_string(&config).unwrap()
@@ -274,7 +274,7 @@ fn engine_lifecycle_through_the_c_abi() {
     assert_eq!(stats["endpoint_id"].as_str().map(str::len), Some(64));
     assert_eq!(
         stats["voice_version"].as_u64(),
-        Some(yakvc_shared::voice::VERSION.into())
+        Some(yakvc_proto::voice::VERSION.into())
     );
     assert!(stats["audio"]["bitrate"].is_u64());
     assert!(stats["peers"].is_array());

@@ -17,8 +17,8 @@ use iroh::{EndpointAddr, EndpointId};
 use tokio::sync::{Semaphore, mpsc, watch};
 use tokio::task::JoinSet;
 use tokio::time::Instant;
-use yakvc_shared::peer::{ALPN, CloseCode, PeerHello, PeerMsg};
-use yakvc_shared::{ProtocolId, SignedTicket, Ticket, Uuid, wire};
+use yakvc_proto::peer::{ALPN, CloseCode, PeerHello, PeerMsg};
+use yakvc_proto::{ProtocolId, SignedTicket, Ticket, Uuid, wire};
 
 use super::{
     Bans, ControlRecv, ControlSend, Inner, Link, Peer, PeerEntry, PeerLink, PeerStatus, Protocol,
@@ -622,7 +622,7 @@ pub(crate) enum Verdict {
 
 // Every voice frame the encoder can produce gets through.
 const _: () = assert!(
-    1 + yakvc_shared::voice::VoiceHeader::LEN + yakvc_audio::MAX_PACKET <= FloodGuard::MAX_LEN
+    1 + yakvc_proto::voice::VoiceHeader::LEN + yakvc_audio::MAX_PACKET <= FloodGuard::MAX_LEN
 );
 
 impl FloodGuard {
@@ -666,7 +666,7 @@ mod tests {
 
     use iroh::Endpoint;
     use iroh::endpoint::{ConnectionError, VarInt};
-    use yakvc_shared::{IssuerKey, TicketVerifier, offline_uuid};
+    use yakvc_proto::{IssuerKey, TicketVerifier, offline_uuid};
 
     use super::super::test_util::{
         connect, eventually, loopback_addr, loopback_endpoint, probe, signed_ticket, ticket,

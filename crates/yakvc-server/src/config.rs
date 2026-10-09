@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::Deserialize;
-use yakvc_shared::{IssuerKey, SecretKey};
+use yakvc_proto::{IssuerKey, SecretKey};
 
 use crate::server::{RelayOptions, RelayTls, Server, ServerBuilder};
 

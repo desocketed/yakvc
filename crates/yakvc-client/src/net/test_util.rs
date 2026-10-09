@@ -8,8 +8,8 @@ use std::time::{Duration, SystemTime};
 use iroh::endpoint::{Connection, presets};
 use iroh::{Endpoint, EndpointAddr, RelayMode, SecretKey, TransportAddr};
 use tokio::sync::mpsc;
-use yakvc_shared::peer::ALPN;
-use yakvc_shared::{IssuerKey, ProtocolId, SignedTicket, TicketBody, Uuid};
+use yakvc_proto::peer::ALPN;
+use yakvc_proto::{IssuerKey, ProtocolId, SignedTicket, TicketBody, Uuid};
 
 use super::{PeerLink, Protocol};
 

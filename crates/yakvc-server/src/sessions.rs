@@ -6,8 +6,8 @@ use std::sync::Mutex;
 use iroh::endpoint::Connection;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
-use yakvc_shared::rdv::{CloseCode, ServerMsg};
-use yakvc_shared::{EndpointAddr, EndpointId, PairToken, SignedTicket, Uuid};
+use yakvc_proto::rdv::{CloseCode, ServerMsg};
+use yakvc_proto::{EndpointAddr, EndpointId, PairToken, SignedTicket, Uuid};
 
 use crate::matcher::{Matcher, Notice};
 use crate::server::Stats;

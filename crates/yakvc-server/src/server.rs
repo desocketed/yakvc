@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 use iroh::endpoint::presets;
 use iroh::{Endpoint, RelayMode};
 use tokio::task::JoinSet;
-use yakvc_shared::rdv::{self, CloseCode};
-use yakvc_shared::{EndpointAddr, EndpointId, IssuerId, IssuerKey, RelayUrl, SecretKey};
+use yakvc_proto::rdv::{self, CloseCode};
+use yakvc_proto::{EndpointAddr, EndpointId, IssuerId, IssuerKey, RelayUrl, SecretKey};
 
 use crate::auth::Auth;
 use crate::limits::{IpSlots, RateLimiter, Slots, TokenBucket};

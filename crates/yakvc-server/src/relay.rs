@@ -17,7 +17,7 @@ use iroh_relay::server::{
 };
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use yakvc_shared::{EndpointId, RelayUrl};
+use yakvc_proto::{EndpointId, RelayUrl};
 
 use crate::limits::{RateLimiter, TokenBucket};
 use crate::server::{RelayOptions, RelayTls, SpawnError};
@@ -246,7 +246,7 @@ fn dialable(addr: SocketAddr) -> SocketAddr {
 
 #[cfg(test)]
 mod tests {
-    use yakvc_shared::SecretKey;
+    use yakvc_proto::SecretKey;
 
     use super::*;
 

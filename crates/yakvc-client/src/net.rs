@@ -26,8 +26,8 @@ use iroh::{Endpoint, EndpointAddr, EndpointId, Watcher};
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::AbortHandle;
-use yakvc_shared::peer::CloseCode;
-use yakvc_shared::{ProtocolId, SignedTicket, Ticket, TicketVerifier, Uuid, wire};
+use yakvc_proto::peer::CloseCode;
+use yakvc_proto::{ProtocolId, SignedTicket, Ticket, TicketVerifier, Uuid, wire};
 
 use crate::config::RendezvousConfig;
 use crate::event::{Event, EventSender, JoinId, PeerState};
@@ -519,7 +519,7 @@ impl Inner {
         let remote = addr.id;
         // The rendezvous rejects oversize addresses, so one here comes from a
         // misbehaving rendezvous; don't keep or dial it.
-        if remote == self.endpoint.id() || !yakvc_shared::rdv::addr_fits(&addr) {
+        if remote == self.endpoint.id() || !yakvc_proto::rdv::addr_fits(&addr) {
             return;
         }
         let verifier = self.trust.lock().unwrap().peer_verifier();
@@ -662,7 +662,7 @@ impl Trust {
 /// The checks on a verified ticket that depend on the connection and the
 /// game, from DESIGN.md "Peer handshake" step 3.
 pub(crate) fn check_peer(
-    ticket: &yakvc_shared::TicketBody,
+    ticket: &yakvc_proto::TicketBody,
     remote: EndpointId,
     own_uuid: Option<Uuid>,
     tab_list: &HashSet<Uuid>,
@@ -884,7 +884,7 @@ impl std::fmt::Debug for Inner {
 #[cfg(test)]
 mod tests {
     use iroh::SecretKey;
-    use yakvc_shared::TicketBody;
+    use yakvc_proto::TicketBody;
 
     use super::test_util::uuid;
     use super::*;

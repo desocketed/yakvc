@@ -5,9 +5,9 @@ use std::time::{Duration, SystemTime};
 
 use iroh::endpoint::{Connection, ConnectionError, RecvStream, SendStream, presets};
 use iroh::{Endpoint, RelayMode};
-use yakvc_shared::rdv::{self, ClientMsg, CloseCode, Hello, ServerMsg};
-use yakvc_shared::wire::{read_msg, write_msg};
-use yakvc_shared::{
+use yakvc_proto::rdv::{self, ClientMsg, CloseCode, Hello, ServerMsg};
+use yakvc_proto::wire::{read_msg, write_msg};
+use yakvc_proto::{
     EndpointAddr, EndpointId, IssuerKey, PairToken, RelayUrl, SecretKey, SignedTicket, Ticket,
     TicketVerifier, Uuid, offline_uuid,
 };

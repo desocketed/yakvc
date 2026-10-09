@@ -3,9 +3,9 @@
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime};
 
-use yakvc_shared::auth::{Nonce, session_server_id};
-use yakvc_shared::rdv::Hello;
-use yakvc_shared::{
+use yakvc_proto::auth::{Nonce, session_server_id};
+use yakvc_proto::rdv::Hello;
+use yakvc_proto::{
     EndpointId, IssuerKey, SignedTicket, Ticket, TicketBody, TicketVerifier, Uuid, offline_uuid,
 };
 
@@ -145,7 +145,7 @@ fn secs_rounded_up(d: Duration) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use yakvc_shared::{EndpointAddr, SecretKey};
+    use yakvc_proto::{EndpointAddr, SecretKey};
 
     use super::*;
     use crate::mojang::fake::{FakeMojang, response, uuid_for};
