@@ -17,12 +17,10 @@ use std::time::{Duration, Instant, SystemTime};
 use iroh::TransportAddr;
 use iroh::endpoint::{Connection, Incoming, IncomingAddr, RecvStream, SendStream};
 use tokio::sync::mpsc;
-use yakvc_shared::auth::Nonce;
-use yakvc_shared::rdv::{ClientMsg, CloseCode, Hello, ServerMsg, addr_fits};
-use yakvc_shared::wire::{MAX_MESSAGE_LEN, WireError, read_msg_max, write_msg};
-use yakvc_shared::{
-    EndpointAddr, EndpointId, PairToken, RelayUrl, Ticket, Uuid, is_offline_player,
-};
+use yakvc_proto::auth::Nonce;
+use yakvc_proto::rdv::{ClientMsg, CloseCode, Hello, ServerMsg, addr_fits};
+use yakvc_proto::wire::{MAX_MESSAGE_LEN, WireError, read_msg_max, write_msg};
+use yakvc_proto::{EndpointAddr, EndpointId, PairToken, RelayUrl, Ticket, Uuid, is_offline_player};
 
 use crate::auth::{JoinCheck, proves};
 use crate::limits::{IpSlot, Slot, TokenBucket, ip_key};

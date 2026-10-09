@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use yakvc_audio::{DeviceChoice, Spatial};
-use yakvc_shared::{GroupId, Uuid};
+use yakvc_proto::{GroupId, Uuid};
 
 use super::group::{Invite, OwnGroup, PendingGroup, SentInvite};
 use crate::config::{Activation, AudioConfig, InvitesFrom};
@@ -344,7 +344,7 @@ fn relay_capacity(bitrate: u32) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use yakvc_shared::{GroupKey, GroupState};
+    use yakvc_proto::{GroupKey, GroupState};
 
     use super::*;
 

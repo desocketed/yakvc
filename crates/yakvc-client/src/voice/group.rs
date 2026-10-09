@@ -7,9 +7,9 @@
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
-use yakvc_shared::group::label_fits;
-use yakvc_shared::voice::VoiceMsg;
-use yakvc_shared::{GroupAnnounce, GroupId, GroupKey, GroupState, PublicGroup, Uuid};
+use yakvc_proto::group::label_fits;
+use yakvc_proto::voice::VoiceMsg;
+use yakvc_proto::{GroupAnnounce, GroupId, GroupKey, GroupState, PublicGroup, Uuid};
 
 use super::rules::VoiceState;
 use crate::config::InvitesFrom;

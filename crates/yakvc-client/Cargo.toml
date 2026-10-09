@@ -23,7 +23,7 @@ tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time", "macr
 toml.workspace = true
 tracing.workspace = true
 yakvc-audio.workspace = true
-yakvc-shared.workspace = true
+yakvc-proto.workspace = true
 
 [dev-dependencies]
 iroh-relay.workspace = true

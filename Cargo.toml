@@ -12,7 +12,7 @@ publish = false
 
 [workspace.dependencies]
 # Internal crates
-yakvc-shared = { path = "crates/yakvc-shared" }
+yakvc-proto = { path = "crates/yakvc-proto" }
 yakvc-audio = { path = "crates/yakvc-audio" }
 yakvc-client = { path = "crates/yakvc-client" }
 yakvc-server = { path = "crates/yakvc-server" }

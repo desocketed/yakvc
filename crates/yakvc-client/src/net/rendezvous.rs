@@ -13,9 +13,9 @@ use iroh::{EndpointAddr, EndpointId, RelayUrl, TransportAddr, Watcher};
 use rand::RngExt;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
-use yakvc_shared::auth::session_server_id;
-use yakvc_shared::rdv::{ALPN, ClientMsg, CloseCode, Hello, MAX_PAIRS, ServerMsg};
-use yakvc_shared::{PairToken, SignedTicket, Ticket, Uuid, is_offline_player, wire};
+use yakvc_proto::auth::session_server_id;
+use yakvc_proto::rdv::{ALPN, ClientMsg, CloseCode, Hello, MAX_PAIRS, ServerMsg};
+use yakvc_proto::{PairToken, SignedTicket, Ticket, Uuid, is_offline_player, wire};
 
 use super::{Identity, Inner};
 use crate::config::RendezvousConfig;
@@ -28,7 +28,7 @@ const RENEW_WINDOW: Duration = Duration::from_secs(2 * 60 * 60);
 /// Tab-list changes are merged and sent at most once per interval. The game
 /// can change the tab list every tick, and a batch is up to two messages
 /// (`RemovePairs`, `AddPairs`), so this keeps us under the rendezvous's
-/// [`PAIR_UPDATES_PER_SEC`](yakvc_shared::rdv::PAIR_UPDATES_PER_SEC) with
+/// [`PAIR_UPDATES_PER_SEC`](yakvc_proto::rdv::PAIR_UPDATES_PER_SEC) with
 /// room left for `UpdateAddr`.
 const PAIR_BATCH_INTERVAL: Duration = Duration::from_millis(250);
 /// How long a new session waits for the rendezvous to list our peers again
@@ -161,7 +161,7 @@ impl Session<'_> {
             uuid: self.identity.uuid,
             name: self.identity.name.clone(),
             // Trimmed, since the rendezvous rejects oversize addresses.
-            addr: yakvc_shared::rdv::fit_addr(&self.inner.endpoint.addr()),
+            addr: yakvc_proto::rdv::fit_addr(&self.inner.endpoint.addr()),
             cached_ticket: self.cached_ticket(),
         };
         wire::write_msg(&mut send, &ClientMsg::Hello(hello)).await?;
@@ -322,7 +322,7 @@ impl Session<'_> {
                 // Before registration the rendezvous only accepts the
                 // challenge reply; the Hello already carried our address.
                 Ok(addr) = our_addr.updated(), if self.registered => {
-                    let addr = yakvc_shared::rdv::fit_addr(&addr);
+                    let addr = yakvc_proto::rdv::fit_addr(&addr);
                     wire::write_msg(send, &ClientMsg::UpdateAddr(addr)).await?;
                 }
                 Ok(()) = identity.changed() => return Err(Ended::IdentityChanged),
@@ -512,7 +512,7 @@ impl Backoff {
 
 #[cfg(test)]
 mod tests {
-    use yakvc_shared::rdv::PAIR_UPDATES_PER_SEC;
+    use yakvc_proto::rdv::PAIR_UPDATES_PER_SEC;
 
     use super::*;
 

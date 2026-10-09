@@ -1,5 +1,5 @@
 [package]
-name = "yakvc-shared"
+name = "yakvc-proto"
 description = "Yak VC wire protocol, tickets and pair tokens"
 version.workspace = true
 edition.workspace = true

@@ -1,4 +1,4 @@
-use yakvc_shared::Uuid;
+use yakvc_proto::Uuid;
 
 /// A position in block coordinates.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]

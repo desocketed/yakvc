@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use tokio::signal::unix::{SignalKind, signal};
+use yakvc_proto::{IssuerKey, SecretKey};
 use yakvc_server::Config;
-use yakvc_shared::{IssuerKey, SecretKey};
 
 /// Yak VC rendezvous server.
 #[derive(Debug, Parser)]

@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use reqwest::{StatusCode, Url};
 use serde::Deserialize;
-use yakvc_shared::Uuid;
+use yakvc_proto::Uuid;
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -189,12 +189,12 @@ pub(crate) mod fake {
     }
 
     /// The fake's UUID for a player name: the name's bytes, zero padded.
-    pub fn uuid_for(name: &str) -> yakvc_shared::Uuid {
+    pub fn uuid_for(name: &str) -> yakvc_proto::Uuid {
         let mut bytes = [0; 16];
         for (byte, c) in bytes.iter_mut().zip(name.bytes()) {
             *byte = c;
         }
-        yakvc_shared::Uuid::from_bytes(bytes)
+        yakvc_proto::Uuid::from_bytes(bytes)
     }
 
     pub fn response(status: &str, headers: &str, body: &str) -> String {

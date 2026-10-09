@@ -19,7 +19,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 toml.workspace = true
-yakvc-shared.workspace = true
+yakvc-proto.workspace = true
 
 [dev-dependencies]
 # Certificates for test relays; already in the tree through iroh-relay.
