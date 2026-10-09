@@ -36,6 +36,26 @@ class EngineEventTest {
 	}
 
 	@Test
+	void decodesGroupEvents() {
+		UUID other = UUID.fromString("ffeeddcc-bbaa-9988-7766-554433221100");
+		byte[] otherBytes = NativeBridge.uuidBytes(List.of(other));
+		byte[] nil = new byte[16];
+		ByteArrayOutputStream out = new ByteArrayOutputStream();
+		record(out, 7, UUID_BYTES);
+		record(out, 8, new byte[] {0}, UUID_BYTES, nil);
+		record(out, 8, new byte[] {5}, nil, otherBytes);
+		record(out, 8, new byte[] {9}, UUID_BYTES, nil);
+		record(out, 9, UUID_BYTES, otherBytes, new byte[] {1}, le(8).putInt(2).putInt(3).array());
+		byte[] buf = out.toByteArray();
+
+		assertEquals(List.of(
+				new EngineEvent.Invite(ID),
+				new EngineEvent.GroupNotice(EngineEvent.NoticeKind.JOINED, ID, new UUID(0, 0)),
+				new EngineEvent.GroupNotice(EngineEvent.NoticeKind.LABEL_CHANGED, new UUID(0, 0), other),
+				new EngineEvent.KickVote(ID, other, true, 2, 3)), EngineEvent.decode(buf, buf.length));
+	}
+
+	@Test
 	void skipsUnknownStateCodes() {
 		ByteArrayOutputStream out = new ByteArrayOutputStream();
 		record(out, 2, new byte[] {(byte) 200}, le(8).putLong(0).array(), new byte[] {0});

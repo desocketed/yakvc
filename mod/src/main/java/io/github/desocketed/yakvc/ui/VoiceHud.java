@@ -15,9 +15,10 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * Top-left corner, while in a world: the own microphone (green while sending, red when muted, grey when voice is off
- * or the microphone isn't working), a red headphones icon when deafened, and the rendezvous connection as signal bars
- * (green when registered). A short line of text follows only when something is not working. Below, one line per
- * talking player, for players outside the view; players in view also get {@link TalkingIndicator} over their heads.
+ * or the microphone isn't working), a red headphones icon when deafened, and signal bars while the rendezvous is not
+ * registered (yellow while connecting or retrying, red when disconnected). A short line of text follows only when
+ * something is not working. Below, one line per talking player, for players outside the view; players in view also
+ * get {@link TalkingIndicator} over their heads.
  */
 public final class VoiceHud implements HudElement {
 	private static final int WHITE = 0xFFFFFFFF;
@@ -52,7 +53,10 @@ public final class VoiceHud implements HudElement {
 		else micColor = WHITE;
 		x = icon(graphics, font, Icons.MIC, x, y, micColor);
 		if ((flags & NativeBridge.INPUT_DEAFENED) != 0) x = icon(graphics, font, Icons.HEADPHONES, x, y, RED);
-		x = icon(graphics, font, Icons.SIGNAL, x, y, signalColor(feeder.rendezvous()));
+		// Only a connection that isn't working is worth the space.
+		if (feeder.rendezvous() != EngineEvent.RendezvousState.REGISTERED) {
+			x = icon(graphics, font, Icons.SIGNAL, x, y, signalColor(feeder.rendezvous()));
+		}
 		if (problem != null) graphics.text(font, problem, x, y, GREY, true);
 
 		for (UUID uuid : feeder.talking()) {
@@ -70,7 +74,6 @@ public final class VoiceHud implements HudElement {
 	}
 
 	private static int signalColor(EngineEvent.@Nullable RendezvousState state) {
-		if (state == EngineEvent.RendezvousState.REGISTERED) return GREEN;
 		if (state == EngineEvent.RendezvousState.DISCONNECTED) return RED;
 		return YELLOW;
 	}

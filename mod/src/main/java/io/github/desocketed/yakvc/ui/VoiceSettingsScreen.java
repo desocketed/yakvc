@@ -43,6 +43,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	private final OptionInstance<Boolean> respectChatRestrictions;
 	private final OptionInstance<Boolean> muteBlockedPlayers;
 	private final OptionInstance<Boolean> verifiedOnly;
+	private final OptionInstance<String> invites;
 	private final OptionInstance<Boolean> debugOverlay;
 
 	/**
@@ -63,11 +64,8 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		super(lastScreen, options, Component.translatable("yakvc.settings.title"));
 		this.feeder = feeder;
 		this.initial = feeder.config();
-		activation = new OptionInstance<>("yakvc.settings.activation", OptionInstance.noTooltip(),
-				// Cycle buttons put the caption in front themselves; sliders (below) show only this text.
-				(caption, value) -> Component.translatable("yakvc.settings.activation." + value),
-				new OptionInstance.Enum<>(List.of(PUSH_TO_TALK, VOICE), Codec.STRING),
-				initial.voiceActivation() ? VOICE : PUSH_TO_TALK, OptionInstance.NO_ACTION);
+		activation = activationOption(initial);
+		invites = invitesOption(initial);
 		range = new OptionInstance<>("yakvc.settings.range", OptionInstance.noTooltip(),
 				(caption, value) -> Options.genericValueLabel(caption, Component.translatable("yakvc.settings.range.blocks", value)),
 				new OptionInstance.IntRange(1, 256), (int) Math.clamp(Math.round(initial.voiceRange()), 1, 256),
@@ -98,6 +96,37 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 				feeder.debugOverlay(), feeder::setDebugOverlay);
 	}
 
+	/** Push to talk or voice activation. Shared with the voice menu's setup card. */
+	static OptionInstance<String> activationOption(ClientConfig config) {
+		return new OptionInstance<>("yakvc.settings.activation", OptionInstance.noTooltip(),
+				// Cycle buttons put the caption in front themselves; sliders (below) show only this text.
+				(caption, value) -> Component.translatable("yakvc.settings.activation." + value),
+				new OptionInstance.Enum<>(List.of(PUSH_TO_TALK, VOICE), Codec.STRING),
+				config.voiceActivation() ? VOICE : PUSH_TO_TALK, OptionInstance.NO_ACTION);
+	}
+
+	/** Who may invite us to a group. Shared with the voice menu's setup card. */
+	static OptionInstance<String> invitesOption(ClientConfig config) {
+		List<String> values = List.of("everyone", "friends", "nobody");
+		return new OptionInstance<>("yakvc.settings.invites",
+				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.invites.tooltip")),
+				(caption, value) -> Component.translatable("yakvc.settings.invites." + value),
+				new OptionInstance.Enum<>(values, Codec.STRING),
+				values.contains(config.invites()) ? config.invites() : "everyone", OptionInstance.NO_ACTION);
+	}
+
+	/** {@code config} with the activation and invites options' values, changing only what differs. */
+	static ClientConfig withActivationAndInvites(ClientConfig config, OptionInstance<String> activation,
+			OptionInstance<String> invites) {
+		if (activation.get().equals(VOICE) != config.voiceActivation()) {
+			config = config.with("audio", "activation", ClientConfig.quote(activation.get()));
+		}
+		if (!invites.get().equals(config.invites())) {
+			config = config.with("", "invites", ClientConfig.quote(invites.get()));
+		}
+		return config;
+	}
+
 	/**
 	 * A device picker over the listed devices' ids, shown by name, plus the configured one if it is unplugged right
 	 * now.
@@ -124,7 +153,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		list.addBig(new MultiLineTextWidget(Component.translatable("yakvc.settings.ip_note"), font)
 				.setMaxWidth(310).setCentered(true));
 		list.addSmall(relayOnly, respectChatRestrictions);
-		list.addSmall(muteBlockedPlayers);
+		list.addSmall(muteBlockedPlayers, invites);
 		list.addHeader(Component.translatable("yakvc.settings.account"));
 		list.addBig(new MultiLineTextWidget(accountState(), font).setMaxWidth(310).setCentered(true));
 		list.addSmall(verifiedOnly);
@@ -195,9 +224,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		if (verifiedOnly.get() != initial.verifiedOnly()) {
 			changed = changed.with("", "verified_only", String.valueOf(verifiedOnly.get()));
 		}
-		if (activation.get().equals(VOICE) != initial.voiceActivation()) {
-			changed = changed.with("audio", "activation", ClientConfig.quote(activation.get()));
-		}
+		changed = withActivationAndInvites(changed, activation, invites);
 		if (bitrateKbps.get() * 1000 != initial.bitrate()) {
 			changed = changed.with("audio", "bitrate", String.valueOf(bitrateKbps.get() * 1000));
 		}
@@ -207,7 +234,11 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		if (!outputDevice.get().equals(Objects.requireNonNullElse(initial.outputDevice(), DEFAULT_DEVICE))) {
 			changed = changed.with("audio", "output_device", deviceValue(outputDevice.get()));
 		}
-		if (changed.equals(initial)) return;
+		if (!changed.equals(initial)) applyAndSave(feeder, changed);
+	}
+
+	/** Has the engine check and apply {@code changed}, and saves it if it took it; says so if anything failed. */
+	static void applyAndSave(GameStateFeeder feeder, ClientConfig changed) {
 		String error = feeder.applyConfig(changed);
 		if (error != null) {
 			VoiceToasts.show(Component.translatable("yakvc.toast.settings_rejected", error));

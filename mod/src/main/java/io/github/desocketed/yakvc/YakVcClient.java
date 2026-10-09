@@ -110,6 +110,7 @@ public final class YakVcClient implements ClientModInitializer {
 		GameStateFeeder feeder = new GameStateFeeder(bridge, engine, config, VoiceKeys.register(), joiner,
 				PlayerVolumes.load(configDir));
 		YakVcClient.feeder = feeder;
+		feeder.groupChat().registerCommand();
 		ClientLifecycleEvents.CLIENT_STOPPING.register(minecraft -> feeder.close());
 		ClientPlayConnectionEvents.JOIN.register((connection, sender, minecraft) -> feeder.join(connection, minecraft));
 		ClientPlayConnectionEvents.DISCONNECT.register((connection, minecraft) -> feeder.leave());

@@ -10,6 +10,7 @@ import io.github.desocketed.yakvc.config.ClientConfig;
 import io.github.desocketed.yakvc.config.PlayerVolumes;
 import io.github.desocketed.yakvc.natives.EngineEvent;
 import io.github.desocketed.yakvc.natives.NativeBridge;
+import io.github.desocketed.yakvc.natives.VoiceGroup;
 import io.github.desocketed.yakvc.natives.VoiceStats;
 import io.github.desocketed.yakvc.ui.GroupsScreen;
 import io.github.desocketed.yakvc.ui.VoiceMenuScreen;
@@ -64,6 +65,8 @@ import net.minecraft.world.level.GameType;
 @SuppressWarnings("UnstableApiUsage")
 public class YakVcClientGameTest implements FabricClientGameTest {
 	private static final UUID REMOTE = UUID.fromString("00000000-0000-4000-8000-00000000beef");
+	/** Normally the server assigns entity IDs; the remote player's is far above anything a fresh world uses. */
+	private static final int REMOTE_ENTITY_ID = Integer.MAX_VALUE - 1;
 	/** The HUD's corner of the 854×480 test window, at its GUI scale of 2. */
 	private static final int HUD_WIDTH = 76;
 	private static final int HUD_HEIGHT = 26;
@@ -140,7 +143,14 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 			// A remote player is tracked until the tab list says it is a spectator.
 			FakePlayer remote = addRemotePlayer(context, singleplayer);
 			context.waitFor(mc -> feeder.tracked().contains(REMOTE));
-			checkVoiceMenu(context, feeder);
+			// The remote player gets a voice engine of its own, so the menu shows a real connection and the two can
+			// form a group. It stops before the debug overlay, whose screenshot would change with its round trip time.
+			try (RemoteVoice remoteVoice = remoteVoice(me)) {
+				context.waitFor(mc -> feeder.peerState(REMOTE) == EngineEvent.PeerState.DIRECT, 30 * 20);
+				checkVoiceMenu(context, feeder);
+				checkGroups(context, feeder, remoteVoice, me);
+			}
+			context.waitFor(mc -> feeder.peerState(REMOTE) == null);
 			keyBindsScreenshot(context);
 			checkDebugOverlay(context, feeder);
 			singleplayer.getServer().runOnServer(server -> {
@@ -234,8 +244,15 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 	 */
 	private static void checkVoiceMenu(ClientGameTestContext context, GameStateFeeder feeder) {
 		Path configFile = YakVcClient.configDir().resolve(ClientConfig.FILE_NAME);
-		String configBefore = read(configFile);
+		// DevRendezvous writes a fresh config each run, so the first-run card shows; OK saves that it was seen.
 		context.setScreen(() -> new VoiceMenuScreen(null, feeder));
+		screenshotScreen(context, "voice-menu-setup");
+		context.clickScreenButton("yakvc.setup.ok");
+		context.waitFor(mc -> feeder.config().setupDone());
+		String configBefore = read(configFile);
+		if (!configBefore.contains("setup_done = true")) {
+			throw new AssertionError("dismissing the setup card did not save setup_done");
+		}
 		screenshotScreen(context, "voice-menu");
 		pressNestedButton(context, "yakvc.menu.mute");
 		context.waitFor(mc -> feeder.volumes().get(REMOTE).muted());
@@ -249,18 +266,6 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		// The privacy settings are below the fold at the test's small window size.
 		scrollDown(context);
 		screenshotScreen(context, "voice-settings-privacy");
-		context.clickScreenButton("gui.done");
-		context.waitForScreen(VoiceMenuScreen.class);
-
-		// Groups: join one, then leave it with the screen's Leave button.
-		context.clickScreenButton("yakvc.menu.groups");
-		context.waitForScreen(GroupsScreen.class);
-		context.runOnClient(mc -> feeder.joinGroup("Miners", "", null));
-		context.setScreen(() -> new GroupsScreen(new VoiceMenuScreen(null, feeder), feeder));
-		context.waitFor(mc -> feeder.groups().stream().anyMatch(g -> g.joined() && g.name().equals("Miners")));
-		screenshotScreen(context, "voice-groups");
-		pressNestedButton(context, "yakvc.groups.leave");
-		context.waitFor(mc -> feeder.groups().isEmpty());
 		context.clickScreenButton("gui.done");
 		context.waitForScreen(VoiceMenuScreen.class);
 		context.clickScreenButton("gui.done");
@@ -281,6 +286,82 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 				throw new UncheckedIOException(e);
 			}
 		});
+	}
+
+	private static RemoteVoice remoteVoice(UUID me) {
+		try {
+			return new RemoteVoice(REMOTE, "Remote", me);
+		} catch (IOException e) {
+			throw new UncheckedIOException(e);
+		}
+	}
+
+	/**
+	 * The remote player invites us and the Group key, looking at them, accepts; they label the group, which the groups
+	 * screen shows; then {@code /yakvc kick} votes them out, as its clickable [Yes] in chat would.
+	 */
+	private static void checkGroups(ClientGameTestContext context, GameStateFeeder feeder, RemoteVoice remote,
+			UUID me) {
+		context.runOnClient(mc -> mc.gui.hud.getChat().clearMessages(true));
+		// The engine drops invites from muted players, and the voice menu's mute of the remote player is undone only
+		// on the feeder's next tick.
+		context.waitTicks(2);
+		remote.bridge.invite(remote.engine, me);
+		context.waitFor(mc -> feeder.groupChat().invitedBy(REMOTE));
+		// The remote player stands two blocks east. It turns to face us: its body otherwise drifts toward its head by how
+		// long it has existed, which changes the screenshot from run to run.
+		context.runOnClient(mc -> {
+			mc.player.setYRot(-90);
+			mc.player.setXRot(0);
+			if (mc.level.getEntity(REMOTE_ENTITY_ID) instanceof RemotePlayer other) {
+				other.setYRot(90);
+				other.yRotO = 90;
+				other.setYHeadRot(90);
+				other.yHeadRotO = 90;
+				other.setYBodyRot(90);
+				other.yBodyRotO = 90;
+			}
+		});
+		context.waitTicks(2);
+		// Arms sway with age in ticks.
+		context.runOnClient(mc -> {
+			mc.player.tickCount = 0;
+			mc.level.getEntity(REMOTE_ENTITY_ID).tickCount = 0;
+		});
+		context.takeScreenshot(TestScreenshotOptions.of("group-invite").disableCounterPrefix());
+		context.getInput().pressKey(KeyMapping.get("key.yakvc.group"));
+		context.waitFor(mc -> inGroupWith(feeder, REMOTE));
+
+		remote.bridge.setGroupLabel(remote.engine, "Miners");
+		context.waitFor(mc -> feeder.myGroup() != null && feeder.myGroup().label().equals("Miners"));
+		// Its toast comes as an event, polled on a later tick than the change shows in the list.
+		context.waitTicks(5);
+		context.runOnClient(mc -> {
+			mc.gui.toastManager().clear();
+			mc.gui.hud.getChat().clearMessages(true);
+		});
+		context.setScreen(() -> new GroupsScreen(null, feeder));
+		screenshotScreen(context, "voice-groups");
+		context.setScreen(() -> null);
+
+		// A click on [Yes] sends the command the same way, through sendUnattendedCommand, which Fabric runs on the
+		// client. In a group of two our vote is enough.
+		context.runOnClient(mc -> mc.player.connection.sendUnattendedCommand("yakvc kick Remote yes", null));
+		context.waitFor(mc -> !inGroupWith(feeder, REMOTE));
+		// The same for the vote's progress line and the toast, which are cleared below.
+		context.waitTicks(5);
+		context.runOnClient(mc -> {
+			feeder.leaveGroup();
+			mc.player.setYRot(0);
+			mc.gui.hud.getChat().clearMessages(true);
+			mc.gui.toastManager().clear();
+		});
+		context.waitFor(mc -> feeder.myGroup() == null);
+	}
+
+	private static boolean inGroupWith(GameStateFeeder feeder, UUID uuid) {
+		VoiceGroup mine = feeder.myGroup();
+		return mine != null && mine.members().contains(uuid);
 	}
 
 	/**
@@ -440,8 +521,7 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		});
 		context.runOnClient(mc -> {
 			RemotePlayer entity = new RemotePlayer(mc.level, profile);
-			// Normally the server assigns entity IDs; this one is far above anything a fresh world uses.
-			entity.setId(Integer.MAX_VALUE - 1);
+			entity.setId(REMOTE_ENTITY_ID);
 			entity.snapTo(mc.player.position().add(2, 0, 0));
 			mc.level.addEntity(entity);
 		});
