@@ -510,7 +510,7 @@ libopus is built from source by the `opus` crate (via `opusic-sys`, feature `bun
 
 **CI (GitHub Actions)**
 
-CI runs on every push to `main` (except pushes that only touch docs), on version tags, pull requests and manual dispatch; `scripts/ci-local.sh` runs the Linux checks locally first. Besides the jobs below there are `changes` (decides whether a push is docs-only), `deny` (`cargo deny check`, in its own job), `server` (the static musl build and the Docker smoke test), `nix` (`nix flake check`) and `ci-ok`, the single required check, which passes for docs-only pushes and fails on any failed or cancelled job.
+CI runs on every push to `main` (except pushes that only touch docs), on version tags, pull requests and manual dispatch; `scripts/ci-local.sh` runs the Linux checks locally first. Besides the jobs below there are `changes` (decides whether a push is docs-only), `server` (the static musl build and the Docker smoke test), `nix` (`nix flake check`, then `cargo deny check` from the dev shell, so CI and local runs use the same cargo-deny) and `ci-ok`, the single required check, which passes for docs-only pushes and fails on any failed or cancelled job.
 
 1. `rust`: `cargo fmt --check`, `cargo clippy --workspace --all-targets -D warnings`, the same for `yakvc-client`, `yakvc-ffi` and `yakvc-cli` alone (in a workspace build `yakvc-testkit` turns on their `sim` feature, so this checks them as they ship), `cargo xtask header --check`, `cargo test --workspace` (includes `yakvc-testkit` integration tests with dev auth and null audio).
 2. `natives` (matrix: ubuntu, windows, macos): `cargo xtask natives --target <list>`, upload artifacts.

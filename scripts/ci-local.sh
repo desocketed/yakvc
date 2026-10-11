@@ -35,7 +35,7 @@ if grep -E '^(yakvc-audio|yakvc-client|cpal|opus|audiopus|alsa)' <<<"$deps"; the
 	exit 1
 fi
 step "deny"
-cargo deny --locked check
+cargo deny --all-features --locked check
 
 if [ "${1:-}" = --fast ]; then
 	step "skipped the release builds, mod build and gametest (--fast)"
