@@ -111,11 +111,14 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 			context.waitFor(mc -> feeder.talking().contains(me));
 			hudScreenshot(context, "hud-talking");
 			// In third person the speaker shows over the player's own head. Looking up puts the camera above,
-			// looking down at grass only: how far the terrain reaches depends on how many chunks have loaded.
+			// looking down at grass only.
 			context.runOnClient(mc -> {
 				mc.player.setXRot(-45);
 				mc.options.setCameraType(CameraType.THIRD_PERSON_FRONT);
 			});
+			// Chunks compile for the view they are in, so the new view needs its own wait or the horizon
+			// differs from run to run.
+			singleplayer.getConnection().waitForChunksRender();
 			context.waitTicks(2);
 			// The arms sway with the player's age in ticks.
 			context.runOnClient(mc -> mc.player.tickCount = 0);
