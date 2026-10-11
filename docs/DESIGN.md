@@ -518,7 +518,7 @@ Third-party actions (anything not under `actions/`) are pinned to full commit SH
 
 - Connection protocols (`rdv/1`, `peer/1`) are versioned in the ALPN; incompatible changes bump the ALPN, and the server serves old and new side by side during rollouts. Application protocols on a peer connection (`voice` v1) are versioned in `PeerHello`, and peers use the highest version both support.
 - `ABI_VERSION` ties the Java and native halves of one mod build together; a mismatch fails at `yakvc_abi_version()` before the engine starts.
-- Mod version and Rust workspace version stay in lockstep: one release = one version number. Beta releases are `0.1.0-beta.1`, `0.1.0-beta.2`, … and `0.1.0` ends the beta (maintainer decision, 2026-10-04); a version with a `-` is published as a prerelease.
+- Mod version and Rust workspace version stay in lockstep: one release = one version number. Playtest builds before the beta are alphas, `0.1.0-alpha.0`, `0.1.0-alpha.1`, … (maintainer, 2026-10-11); beta releases are `0.1.0-beta.1`, `0.1.0-beta.2`, … and `0.1.0` ends the beta (maintainer decision, 2026-10-04); a version with a `-` is published as a prerelease.
 
 ## Security, privacy and abuse
 
