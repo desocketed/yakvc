@@ -209,15 +209,14 @@ fn play_tone(mut player: ChildStdin) {
     }
 }
 
-/// The store path of a nixpkgs package's main output.
+/// The store path of a nixpkgs package's main output, from the flake's locked
+/// nixpkgs (--inputs-from) rather than the registry's channel, so the PipeWire
+/// session doesn't drift between runs.
 fn nix_package(name: &str) -> Result<PathBuf> {
     let out = Command::new("nix")
-        .args([
-            "build",
-            "--no-link",
-            "--print-out-paths",
-            &format!("nixpkgs#{name}^out"),
-        ])
+        .args(["build", "--no-link", "--print-out-paths", "--inputs-from"])
+        .arg(crate::root())
+        .arg(format!("nixpkgs#{name}^out"))
         .output()
         .context("running nix, which with-pipewire needs")?;
     if !out.status.success() {
