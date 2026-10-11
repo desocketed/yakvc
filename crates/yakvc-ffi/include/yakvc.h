@@ -17,8 +17,13 @@
  * shared group state and kick votes; group-only voice in a group.
  * 6: kick votes removed (`yakvc_vote_kick`, the kick vote event and notice).
  * 7: `yakvc_join_group` takes the id length.
+ * 8: `yakvc_push_world` takes each player's occlusion.
+ * 9: `yakvc_push_world` takes the room around the listener.
+ * 10: `yakvc_push_world` takes where each player is heard from.
+ * 11: `yakvc_push_world` takes the room's echo and echo delay.
+ * 12: `yakvc_set_voice_sink`.
  */
-#define YAKVC_ABI_VERSION 11
+#define YAKVC_ABI_VERSION 12
 
 #define YAKVC_OK 0
 
@@ -138,9 +143,96 @@
 #define YAKVC_PEER_GONE 5
 
 /**
+ * The `YakVcVoiceSink` layout this library takes.
+ */
+#define YAKVC_VOICE_SINK_VERSION 1
+
+/**
+ * A `YakVcVoiceFrame` of group voice.
+ */
+#define YAKVC_VOICE_GROUP (1 << 0)
+
+/**
+ * A `YakVcVoiceFrame` that plays centred rather than from the speaker's
+ * place in the world: group voice and direct calls.
+ */
+#define YAKVC_VOICE_UNPOSITIONED (1 << 1)
+
+/**
  * Opaque engine handle.
  */
 typedef struct YakVcEngine YakVcEngine;
+
+/**
+ * One speaker's 20 ms of voice for a [`YakVcVoiceSink`], valid only during
+ * the `frame` call.
+ */
+typedef struct YakVcVoiceFrame {
+  /**
+   * The speaker.
+   */
+  uint8_t uuid[16];
+  /**
+   * `samples` floats of 48 kHz mono, as decoded.
+   */
+  const float *pcm;
+  size_t samples;
+  /**
+   * Counts play ticks: the frames played together share it.
+   */
+  uint64_t tick;
+  /**
+   * The player's volume setting, 0 to 2.
+   */
+  float volume;
+  /**
+   * The local voice range in blocks; 0 when unpositioned.
+   */
+  float range;
+  /**
+   * A combination of `YAKVC_VOICE_*`.
+   */
+  uint32_t flags;
+  /**
+   * Where the speakers would place the voice, `x, y, z`: the speaker's
+   * eye, or the opening it comes round through. Zero when unpositioned.
+   */
+  double heard_from[3];
+  /**
+   * How much of the way the speakers would block, from 0 (open air) to 1;
+   * 0 when unpositioned.
+   */
+  float occlusion;
+} YakVcVoiceFrame;
+
+/**
+ * A mod that plays the voices instead of the speakers: see
+ * [`yakvc_set_voice_sink`].
+ */
+typedef struct YakVcVoiceSink {
+  /**
+   * [`YAKVC_VOICE_SINK_VERSION`].
+   */
+  uint32_t version;
+  /**
+   * Passed back to every callback.
+   */
+  void *user;
+  /**
+   * Whether the sink wants the next 20 ms of voice now. It paces playback,
+   * as the speakers' clock does.
+   */
+  bool (*wants_frame)(void *user);
+  /**
+   * One playable frame from one speaker.
+   */
+  void (*frame)(void *user, const struct YakVcVoiceFrame *frame);
+  /**
+   * The speaker `uuid` (16 bytes) is gone: no more frames from it until
+   * it comes back.
+   */
+  void (*stream_end)(void *user, const uint8_t *uuid);
+} YakVcVoiceSink;
 
 /**
  * Returns [`YAKVC_ABI_VERSION`]. Safe to call before anything else.
@@ -240,6 +332,36 @@ int32_t yakvc_set_peer_volume(struct YakVcEngine *engine,
                               const uint8_t *uuid,
                               float volume,
                               bool muted);
+
+/**
+ * Sends playable voice to `sink` instead of the speakers, for a mod that
+ * renders voices itself; null goes back to the speakers. Takes effect on the
+ * audio thread's next tick.
+ *
+ * The sink gets each frame the speakers would have played, as decoded:
+ * before panning, distance gain, occlusion, reverb, the game volume and the
+ * limiter, which the mod applies itself. Only the rules of who is heard
+ * (mute, deafen, groups, spectators, range) and the player's volume setting
+ * apply. While a sink is set the speakers are closed.
+ *
+ * The struct is copied, but `user` and the callbacks must stay valid for the
+ * rest of the process: the audio thread may still call an old sink for a
+ * tick after a change, and a shutdown that abandons a stuck audio thread may
+ * call it later still. The callbacks run on the engine's audio thread: they
+ * must not block, must not unwind and must not call any `yakvc_*` function.
+ *
+ * From Java, build the struct and any upcall stubs in `Arena.global()`: a
+ * confined or automatic arena can free them while the audio thread still
+ * calls them. A callback must never let an exception escape, which crashes
+ * the JVM, and shouldn't allocate or block, since it runs on the audio
+ * path; renderers usually write the callbacks natively and hand Java only
+ * the struct's address.
+ *
+ * # Safety
+ * `engine` must be live; `sink` must be null or point to a `YakVcVoiceSink`
+ * whose `user` and callbacks keep that contract.
+ */
+int32_t yakvc_set_voice_sink(struct YakVcEngine *engine, const struct YakVcVoiceSink *sink);
 
 /**
  * Reports the result of `joinServer` for a `YAKVC_EVENT_JOIN_REQUEST`.
@@ -353,7 +475,8 @@ int32_t yakvc_list_devices(struct YakVcEngine *engine, uint8_t *buf, size_t cap,
  *
  * - `endpoint_id`: our Iroh endpoint ID, hex
  * - `voice_version`: the voice protocol version we speak
- * - `audio`: `microphone_open`, `speakers_open`, `transmitting` (bools);
+ * - `audio`: `microphone_open`, `speakers_open`, `external_output` (voice
+ *   goes to a voice sink), `transmitting` (bools);
  *   `bitrate` (bit/s in use); `overruns`, `underruns` (counts since the
  *   device opened)
  * - `peers`: per connected peer, `uuid` (hyphenated), `rtt_ms` (number or

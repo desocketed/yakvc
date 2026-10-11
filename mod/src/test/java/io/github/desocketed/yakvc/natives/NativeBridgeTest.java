@@ -1,16 +1,25 @@
 package io.github.desocketed.yakvc.natives;
 
+import static java.lang.foreign.ValueLayout.ADDRESS;
+import static java.lang.foreign.ValueLayout.JAVA_BOOLEAN;
+import static java.lang.foreign.ValueLayout.JAVA_INT;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.lang.foreign.Arena;
+import java.lang.foreign.FunctionDescriptor;
+import java.lang.foreign.Linker;
 import java.lang.foreign.MemorySegment;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -130,6 +139,62 @@ class NativeBridgeTest {
 		} finally {
 			bridge.destroy(engine);
 		}
+	}
+
+	/** How often the engine's audio thread asked the test voice sink for a frame. */
+	private static final AtomicInteger sinkAsked = new AtomicInteger();
+
+	private static boolean wantsFrame(MemorySegment user) {
+		sinkAsked.incrementAndGet();
+		return false;
+	}
+
+	private static void ignore(MemorySegment user, MemorySegment arg) {}
+
+	@Test
+	void voiceSinkIsCheckedAskedAndCleared(@TempDir Path configDir) throws Exception {
+		NativeBridge bridge = new NativeBridge(NativeLoader.load(configDir));
+		MemorySegment engine = bridge.create(configDir.toString(), DEV_CONFIG);
+		try {
+			// A sink must stay valid for the rest of the process, so it lives in the global arena.
+			Linker linker = Linker.nativeLinker();
+			MethodHandles.Lookup lookup = MethodHandles.lookup();
+			MemorySegment wantsFrame = linker.upcallStub(lookup.findStatic(NativeBridgeTest.class, "wantsFrame",
+					MethodType.methodType(boolean.class, MemorySegment.class)), FunctionDescriptor.of(JAVA_BOOLEAN, ADDRESS),
+					Arena.global());
+			MemorySegment ignore = linker.upcallStub(lookup.findStatic(NativeBridgeTest.class, "ignore",
+					MethodType.methodType(void.class, MemorySegment.class, MemorySegment.class)),
+					FunctionDescriptor.ofVoid(ADDRESS, ADDRESS), Arena.global());
+			// YakVcVoiceSink: the version, then the user pointer and the three callbacks, 8-byte aligned.
+			MemorySegment sink = Arena.global().allocate(40, 8);
+			sink.set(JAVA_INT, 0, 1);
+			sink.set(ADDRESS, 8, MemorySegment.NULL);
+			sink.set(ADDRESS, 16, wantsFrame);
+			sink.set(ADDRESS, 24, ignore);
+			sink.set(ADDRESS, 32, ignore);
+
+			bridge.setVoiceSink(engine, sink);
+			awaitExternalOutput(bridge, engine, true);
+			assertTrue(sinkAsked.get() > 0, "the sink was never asked for a frame");
+			bridge.setVoiceSink(engine, MemorySegment.NULL);
+			awaitExternalOutput(bridge, engine, false);
+
+			sink.set(JAVA_INT, 0, 2);
+			YakVcException wrongVersion = assertThrows(YakVcException.class, () -> bridge.setVoiceSink(engine, sink));
+			assertEquals(-1, wrongVersion.code());
+			assertTrue(wrongVersion.getMessage().contains("version"), wrongVersion.getMessage());
+		} finally {
+			bridge.destroy(engine);
+		}
+	}
+
+	private static void awaitExternalOutput(NativeBridge bridge, MemorySegment engine, boolean external)
+			throws InterruptedException {
+		for (int i = 0; i < 100; i++) {
+			if (VoiceStats.parse(bridge.stats(engine)).audio().externalOutput() == external) return;
+			Thread.sleep(50);
+		}
+		throw new AssertionError("external output never became " + external);
 	}
 
 	private static List<EngineEvent> pollUntil(NativeBridge bridge, MemorySegment engine, EngineEvent wanted)

@@ -63,8 +63,9 @@ public final class DebugOverlay implements HudElement {
 		lines.add("");
 		lines.add("Microphone: " + deviceName(config.inputDevice(), "default")
 				+ (stats == null ? "" : stats.audio().microphoneOpen() ? " (open)" : " (not open)"));
-		lines.add("Speakers: " + deviceName(config.outputDevice(), "same as game")
-				+ (stats == null ? "" : stats.audio().speakersOpen() ? " (open)" : " (not open)"));
+		lines.add("Speakers: " + deviceName(config.outputDevice(), "same as game") + (stats == null ? ""
+				: stats.audio().externalOutput() ? " (voice goes to another mod)"
+				: stats.audio().speakersOpen() ? " (open)" : " (not open)"));
 		lines.add(String.format("Level: %.0f dBFS, %s", feeder.micLevelDb(),
 				config.voiceActivation() ? String.format("voice above %.0f dBFS", config.vadThresholdDb())
 						: "push to talk"));

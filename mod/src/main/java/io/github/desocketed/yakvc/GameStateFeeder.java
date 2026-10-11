@@ -31,6 +31,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientPacketListener;
@@ -59,6 +60,16 @@ public final class GameStateFeeder {
 	public static final float SILENCE_DB = -100;
 	/** The longest group label the engine takes. */
 	public static final int MAX_LABEL_CHARS = 32;
+	/**
+	 * Where another mod that renders voices itself puts its voice sink, in Fabric Loader's object share: a
+	 * {@link MemorySegment} at a {@code YakVcVoiceSink} (see {@code yakvc_set_voice_sink} in {@code yakvc.h}).
+	 *
+	 * <p>The struct and any upcall stubs must live in {@link java.lang.foreign.Arena#global()}: a confined or automatic
+	 * arena can free them while the audio thread still calls them. A callback must never throw, because an exception
+	 * escaping an upcall crashes the JVM, and shouldn't allocate or block, since it runs on the audio path; renderers
+	 * usually write the callbacks natively and put only the struct's address here.
+	 */
+	public static final String VOICE_SINK_KEY = "yakvc:voice_sink";
 
 	private final NativeBridge bridge;
 	private final MemorySegment engine;
@@ -100,6 +111,8 @@ public final class GameStateFeeder {
 	private int inputFlags = 0;
 	private float gameVolume = -1;
 	private @Nullable String gameDevice;
+	/** The address of the voice sink the engine was last given; 0 for the speakers. */
+	private long voiceSink;
 	private final Map<UUID, PlayerVolumes.Setting> peerAudio = new HashMap<>();
 
 	/** Players in the tab list that are blocked in Social Interactions, when {@code mute_blocked_players} is on. */
@@ -155,6 +168,7 @@ public final class GameStateFeeder {
 	 */
 	public void tick(Minecraft minecraft) {
 		step(() -> feedGame(minecraft));
+		step(this::feedVoiceSink);
 		step(this::drainEvents);
 		step(this::answerJoins);
 		step(this::refreshStats);
@@ -500,6 +514,29 @@ public final class GameStateFeeder {
 		if (volume == gameVolume) return;
 		gameVolume = volume;
 		bridge.setGameVolume(engine, volume);
+	}
+
+	/**
+	 * Hands voice to another mod's voice sink when one is in the object share under {@value #VOICE_SINK_KEY}, and back
+	 * to the speakers when it goes. A value that isn't a {@link MemorySegment} counts as none.
+	 */
+	private void feedVoiceSink() {
+		long address = FabricLoader.getInstance().getObjectShare().get(VOICE_SINK_KEY) instanceof MemorySegment sink
+				? sink.address()
+				: 0;
+		if (address == voiceSink) return;
+		voiceSink = address;
+		try {
+			bridge.setVoiceSink(engine, MemorySegment.ofAddress(address));
+		} catch (YakVcException e) {
+			if (e.poisoned()) throw e;
+			// Not retried until the mod offers another sink.
+			YakVcClient.LOGGER.warn("Another mod's voice sink was refused, so voice stays on the speakers: {}",
+					e.getMessage());
+			return;
+		}
+		YakVcClient.LOGGER.info(address == 0 ? "Voice plays through the speakers"
+				: "Voice goes to another mod's voice sink");
 	}
 
 	private void feedDevice(String device) {

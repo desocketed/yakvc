@@ -10,7 +10,7 @@ use yakvc_proto::{GroupId, Uuid};
 use super::group::{Invite, OwnGroup, PendingGroup, SentInvite};
 use crate::config::{AcousticsConfig, Activation, AudioConfig, InvitesFrom};
 use crate::engine::PeerAudio;
-use crate::world::{Input, Pose, Vec3, World, distance, interpolate};
+use crate::world::{Input, Player, Pose, Vec3, World, distance, interpolate};
 
 /// Snapshots further apart than this are not interpolated: the game paused
 /// or lagged, so gliding would only move voices late.
@@ -68,6 +68,24 @@ pub(crate) struct VoiceState {
     pub invites_sent: HashMap<Uuid, SentInvite>,
     /// The latest invite from each player.
     pub invites: HashMap<Uuid, Invite>,
+}
+
+/// Who a frame is heard from, before any panning or acoustics.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Heard {
+    /// Not positional: group voice, or a direct call.
+    Centred,
+    /// From this player's place in the world.
+    Positioned(Player),
+}
+
+/// What [`VoiceState::heard`] decided for one frame: the speakers and a
+/// voice sink both play exactly the frames it lets through.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Playback {
+    pub heard: Heard,
+    /// The player's volume setting.
+    pub volume: f32,
 }
 
 /// A connected peer we might send this frame to.
@@ -178,46 +196,72 @@ impl VoiceState {
             && (self.group.is_none() || self.is_group_mate(peer))
     }
 
-    /// How to play a frame from `peer`, with or without the `group` flag,
-    /// or `None` to discard it.
+    /// How the speakers play a frame from `peer`, with or without the
+    /// `group` flag, or `None` to discard it: [`Self::heard`], then
+    /// [`Self::through_speakers`], as the audio thread does.
     /// `world` is the one playback should hear, usually [`Self::world_at`]
     /// for now, which lags the latest snapshot a little.
+    #[cfg(test)]
     pub(crate) fn playback(&self, world: &World, peer: Uuid, group: bool) -> Option<Spatial> {
+        self.through_speakers(world, self.heard(world, peer, group)?)
+    }
+
+    /// Whether a frame from `peer`, with or without the `group` flag, is
+    /// heard at all, and from where: the rules the speakers and a voice sink
+    /// both follow. `None` discards it.
+    pub(crate) fn heard(&self, world: &World, peer: Uuid, group: bool) -> Option<Playback> {
         if !self.wants_audio_from(peer) {
             return None;
         }
-        let spatial = if group {
+        let heard = if group {
             // Group voice isn't positional, so range and spectating don't
             // matter: it plays centred, and only from a group mate.
-            self.is_group_mate(peer).then_some(CENTRED)?
+            self.is_group_mate(peer).then_some(Heard::Centred)?
         } else {
-            self.nearby_playback(world, peer)?
+            self.nearby(world, peer)?
         };
         let volume = self.peer_audio.get(&peer).map_or(1.0, |audio| audio.volume);
-        Some(Spatial {
-            gain: spatial.gain * volume,
-            ..spatial
-        })
+        Some(Playback { heard, volume })
     }
 
-    /// Where a positional frame from `peer` plays. In a group, nowhere.
-    fn nearby_playback(&self, world: &World, peer: Uuid) -> Option<Spatial> {
+    /// Where a positional frame from `peer` is heard from. In a group,
+    /// nowhere.
+    fn nearby(&self, world: &World, peer: Uuid) -> Option<Heard> {
         if self.input.spectator || self.group.is_some() {
             return None;
         }
         if self.ignore_world {
-            return Some(CENTRED);
+            return Some(Heard::Centred);
         }
         let player = world.players.iter().find(|p| p.uuid == peer)?;
-        let spatial = spatial(
-            &world.listener,
-            player.heard_from,
-            self.voice_range,
-            &self.acoustics,
-        )?;
+        // Range counts the way the voice comes: one that has to go the long
+        // way round can be out of range when its speaker isn't.
+        let reach = distance(world.listener.pos, player.heard_from);
+        (reach <= f64::from(self.voice_range)).then_some(Heard::Positioned(*player))
+    }
+
+    /// How the speakers play what [`Self::heard`] let through: panned,
+    /// quieter with distance and occlusion, muffled, and sent to the room's
+    /// reverb.
+    pub(crate) fn through_speakers(&self, world: &World, playback: Playback) -> Option<Spatial> {
+        let spatial = match playback.heard {
+            Heard::Centred => CENTRED,
+            Heard::Positioned(player) => {
+                let spatial = spatial(
+                    &world.listener,
+                    player.heard_from,
+                    self.voice_range,
+                    &self.acoustics,
+                )?;
+                Spatial {
+                    reverb: world.room.reverb,
+                    ..occluded(spatial, player.occlusion, &self.acoustics)
+                }
+            }
+        };
         Some(Spatial {
-            reverb: world.room.reverb,
-            ..occluded(spatial, player.occlusion, &self.acoustics)
+            gain: spatial.gain * playback.volume,
+            ..spatial
         })
     }
 
@@ -380,7 +424,6 @@ mod tests {
     use yakvc_proto::{GroupKey, GroupState};
 
     use super::*;
-    use crate::world::Player;
 
     fn uuid(n: u8) -> Uuid {
         Uuid::from_bytes([n; 16])
@@ -764,5 +807,58 @@ mod tests {
         state.set_group(None);
         assert!(nearby(&state, 2).is_some());
         assert!(!state.send_to(uuid(2), false).unwrap().group);
+    }
+
+    #[test]
+    fn the_speakers_and_a_sink_hear_the_same_frames() {
+        let mut state = state();
+        state.world.players = vec![
+            Player::new(uuid(1), at(10.0, 0.0)),
+            Player::new(uuid(2), at(60.0, 0.0)),
+            Player {
+                occlusion: 1.0,
+                ..Player::new(uuid(3), at(5.0, 0.0))
+            },
+            // In range, but the way round to us is too long.
+            Player {
+                heard_from: at(0.0, 50.0),
+                ..Player::new(uuid(4), at(5.0, 0.0))
+            },
+        ];
+        state.peer_audio.insert(
+            uuid(1),
+            PeerAudio {
+                volume: 0.5,
+                muted: false,
+            },
+        );
+        for peer in 1..=5 {
+            let heard = state.heard(&state.world, uuid(peer), false);
+            assert_eq!(
+                heard.is_some(),
+                nearby(&state, peer).is_some(),
+                "player {peer}"
+            );
+        }
+        // A sink gets the volume setting alone: distance and occlusion are
+        // its own to apply.
+        let heard = state.heard(&state.world, uuid(1), false).unwrap();
+        assert_eq!(heard.volume, 0.5);
+        assert_eq!(heard.heard, Heard::Positioned(state.world.players[0]));
+        let walled = state.heard(&state.world, uuid(3), false).unwrap();
+        assert_eq!(walled.volume, 1.0);
+    }
+
+    #[test]
+    fn a_sink_hears_group_mates_and_calls_centred() {
+        let state = in_group();
+        let mate = state.heard(&state.world, uuid(1), true).unwrap();
+        assert_eq!(mate.heard, Heard::Centred);
+        assert_eq!(state.heard(&state.world, uuid(2), true), None);
+
+        let mut call = self::state();
+        call.ignore_world = true;
+        let peer = call.heard(&call.world, uuid(1), false).unwrap();
+        assert_eq!(peer.heard, Heard::Centred);
     }
 }

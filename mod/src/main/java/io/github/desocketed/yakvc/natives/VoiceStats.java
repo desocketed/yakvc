@@ -12,11 +12,12 @@ import org.jspecify.annotations.Nullable;
 /** {@code voiceVersion} is the voice protocol version we speak. */
 public record VoiceStats(String endpointId, int voiceVersion, Audio audio, Map<UUID, Peer> peers) {
 	/**
-	 * The audio thread. {@code bitrate} is what the encoder uses now, which is lower than configured while the relay
-	 * budget is tight. Overruns and underruns count from when the device was last opened.
+	 * The audio thread. {@code externalOutput} means voice goes to another mod's voice sink instead of the speakers.
+	 * {@code bitrate} is what the encoder uses now, which is lower than configured while the relay budget is tight.
+	 * Overruns and underruns count from when the device was last opened.
 	 */
-	public record Audio(boolean microphoneOpen, boolean speakersOpen, boolean transmitting, int bitrate, long overruns,
-			long underruns) {}
+	public record Audio(boolean microphoneOpen, boolean speakersOpen, boolean externalOutput, boolean transmitting,
+			int bitrate, long overruns, long underruns) {}
 
 	/**
 	 * A connected peer. {@code rttMs} is null until the path has one; {@code stream} until audio arrived;
@@ -41,8 +42,8 @@ public record VoiceStats(String endpointId, int voiceVersion, Audio audio, Map<U
 		JsonObject root = JsonParser.parseString(json).getAsJsonObject();
 		JsonObject a = root.getAsJsonObject("audio");
 		Audio audio = new Audio(a.get("microphone_open").getAsBoolean(), a.get("speakers_open").getAsBoolean(),
-				a.get("transmitting").getAsBoolean(), a.get("bitrate").getAsInt(), a.get("overruns").getAsLong(),
-				a.get("underruns").getAsLong());
+				a.get("external_output").getAsBoolean(), a.get("transmitting").getAsBoolean(), a.get("bitrate").getAsInt(),
+				a.get("overruns").getAsLong(), a.get("underruns").getAsLong());
 		Map<UUID, Peer> peers = new HashMap<>();
 		for (JsonElement element : root.getAsJsonArray("peers")) {
 			JsonObject p = element.getAsJsonObject();
