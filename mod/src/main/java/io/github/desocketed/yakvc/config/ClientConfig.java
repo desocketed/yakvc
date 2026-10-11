@@ -60,6 +60,10 @@ public record ClientConfig(String toml) {
 		return number(value("", "voice_range"), 48);
 	}
 
+	public boolean noiseSuppression() {
+		return bool(value("audio", "noise_suppression"), true);
+	}
+
 	public boolean voiceActivation() {
 		return "voice".equals(string(value("audio", "activation")));
 	}
