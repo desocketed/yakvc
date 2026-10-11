@@ -75,6 +75,8 @@
             jq
             # git pushes over SSH with the key in $HOME/.claude/ssh.
             openssh
+            # The dev-session recipes in the justfile.
+            just
           ] ++ lib.optionals stdenv.hostPlatform.isLinux [
             alsa-lib
             # `ss`, which scripts/two-clients.sh picks its ports with.
