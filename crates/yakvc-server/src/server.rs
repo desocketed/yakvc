@@ -108,6 +108,8 @@ pub struct Limits {
     /// can't cover.
     pub unknown_ip_challenges_per_min: u32,
     /// Connections that may be open at once without being registered yet.
+    /// Well above `max_unregistered_per_ip` times the hosts a flood comes
+    /// from, or a few dozen hosts could keep new players out for a while.
     pub max_unregistered: usize,
     /// The same, per source IP (IPv6: per /64), so that one host can't take
     /// every slot. Connections through the relay only count against
@@ -447,7 +449,7 @@ impl Default for Limits {
             // under that.
             mojang_checks_per_min: 50,
             unknown_ip_challenges_per_min: 20,
-            max_unregistered: 500,
+            max_unregistered: 4096,
             max_unregistered_per_ip: 10,
             max_sessions: 4096,
             max_sessions_per_ip: 64,

@@ -241,7 +241,8 @@ public record ClientConfig(String toml) {
 			# (on offline-mode servers) are then neither heard nor sent your voice.
 			verified_only = false
 
-			# Who may invite you to a voice group: "everyone", "friends" (the players in friends_only) or "nobody".
+			# Who may invite you to a voice group: "everyone", "nobody", or "friends" (the players in friends_only,
+			# which only this file edits; the settings screen offers the other two).
 			invites = "everyone"
 
 			# The voice menu shows a short setup card until it is dismissed. A modpack can ship this as true.

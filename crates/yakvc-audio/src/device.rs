@@ -251,7 +251,7 @@ impl Microphone {
     pub fn open(device: &DeviceChoice) -> Result<Self, AudioError> {
         let device = Direction::Input.find(device)?;
         let supported = device.default_input_config().map_err(device_error)?;
-        let config = stream_config(&supported);
+        let config = stream_config(&supported)?;
         let rate = config.sample_rate;
         let (producer, ring) = RingBuffer::new(ring_len(rate));
         let health = Arc::new(Health::default());
@@ -366,7 +366,7 @@ impl Speakers {
     pub fn open(device: &DeviceChoice) -> Result<Self, AudioError> {
         let device = Direction::Output.find(device)?;
         let supported = device.default_output_config().map_err(device_error)?;
-        let config = stream_config(&supported);
+        let config = stream_config(&supported)?;
         let rate = config.sample_rate;
         let (ring, consumer) = RingBuffer::new(ring_len(rate));
         let health = Arc::new(Health::default());
@@ -529,12 +529,24 @@ impl Health {
 
 /// The device's own config, asking for 10 ms buffers where the device takes a
 /// range. With PulseAudio's default buffers, capture lost most of its audio.
-fn stream_config(supported: &SupportedStreamConfig) -> StreamConfig {
+///
+/// A backend reporting no channels or no sample rate is refused here: the
+/// callbacks divide by both, and a panic there would take the game down.
+fn stream_config(supported: &SupportedStreamConfig) -> Result<StreamConfig, AudioError> {
     let mut config = supported.config();
-    if let SupportedBufferSize::Range { min, max } = *supported.buffer_size() {
+    if config.channels == 0 || config.sample_rate == 0 {
+        return Err(AudioError::Device(format!(
+            "device reports {} channels at {} Hz",
+            config.channels, config.sample_rate
+        )));
+    }
+    // An inverted range is a backend bug; the default buffer still plays.
+    if let SupportedBufferSize::Range { min, max } = *supported.buffer_size()
+        && min <= max
+    {
         config.buffer_size = BufferSize::Fixed((config.sample_rate / 100).clamp(min, max));
     }
-    config
+    Ok(config)
 }
 
 fn ring_len(rate: u32) -> usize {
@@ -555,6 +567,39 @@ mod tests {
 
     fn closest(wanted: &str, names: &[&str]) -> Option<usize> {
         closest_name(wanted, names.iter().copied())
+    }
+
+    fn supported(channels: u16, rate: u32, buffer: SupportedBufferSize) -> SupportedStreamConfig {
+        SupportedStreamConfig::new(channels, rate, buffer, SampleFormat::F32)
+    }
+
+    #[test]
+    fn stream_config_asks_for_ten_millisecond_buffers_within_the_range() {
+        let range = SupportedBufferSize::Range { min: 64, max: 4096 };
+        let config = stream_config(&supported(2, 48_000, range)).unwrap();
+        assert_eq!(config.buffer_size, BufferSize::Fixed(480));
+        let tight = SupportedBufferSize::Range { min: 64, max: 256 };
+        let config = stream_config(&supported(2, 48_000, tight)).unwrap();
+        assert_eq!(config.buffer_size, BufferSize::Fixed(256));
+        let config = stream_config(&supported(2, 48_000, SupportedBufferSize::Unknown)).unwrap();
+        assert_eq!(config.buffer_size, BufferSize::Default);
+    }
+
+    #[test]
+    fn stream_config_refuses_what_the_callbacks_cannot_handle() {
+        let range = SupportedBufferSize::Range { min: 64, max: 4096 };
+        assert!(matches!(
+            stream_config(&supported(0, 48_000, range)),
+            Err(AudioError::Device(_))
+        ));
+        assert!(matches!(
+            stream_config(&supported(2, 0, range)),
+            Err(AudioError::Device(_))
+        ));
+        // An inverted range would make `clamp` panic.
+        let inverted = SupportedBufferSize::Range { min: 4096, max: 64 };
+        let config = stream_config(&supported(2, 48_000, inverted)).unwrap();
+        assert_eq!(config.buffer_size, BufferSize::Default);
     }
 
     #[test]

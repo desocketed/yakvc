@@ -796,4 +796,33 @@ mod tests {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<YakVcEngine>();
     }
+
+    /// `cargo xtask header --check` keeps the header current, but only when
+    /// it runs: this catches a function added without regenerating it.
+    #[test]
+    fn header_declares_every_exported_function() {
+        let crate_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut exported = std::collections::BTreeSet::new();
+        for entry in std::fs::read_dir(crate_dir.join("src")).unwrap() {
+            let source = std::fs::read_to_string(entry.unwrap().path()).unwrap();
+            for after in source.split("extern \"C\" fn ").skip(1) {
+                exported.insert(identifier(after));
+            }
+        }
+        let header = std::fs::read_to_string(crate_dir.join("include/yakvc.h")).unwrap();
+        let declared: std::collections::BTreeSet<String> = header
+            .match_indices("yakvc_")
+            .map(|(at, _)| identifier(&header[at..]))
+            .filter(|name| header.contains(&format!("{name}(")))
+            .collect();
+        assert!(!exported.is_empty());
+        assert_eq!(exported, declared, "run `cargo xtask header`");
+    }
+
+    /// The identifier `text` starts with.
+    fn identifier(text: &str) -> String {
+        text.chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect()
+    }
 }

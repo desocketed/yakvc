@@ -117,6 +117,11 @@ impl Peer {
             .map_err(|_| LinkError::Closed)
     }
 
+    /// Closes the connection, for a peer that broke the protocol.
+    pub fn close(&self, code: CloseCode) {
+        close(&self.conn, code);
+    }
+
     /// Whether traffic currently goes through the relay.
     pub fn is_relayed(&self) -> bool {
         self.status.is_relayed()
@@ -596,10 +601,17 @@ impl Inner {
     fn new_join(&self) -> (JoinId, oneshot::Receiver<bool>) {
         let (tx, rx) = oneshot::channel();
         let mut joins = self.joins.lock().unwrap();
+        // A challenge the game never answered keeps its sender until here.
+        joins.pending.retain(|_, tx| !tx.is_closed());
         let id = JoinId(joins.next_id);
         joins.next_id = joins.next_id.wrapping_add(1);
         joins.pending.insert(id, tx);
         (id, rx)
+    }
+
+    /// Forgets the challenges of a rendezvous session that ended.
+    fn forget_joins(&self) {
+        self.joins.lock().unwrap().pending.clear();
     }
 
     /// Peers we can see, best first (see [`Rank`]).

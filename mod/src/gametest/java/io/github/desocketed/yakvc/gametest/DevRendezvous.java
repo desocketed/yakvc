@@ -7,6 +7,11 @@ import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.loader.api.entrypoint.PreLaunchEntrypoint;
 
@@ -17,6 +22,9 @@ import net.fabricmc.loader.api.entrypoint.PreLaunchEntrypoint;
  * build.gradle) and stops with the game.
  */
 public class DevRendezvous implements PreLaunchEntrypoint {
+	/** Generous: the server is a release binary that only has to bind a socket. */
+	private static final Duration START_TIMEOUT = Duration.ofSeconds(60);
+
 	@Override
 	public void onPreLaunch() {
 		try {
@@ -51,10 +59,11 @@ public class DevRendezvous implements PreLaunchEntrypoint {
 				.redirectError(dir.resolve("server.log").toFile())
 				.start();
 		Runtime.getRuntime().addShutdownHook(new Thread(process::destroy));
-		// The server prints its two IDs once it is listening.
+		// The server prints its two IDs once it is listening. Read with a deadline: a server that hangs before that
+		// would otherwise hang the whole gametest without a word.
 		BufferedReader out = process.inputReader();
-		String endpointId = value(out.readLine(), "endpoint id:", dir);
-		String issuerId = value(out.readLine(), "issuer id:", dir);
+		String endpointId = value(readLine(out, dir), "endpoint id:", dir);
+		String issuerId = value(readLine(out, dir), "issuer id:", dir);
 
 		// Dev test audio stands in for the sound card the gametest client doesn't have, so push-to-talk produces
 		// real voice frames and the engine reports no device errors.
@@ -84,6 +93,26 @@ public class DevRendezvous implements PreLaunchEntrypoint {
 			int status = new ProcessBuilder(command).inheritIO().start().waitFor();
 			if (status != 0) throw new IOException(String.join(" ", command) + " exited with " + status);
 		} catch (InterruptedException e) {
+			throw new IOException(e);
+		}
+	}
+
+	/** The next line of the server's output, or an error naming its log when none comes within the timeout. */
+	private static String readLine(BufferedReader out, Path dir) throws IOException {
+		try {
+			return CompletableFuture.supplyAsync(() -> {
+				try {
+					return out.readLine();
+				} catch (IOException e) {
+					throw new UncheckedIOException(e);
+				}
+			}).get(START_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+		} catch (TimeoutException e) {
+			throw new IOException("yakvc-server printed nothing within " + START_TIMEOUT + "; see " + dir.resolve("server.log"));
+		} catch (ExecutionException e) {
+			throw new IOException("reading yakvc-server's output failed", e.getCause());
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
 			throw new IOException(e);
 		}
 	}

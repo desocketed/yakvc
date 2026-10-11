@@ -102,10 +102,7 @@ public final class SessionJoiner {
 
 	/** Calls {@code joinServer} unless there is no account or the game is logging in. Returns whether it succeeded. */
 	boolean join(String serverId) {
-		if (!mojang.hasAccount()) {
-			YakVcClient.LOGGER.info("Voice sign-in skipped: no Minecraft account");
-			return false;
-		}
+		if (!hasAccount()) return false;
 		synchronized (this) {
 			if (loggingIn) {
 				YakVcClient.LOGGER.info("Voice sign-in refused: the game is logging in to a server; retrying later");
@@ -127,6 +124,17 @@ public final class SessionJoiner {
 				joinInFlight = false;
 				notifyAll();
 			}
+		}
+		return false;
+	}
+
+	/** Treats a failing check as no account, so the join is still answered rather than left to time out. */
+	private boolean hasAccount() {
+		try {
+			if (mojang.hasAccount()) return true;
+			YakVcClient.LOGGER.info("Voice sign-in skipped: no Minecraft account");
+		} catch (RuntimeException e) {
+			YakVcClient.LOGGER.error("Voice sign-in skipped: could not check the Minecraft account", e);
 		}
 		return false;
 	}

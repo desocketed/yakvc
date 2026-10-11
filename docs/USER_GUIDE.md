@@ -140,7 +140,7 @@ Open the settings from **Options → Music & Sounds → Voice Chat…**, at the 
 - **Relay Only**: sends all voice through the Yak VC relay, so other players don't learn your IP address (see [privacy](#privacy)). Off by default. It takes effect after you restart the game.
 - **Obey Chat Limits**: turns voice off while your Microsoft account or launcher disables chat. On by default.
 - **Mute Blocked**: players you block in Social Interactions can't hear you, and you don't hear them. On by default.
-- **Group Invites**: who may invite you to a [group](#groups): *Everyone* (the default), *Friends* (the players in `friends_only` in the [config file](#the-config-file)) or *Nobody*. Invites from anyone else are ignored.
+- **Group Invites**: who may invite you to a [group](#groups): *Everyone* (the default) or *Nobody*. Setting `invites = "friends"` in the [config file](#the-config-file) allows only the players in `friends_only`, which is edited there too. Invites from anyone else are ignored.
 
 Under **Account** the settings say whether your Minecraft account is verified (see [Installing](#installing)).
 

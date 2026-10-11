@@ -154,8 +154,10 @@ async fn talking_over_silence(bitrate: u32) -> Vec<bool> {
 async fn comfort_noise_is_not_talking() {
     for bitrate in [24_000, 64_000] {
         let changes = talking_over_silence(bitrate).await;
+        // Comfort noise decodes far below the talking level at every
+        // bitrate, so not a single spurt is expected.
         let spurts = changes.iter().filter(|talking| **talking).count();
-        assert!(spurts <= 1, "{bitrate} bps: {changes:?}");
+        assert_eq!(spurts, 0, "{bitrate} bps: {changes:?}");
     }
 }
 
