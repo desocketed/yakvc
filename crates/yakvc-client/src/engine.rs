@@ -33,6 +33,7 @@ pub struct Engine {
 pub struct EngineBuilder {
     config: Config,
     data_dir: Option<PathBuf>,
+    ephemeral: bool,
     io: AudioIo,
     max_peers: usize,
 }
@@ -165,6 +166,7 @@ impl Engine {
         EngineBuilder {
             config,
             data_dir: None,
+            ephemeral: false,
             io: AudioIo {
                 source: None,
                 sink: None,
@@ -390,9 +392,19 @@ impl Drop for Engine {
 }
 
 impl EngineBuilder {
-    /// Where the client key and ticket cache live. Required.
+    /// Where the client key and ticket cache live. Required, unless the
+    /// engine is [`ephemeral`](Self::ephemeral).
     pub fn data_dir(mut self, dir: impl Into<PathBuf>) -> Self {
         self.data_dir = Some(dir.into());
+        self
+    }
+
+    /// A fresh key for this start only, and no ticket cache, so nothing
+    /// touches the disk. For the CLI, whose runs have no identity to keep:
+    /// a key file in a shared temporary directory could be planted by
+    /// another local user, or left behind by a killed run.
+    pub fn ephemeral(mut self) -> Self {
+        self.ephemeral = true;
         self
     }
 
@@ -426,6 +438,7 @@ impl EngineBuilder {
         let EngineBuilder {
             config,
             data_dir,
+            ephemeral,
             mut io,
             max_peers,
         } = self;
@@ -436,13 +449,18 @@ impl EngineBuilder {
         if io.sink.is_none() && config.dev.null_output {
             io.sink = Some(Box::new(yakvc_audio::NullSink::new().0));
         }
-        let data_dir = data_dir.ok_or_else(|| {
-            StartError::Key(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "no data directory set",
-            ))
-        })?;
-        let key = load_or_create_key(&data_dir).map_err(StartError::Key)?;
+        let (key, ticket_cache) = if ephemeral {
+            (SecretKey::generate(), None)
+        } else {
+            let data_dir = data_dir.ok_or_else(|| {
+                StartError::Key(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "no data directory set",
+                ))
+            })?;
+            let key = load_or_create_key(&data_dir).map_err(StartError::Key)?;
+            (key, Some(data_dir.join(TICKET_FILE)))
+        };
         let (events_tx, events) = event::channel();
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -466,7 +484,7 @@ impl EngineBuilder {
             let endpoint = bind_endpoint(key, &config).await?;
             let net = Net::new(endpoint, protocols, trust, events_tx.clone(), max_peers);
             match config.rendezvous.clone() {
-                Some(rendezvous) => net.start_rendezvous(rendezvous, data_dir.join(TICKET_FILE)),
+                Some(rendezvous) => net.start_rendezvous(rendezvous, ticket_cache),
                 // There is no built-in default rendezvous yet.
                 None => events_tx.send(Event::Rendezvous(RendezvousState::Disconnected)),
             }
@@ -593,6 +611,21 @@ mod tests {
     fn start_needs_a_data_dir() {
         let result = Engine::builder(Config::default()).start();
         assert!(matches!(result, Err(StartError::Key(_))));
+    }
+
+    #[test]
+    fn an_ephemeral_engine_needs_no_data_dir_and_keeps_no_key() {
+        let start = || {
+            Engine::builder(Config::default())
+                .ephemeral()
+                .audio_source(ToneSource::new(440.0))
+                .audio_sink(NullSink::new().0)
+                .start()
+                .unwrap()
+                .0
+        };
+        let (first, second) = (start(), start());
+        assert_ne!(first.endpoint_id(), second.endpoint_id());
     }
 
     /// A microphone with a bug in it.
