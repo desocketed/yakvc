@@ -4692,7 +4692,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "0.1.0-alpha.0"
 dependencies = [
  "anyhow",
  "cbindgen",
@@ -4702,7 +4702,7 @@ dependencies = [
 
 [[package]]
 name = "yakvc-audio"
-version = "0.1.0"
+version = "0.1.0-alpha.0"
 dependencies = [
  "cpal",
  "hound",
@@ -4716,7 +4716,7 @@ dependencies = [
 
 [[package]]
 name = "yakvc-cli"
-version = "0.1.0"
+version = "0.1.0-alpha.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -4728,7 +4728,7 @@ dependencies = [
 
 [[package]]
 name = "yakvc-client"
-version = "0.1.0"
+version = "0.1.0-alpha.0"
 dependencies = [
  "bytes",
  "iroh",
@@ -4745,7 +4745,7 @@ dependencies = [
 
 [[package]]
 name = "yakvc-ffi"
-version = "0.1.0"
+version = "0.1.0-alpha.0"
 dependencies = [
  "serde_json",
  "toml 1.1.6+spec-1.1.0",
@@ -4755,7 +4755,7 @@ dependencies = [
 
 [[package]]
 name = "yakvc-proto"
-version = "0.1.0"
+version = "0.1.0-alpha.0"
 dependencies = [
  "iroh-base",
  "md-5",
@@ -4771,7 +4771,7 @@ dependencies = [
 
 [[package]]
 name = "yakvc-server"
-version = "0.1.0"
+version = "0.1.0-alpha.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -4790,7 +4790,7 @@ dependencies = [
 
 [[package]]
 name = "yakvc-testkit"
-version = "0.1.0"
+version = "0.1.0-alpha.0"
 dependencies = [
  "hound",
  "thiserror 2.0.21",
