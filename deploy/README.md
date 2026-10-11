@@ -10,6 +10,8 @@ Files here:
 - `Dockerfile`: used by `cargo xtask server-image`, which builds the image locally.
 - The repository's `flake.nix` also packages the server (`nix build github:desocketed/yakvc#yakvc-server`) and has a NixOS module; see "On NixOS" below.
 
+The production relay itself is deployed from `nix/hosts/yakvc-relay`; see "The production relay" below.
+
 ## On Linode, with systemd and Docker
 
 The image is `ghcr.io/desocketed/yakvc-server`, published by the release workflow. Until the first release, build it with `cargo xtask server-image` and copy it over with `docker save` and `docker load`.
@@ -135,3 +137,25 @@ relay = "https://relay.example.com/"
 List both addresses so that clients on IPv6-only networks can reach the rendezvous directly; one alone works too.
 
 Keep the keys: a new endpoint key changes the endpoint id, and a new issuer key invalidates every ticket and every client's `trusted_issuers`.
+
+## The production relay
+
+`relay.yak.dsktd.net` is defined in `nix/hosts/yakvc-relay`: a NixOS flake that imports the module above and adds the Linode disk layout, SSH and doas, a status page on port 8080 and alerting. `private.nix` next to it (gitignored) holds the values kept out of the repository:
+
+```nix
+{
+  acmeContact = "admin@example.com";
+  healthcheckUrl = null;  # a Healthchecks.io ping URL, or null
+  ntfyUrl = null;         # an ntfy topic URL, or null
+}
+```
+
+Every release deploys itself: the CI `deploy` job builds the system with that release's `yakvc-server` and switches the box to it over SSH, using the `RELAY_DEPLOY_KEY` secret (a key listed in `claude_keys`) and `RELAY_PRIVATE_NIX` (the contents of `private.nix`). To deploy any other commit that passed CI, run the workflow by hand with "Deploy the relay" ticked. The same command works from a machine with Nix and a key in `claude_keys`:
+
+```sh
+nix run nixpkgs#nixos-rebuild -- switch --flake "path:$PWD/nix/hosts/yakvc-relay#yakvc-relay" \
+  --override-input yakvc "github:desocketed/yakvc/$(git rev-parse HEAD)" \
+  --target-host claude@relay.yak.dsktd.net --use-remote-sudo
+```
+
+Nothing is built on the box, and its only state is the two keys in `/var/lib/yakvc`.

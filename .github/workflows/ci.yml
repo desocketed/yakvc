@@ -13,6 +13,11 @@ on:
   # when `changes` finds only docs and the build is skipped.
   pull_request:
   workflow_dispatch:
+    inputs:
+      deploy_relay:
+        description: Deploy the relay
+        type: boolean
+        default: false
 
 # Actions from outside GitHub's own `actions/` are pinned to a commit, since
 # a tag can be moved to other code; the comment names the release it was.
@@ -406,3 +411,41 @@ jobs:
           game-versions: "26.3"
           java: "25"
           dependencies: fabric-api(required)
+
+  # Puts the release on the production relay: builds the host configuration
+  # in nix/hosts/yakvc-relay with this commit's yakvc-server and switches
+  # the box to it over SSH. A manual run with "Deploy the relay" ticked does
+  # the same for any commit that passed CI. Needs RELAY_DEPLOY_KEY (an SSH
+  # key in claude_keys) and RELAY_PRIVATE_NIX (private.nix).
+  deploy:
+    if: >-
+      !cancelled() && needs.ci-ok.result == 'success'
+      && ((github.ref_type == 'tag' && needs.release.result == 'success')
+          || inputs.deploy_relay == true)
+    needs: [ci-ok, release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+      - name: Deploy
+        env:
+          RELAY_DEPLOY_KEY: ${{ secrets.RELAY_DEPLOY_KEY }}
+          RELAY_PRIVATE_NIX: ${{ secrets.RELAY_PRIVATE_NIX }}
+        run: |
+          if [[ -z $RELAY_DEPLOY_KEY || -z $RELAY_PRIVATE_NIX ]]; then
+            echo "RELAY_DEPLOY_KEY or RELAY_PRIVATE_NIX is not set; nothing to deploy to" >&2
+            exit 1
+          fi
+          host=nix/hosts/yakvc-relay
+          install -m 600 /dev/null key && printf '%s\n' "$RELAY_DEPLOY_KEY" > key
+          printf '%s\n' "$RELAY_PRIVATE_NIX" > "$host/private.nix"
+          export NIX_SSHOPTS="-i $PWD/key -o IdentitiesOnly=yes -o UserKnownHostsFile=$PWD/$host/known_hosts"
+          nix run nixpkgs#nixos-rebuild -- switch \
+            --flake "path:$PWD/$host#yakvc-relay" \
+            --override-input yakvc "github:${GITHUB_REPOSITORY}/${GITHUB_SHA}" \
+            --target-host claude@relay.yak.dsktd.net --use-remote-sudo
+          # The relay answers over HTTPS and the status probe signs in.
+          curl -fsSI https://relay.yak.dsktd.net/ >/dev/null
+          sleep 40
+          curl -fsS http://relay.yak.dsktd.net:8080/ | grep -q 👍
