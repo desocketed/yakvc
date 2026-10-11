@@ -49,7 +49,8 @@ use crate::guard::{
 /// 5: groups reworked: random keys instead of names and passwords, invites,
 /// shared group state and kick votes; group-only voice in a group.
 /// 6: kick votes removed (`yakvc_vote_kick`, the kick vote event and notice).
-pub const YAKVC_ABI_VERSION: u32 = 6;
+/// 7: `yakvc_join_group` takes the id length.
+pub const YAKVC_ABI_VERSION: u32 = 7;
 
 pub const YAKVC_OK: i32 = 0;
 /// A null pointer, bad UUID, invalid UTF-8 or out-of-range value.
@@ -464,14 +465,18 @@ pub unsafe extern "C" fn yakvc_accept_invite(engine: *mut YakVcEngine, from: *co
 /// `YAKVC_ERR_UNAVAILABLE` if no peer announces it any more.
 ///
 /// # Safety
-/// `engine` must be live; `id_hex` must point to 64 bytes.
+/// `engine` must be live; `id_hex` must be readable for `len` bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn yakvc_join_group(engine: *mut YakVcEngine, id_hex: *const u8) -> i32 {
+pub unsafe extern "C" fn yakvc_join_group(
+    engine: *mut YakVcEngine,
+    id_hex: *const u8,
+    len: usize,
+) -> i32 {
     // SAFETY: the caller guarantees `engine` is live.
     unsafe {
         with_engine(engine, |e| {
-            // SAFETY: the caller guarantees `id_hex` points to 64 bytes.
-            let hex = str_arg(id_hex, 64, "id")?;
+            // SAFETY: the caller guarantees `id_hex` is readable.
+            let hex = str_arg(id_hex, len, "id")?;
             let id = GroupId::from_hex(hex)
                 .ok_or_else(|| FfiError::invalid("id is not 64 hex characters"))?;
             e.engine.join_group(id).map_err(group_error)

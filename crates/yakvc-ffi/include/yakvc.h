@@ -16,8 +16,9 @@
  * 5: groups reworked: random keys instead of names and passwords, invites,
  * shared group state and kick votes; group-only voice in a group.
  * 6: kick votes removed (`yakvc_vote_kick`, the kick vote event and notice).
+ * 7: `yakvc_join_group` takes the id length.
  */
-#define YAKVC_ABI_VERSION 6
+#define YAKVC_ABI_VERSION 7
 
 #define YAKVC_OK 0
 
@@ -270,9 +271,9 @@ int32_t yakvc_accept_invite(struct YakVcEngine *engine, const uint8_t *from);
  * `YAKVC_ERR_UNAVAILABLE` if no peer announces it any more.
  *
  * # Safety
- * `engine` must be live; `id_hex` must point to 64 bytes.
+ * `engine` must be live; `id_hex` must be readable for `len` bytes.
  */
-int32_t yakvc_join_group(struct YakVcEngine *engine, const uint8_t *id_hex);
+int32_t yakvc_join_group(struct YakVcEngine *engine, const uint8_t *id_hex, size_t len);
 
 /**
  * # Safety
