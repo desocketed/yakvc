@@ -56,16 +56,16 @@ jobs:
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       # The client crates as they ship: yakvc-testkit turns on the sim feature
       # in any build that includes it.
-      - run: cargo clippy -p yakvc-client -p yakvc-ffi -p yakvc-cli --all-targets -- -D warnings
+      - run: cargo clippy -p yakvc-client -p yakvc-ffi -p yakvc-cli --all-targets --locked -- -D warnings
       - run: cargo xtask header --check
-      - run: cargo test --workspace --all-features
+      - run: cargo test --workspace --all-features --locked
       - name: Server has no audio dependencies
         # cargo tree on its own line: inside the `if` its failure would pass.
         run: |
-          deps=$(cargo tree -p yakvc-server -e normal --prefix none)
+          deps=$(cargo tree --locked -p yakvc-server -e normal --prefix none)
           if grep -E '^(yakvc-audio|yakvc-client|cpal|opus|audiopus|alsa)' <<<"$deps"; then
             echo "yakvc-server must not depend on audio crates" >&2
             exit 1
@@ -78,6 +78,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          # The action's default arguments, plus --locked.
+          arguments: --all-features --locked
 
   # yakvc-ffi for every platform, plus yakvc-cli for the release. Each OS
   # builds its own targets; the mod job merges them into one jar.
@@ -136,17 +139,17 @@ jobs:
               # The runner's libasound.so needs a newer glibc than 2.17. Skip
               # checking it: at run time the user's libasound matches their glibc.
               RUSTFLAGS="-C link-arg=-Wl,--allow-shlib-undefined" \
-                cargo zigbuild --release -p yakvc-cli --target x86_64-unknown-linux-gnu.2.17
+                cargo zigbuild --release --locked -p yakvc-cli --target x86_64-unknown-linux-gnu.2.17
               cp target/x86_64-unknown-linux-gnu/release/yakvc-cli cli/yakvc-cli-linux-x86_64
               ;;
             macOS)
-              cargo build --release -p yakvc-cli --target x86_64-apple-darwin
-              cargo build --release -p yakvc-cli --target aarch64-apple-darwin
+              cargo build --release --locked -p yakvc-cli --target x86_64-apple-darwin
+              cargo build --release --locked -p yakvc-cli --target aarch64-apple-darwin
               lipo -create target/x86_64-apple-darwin/release/yakvc-cli \
                 target/aarch64-apple-darwin/release/yakvc-cli -output cli/yakvc-cli-macos-universal
               ;;
             Windows)
-              cargo build --release -p yakvc-cli --target x86_64-pc-windows-msvc
+              cargo build --release --locked -p yakvc-cli --target x86_64-pc-windows-msvc
               cp target/x86_64-pc-windows-msvc/release/yakvc-cli.exe cli/yakvc-cli-windows-x86_64.exe
               ;;
           esac

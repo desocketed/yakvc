@@ -17,9 +17,7 @@ pub fn dev(port: u16, dir: Option<PathBuf>, write_client_config: bool) -> Result
     fs::create_dir_all(&dir)?;
     let dir = dir.canonicalize()?;
 
-    let status = cargo()
-        .args(["build", "--quiet", "-p", "yakvc-server"])
-        .status()?;
+    let status = cargo(&["build", "--quiet", "-p", "yakvc-server"]).status()?;
     ensure!(status.success(), "building yakvc-server failed");
     let server = root
         .join("target/debug/yakvc-server")

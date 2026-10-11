@@ -480,6 +480,8 @@ size_t   yakvc_last_error(uint8_t *buf, size_t cap);         // message for this
 
 The headless scripts and `cargo xtask with-pipewire` take Xvfb, Mesa and PipeWire from the flake's locked nixpkgs (`nix ... --inputs-from <repo root>`), never from the registry's channel, so the gametest rendering and the guide screenshots don't drift between runs.
 
+Every cargo invocation in CI, `scripts/ci-local.sh`, the dev scripts, the Gradle build and xtask passes `--locked`: a Cargo.toml requirement that no longer matches Cargo.lock fails the build instead of re-resolving. Update Cargo.lock deliberately (`cargo update -p <crate>`, or run `cargo build` once without the flag after editing a manifest) and commit it with the change.
+
 **Native targets**
 
 | Target | Built on | Notes |

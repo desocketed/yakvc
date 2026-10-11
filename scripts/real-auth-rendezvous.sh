@@ -16,7 +16,7 @@ work=$PWD/mod/build/real-auth
 rdv_addr=127.0.0.1:7843
 metrics_addr=127.0.0.1:9187
 
-cargo build --quiet -p yakvc-server
+cargo build --quiet --locked -p yakvc-server
 server_bin=$PWD/target/debug/yakvc-server
 (cd mod && ./gradlew build --console=plain --quiet)
 
