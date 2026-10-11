@@ -23,6 +23,11 @@ use crate::wire::WireError;
 /// fail their signature check instead of being misread.
 pub const SIGNING_CONTEXT: &[u8] = b"yakvc-ticket-v2";
 
+/// The longest a ticket may be valid for. Verifiers refuse anything that
+/// expires later than this, so a bad `expires_at` can't overflow the time
+/// arithmetic that schedules renewals and expiry.
+pub const MAX_TICKET_LIFETIME: Duration = Duration::from_secs(7 * 24 * 3600);
+
 /// The ed25519 key a rendezvous uses to sign tickets. Distinct from its
 /// endpoint key so several rendezvous instances can share one issuer.
 #[derive(Clone)]
@@ -84,6 +89,8 @@ pub enum TicketError {
     Malformed(#[source] postcard::Error),
     #[error("ticket has expired")]
     Expired,
+    #[error("ticket lasts longer than a week")]
+    TooLong,
     #[error("dev tickets are not accepted")]
     DevTicket,
     #[error("unverified ticket for an account UUID or another name")]
@@ -201,8 +208,11 @@ impl Ticket {
         // Exact rather than in whole seconds: rounding `now` down would
         // promise up to a second more than is left, and a renewal scheduled
         // in that second would come too late.
-        let expires = SystemTime::UNIX_EPOCH + Duration::from_secs(self.body.expires_at);
-        expires.duration_since(now).unwrap_or_default()
+        // `verify` caps `expires_at`, so the sum never overflows.
+        SystemTime::UNIX_EPOCH
+            .checked_add(Duration::from_secs(self.body.expires_at))
+            .and_then(|expires| expires.duration_since(now).ok())
+            .unwrap_or_default()
     }
 }
 
@@ -237,8 +247,9 @@ impl TicketVerifier {
         self
     }
 
-    /// Checks issuer, signature, expiry, the dev flag and the verified rules,
-    /// in that order.
+    /// Checks issuer, signature, expiry (past, or further off than
+    /// [`MAX_TICKET_LIFETIME`]), the dev flag and the verified rules, in
+    /// that order.
     ///
     /// An unverified ticket must name an offline UUID: offline-mode servers
     /// give every player one, so there it is no weaker than the server's own
@@ -257,6 +268,9 @@ impl TicketVerifier {
             postcard::from_bytes(&ticket.body).map_err(TicketError::Malformed)?;
         if body.expires_at <= unix_secs(now) {
             return Err(TicketError::Expired);
+        }
+        if body.expires_at > unix_secs(now).saturating_add(MAX_TICKET_LIFETIME.as_secs()) {
+            return Err(TicketError::TooLong);
         }
         if body.dev && !self.accept_dev {
             return Err(TicketError::DevTicket);
@@ -415,6 +429,32 @@ mod tests {
         assert!(matches!(
             verifier.verify(&signed, now() + 24 * HOUR),
             Err(TicketError::Expired)
+        ));
+    }
+
+    #[test]
+    fn far_off_expiry_is_rejected() {
+        let key = issuer();
+        let verifier = TicketVerifier::new([key.id()]);
+        let lasting = |expires_at| {
+            key.sign(&TicketBody {
+                expires_at,
+                ..body()
+            })
+        };
+        let week = MAX_TICKET_LIFETIME.as_secs();
+        assert!(
+            verifier
+                .verify(&lasting(1_800_000_000 + week), now())
+                .is_ok()
+        );
+        assert!(matches!(
+            verifier.verify(&lasting(1_800_000_000 + week + 1), now()),
+            Err(TicketError::TooLong)
+        ));
+        assert!(matches!(
+            verifier.verify(&lasting(u64::MAX), now()),
+            Err(TicketError::TooLong)
         ));
     }
 

@@ -17,6 +17,10 @@ use crate::event::{Event, GroupNoticeKind};
 
 /// How long a received invite can be accepted.
 const INVITE_LIFETIME: Duration = Duration::from_secs(120);
+/// How far ahead of ours a mate's state version may be. Versions grow by one
+/// per change, so anything further off is a mate pushing the counter towards
+/// the end of its range.
+const MAX_VERSION_LEAD: u64 = 1_000_000;
 
 /// Why a group action was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -233,7 +237,7 @@ impl VoiceState {
             return Err(GroupError::LabelTooLong);
         }
         if (state.public, &state.label) != (group.state.public, &group.state.label) {
-            state.version = group.state.version + 1;
+            state.version = group.state.version.saturating_add(1);
             state.by = me;
             group.state = state;
         }
@@ -255,7 +259,9 @@ impl VoiceState {
         let Some(group) = &mut self.group else {
             return false;
         };
-        if !state.newer_than(&group.state) {
+        if !state.newer_than(&group.state)
+            || state.version > group.state.version.saturating_add(MAX_VERSION_LEAD)
+        {
             return false;
         }
         if state.public != group.state.public {
@@ -589,6 +595,25 @@ mod tests {
             ..GroupState::new(uuid(9))
         };
         assert!(!clients[0].receive_group_state(uuid(9), forged, &mut events));
+    }
+
+    #[test]
+    fn absurd_versions_are_refused_and_ours_never_overflows() {
+        let mut clients = group_of(2);
+        let mut events = Vec::new();
+        let ours = clients[0].group.as_ref().unwrap().state.clone();
+        let at = |version| GroupState {
+            version,
+            by: uuid(2),
+            ..ours.clone()
+        };
+        assert!(!clients[0].receive_group_state(uuid(2), at(u64::MAX), &mut events));
+        assert!(!clients[0].receive_group_state(uuid(2), at(MAX_VERSION_LEAD + 1), &mut events));
+        assert!(clients[0].receive_group_state(uuid(2), at(MAX_VERSION_LEAD), &mut events));
+
+        clients[0].group.as_mut().unwrap().state.version = u64::MAX;
+        clients[0].change_group_state(|s| s.public = true).unwrap();
+        assert_eq!(clients[0].group.as_ref().unwrap().state.version, u64::MAX);
     }
 
     #[test]
