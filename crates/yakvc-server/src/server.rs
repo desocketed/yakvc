@@ -113,12 +113,21 @@ pub struct Limits {
     /// every slot. Connections through the relay only count against
     /// `max_unregistered`, since their IP is unknown.
     pub max_unregistered_per_ip: usize,
+    /// Sessions (counted from `Hello`) the whole server holds at once.
+    /// Each costs matching work, so this bounds the server's memory and
+    /// the matcher's work whatever the mix of sources.
+    pub max_sessions: usize,
     /// Sessions (counted from `Hello`) per source IP (IPv6: per /64).
     /// Offline UUIDs cost only a `Decline`, so this is what bounds how many
     /// sessions one host can make the matcher work for. Room for a LAN or
-    /// a shared NAT; sessions through the relay have no known IP and are
-    /// bounded by `unknown_ip_challenges_per_min` instead.
+    /// a shared NAT.
     pub max_sessions_per_ip: usize,
+    /// The same, shared by every session without a known source IP (those
+    /// arriving through the relay), which the per-IP cap can't cover. Their
+    /// challenges are rate limited too, but a session lives as long as its
+    /// ticket, so a rate alone would let one host behind the relay collect
+    /// sessions for a day.
+    pub max_sessions_unknown_ip: usize,
 }
 
 /// Live counters, for metrics and tests.
@@ -154,7 +163,9 @@ pub(crate) struct Shared {
     pub unknown_ip_challenges: Mutex<TokenBucket>,
     pub unregistered: Slots,
     pub unregistered_per_ip: IpSlots,
+    pub session_slots: Slots,
     pub sessions_per_ip: IpSlots,
+    pub sessions_unknown_ip: Slots,
     /// Our relay, the only one clients may advertise.
     pub relay_url: Option<RelayUrl>,
     pub metrics: Metrics,
@@ -329,7 +340,9 @@ impl ServerBuilder {
             )),
             unregistered: Slots::new(self.limits.max_unregistered),
             unregistered_per_ip: IpSlots::new(self.limits.max_unregistered_per_ip),
+            session_slots: Slots::new(self.limits.max_sessions),
             sessions_per_ip: IpSlots::new(self.limits.max_sessions_per_ip),
+            sessions_unknown_ip: Slots::new(self.limits.max_sessions_unknown_ip),
             relay_url: relay_url.clone(),
             limits: self.limits,
             sessions,
@@ -436,7 +449,9 @@ impl Default for Limits {
             unknown_ip_challenges_per_min: 20,
             max_unregistered: 500,
             max_unregistered_per_ip: 10,
+            max_sessions: 4096,
             max_sessions_per_ip: 64,
+            max_sessions_unknown_ip: 256,
         }
     }
 }
