@@ -4,6 +4,7 @@ use std::process::Command;
 use std::{env, fs};
 
 mod dev;
+mod pack;
 mod pipewire;
 mod relay;
 
@@ -43,6 +44,16 @@ enum Cmd {
         /// host only.
         #[arg(long)]
         from: Option<PathBuf>,
+    },
+    /// Package a release jar as launcher packs (a Modrinth .mrpack and a Prism
+    /// instance zip), each with Fabric API inside.
+    Pack {
+        /// The release jar (default: dist/yakvc-<version>.jar).
+        #[arg(long)]
+        jar: Option<PathBuf>,
+        /// Output directory (default: dist).
+        #[arg(long)]
+        out: Option<PathBuf>,
     },
     /// Build the yakvc-server Docker image.
     ServerImage,
@@ -99,6 +110,10 @@ fn main() -> Result<()> {
         Cmd::Header { check } => header(check),
         Cmd::Dist { from } => dist(from.as_deref()),
         Cmd::ServerImage => server_image(),
+        Cmd::Pack { jar, out } => pack::pack(
+            &jar.unwrap_or_else(|| root().join(format!("dist/yakvc-{VERSION}.jar"))),
+            &out.unwrap_or_else(|| root().join("dist")),
+        ),
         Cmd::Dev {
             port,
             dir,
