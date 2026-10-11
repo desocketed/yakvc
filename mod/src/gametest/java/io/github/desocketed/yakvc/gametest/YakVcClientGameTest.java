@@ -272,7 +272,7 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		// DevRendezvous writes a fresh config each run, so the first-run card shows; OK saves that it was seen.
 		context.setScreen(() -> new VoiceMenuScreen(null, feeder));
 		screenshotScreen(context, "voice-menu-setup");
-		context.clickScreenButton("yakvc.setup.ok");
+		pressNestedButton(context, "yakvc.setup.ok");
 		context.waitFor(mc -> feeder.config().setupDone());
 		String configBefore = read(configFile);
 		if (!configBefore.contains("setup_done = true")) {

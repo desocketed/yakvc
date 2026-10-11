@@ -19,6 +19,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.OptionInstance;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractSliderButton;
+import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.ContainerObjectSelectionList;
 import net.minecraft.client.gui.components.PlayerFaceExtractor;
@@ -40,15 +41,13 @@ import org.jspecify.annotations.Nullable;
 public final class VoiceMenuScreen extends Screen {
 	private static final int ROW_HEIGHT = 28;
 	private static final int ROW_WIDTH = 310;
+	private static final int SETUP_HEIGHT = 58;
 	private static final int HEADER_HEIGHT = 45;
-	private static final int HEADER_HEIGHT_WITH_CARD = 100;
 
 	private final @Nullable Screen lastScreen;
 	private final GameStateFeeder feeder;
 	private final HeaderAndFooterLayout layout = new HeaderAndFooterLayout(this, HEADER_HEIGHT, 33);
 	private @Nullable PlayerList list;
-	/** The first-run card, while it shows. */
-	private @Nullable LinearLayout setupCard;
 	/** The players in the list, to rebuild it when someone joins or leaves. */
 	private List<UUID> shown = List.of();
 	/** The status line under the title, which follows the voice state while the menu is open. */
@@ -70,12 +69,12 @@ public final class VoiceMenuScreen extends Screen {
 		header.addChild(new StringWidget(title, font));
 		shownStatus = status();
 		statusText = header.addChild(new StringWidget(shownStatus.copy().withStyle(ChatFormatting.GRAY), font));
-		setupCard = feeder.config().setupDone() ? null : header.addChild(setupCard());
-		layout.setHeaderHeight(setupCard == null ? HEADER_HEIGHT : HEADER_HEIGHT_WITH_CARD);
 
 		list = layout.addToContents(new PlayerList(minecraft));
+		// The first-run card sits at the top of the list, so it scrolls away with the players.
+		if (!feeder.config().setupDone()) list.add(new SetupRow(), SETUP_HEIGHT);
 		shown = players();
-		for (UUID uuid : shown) list.add(new PlayerRow(uuid));
+		for (UUID uuid : shown) list.add(new PlayerRow(uuid), ROW_HEIGHT);
 
 		VoiceKeys keys = feeder.keys();
 		LinearLayout footer = layout.addToFooter(LinearLayout.horizontal().spacing(4));
@@ -95,38 +94,6 @@ public final class VoiceMenuScreen extends Screen {
 
 		layout.visitWidgets(this::addRenderableWidget);
 		repositionElements();
-	}
-
-	/**
-	 * The first-run card: who may invite you to a group and how you talk, the two choices a new player should make
-	 * before anything else. OK saves both and sets {@code setup_done}, so the card doesn't come back.
-	 */
-	private LinearLayout setupCard() {
-		ClientConfig config = feeder.config();
-		OptionInstance<String> invites = VoiceSettingsScreen.invitesOption(config);
-		OptionInstance<String> activation = VoiceSettingsScreen.activationOption(config);
-		LinearLayout card = LinearLayout.vertical().spacing(4);
-		card.defaultCellSetting().alignHorizontallyCenter();
-		card.addChild(new StringWidget(Component.translatable("yakvc.setup.prompt"), font));
-		LinearLayout row = card.addChild(LinearLayout.horizontal().spacing(4));
-		row.addChild(invites.createButton(minecraft.options, 0, 0, 130));
-		row.addChild(activation.createButton(minecraft.options, 0, 0, 130));
-		row.addChild(Button.builder(Component.translatable("yakvc.setup.ok"), button -> {
-			ClientConfig changed = VoiceSettingsScreen.withActivationAndInvites(config, activation, invites)
-					.with("", "setup_done", "true");
-			VoiceSettingsScreen.applyAndSave(feeder, changed);
-			rebuildWidgets();
-		}).width(40).build());
-		return card;
-	}
-
-	@Override
-	public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float a) {
-		super.extractRenderState(graphics, mouseX, mouseY, a);
-		if (setupCard != null) {
-			graphics.outline(setupCard.getX() - 6, setupCard.getY() - 4, setupCard.getWidth() + 12,
-					setupCard.getHeight() + 8, 0xFFA0A0A0);
-		}
 	}
 
 	@Override
@@ -191,13 +158,13 @@ public final class VoiceMenuScreen extends Screen {
 		return Component.translatable(deafened ? "yakvc.menu.undeafen" : "yakvc.menu.deafen");
 	}
 
-	private final class PlayerList extends ContainerObjectSelectionList<PlayerRow> {
+	private final class PlayerList extends ContainerObjectSelectionList<Row> {
 		PlayerList(Minecraft minecraft) {
 			super(minecraft, VoiceMenuScreen.this.width, layout.getContentHeight(), layout.getHeaderHeight(), ROW_HEIGHT);
 		}
 
-		void add(PlayerRow row) {
-			addEntry(row);
+		void add(Row row, int height) {
+			addEntry(row, height);
 		}
 
 		@Override
@@ -206,8 +173,64 @@ public final class VoiceMenuScreen extends Screen {
 		}
 	}
 
+	/** A row of the list: the first-run card or a player. */
+	private abstract static class Row extends ContainerObjectSelectionList.Entry<Row> {
+	}
+
+	/**
+	 * The first-run card: who may invite you to a group and how you talk, the two choices a new player should make
+	 * before anything else. Got it saves both and sets {@code setup_done}, so the card doesn't come back.
+	 */
+	private final class SetupRow extends Row {
+		private final AbstractWidget invites;
+		private final AbstractWidget activation;
+		private final Button gotIt;
+
+		SetupRow() {
+			ClientConfig config = feeder.config();
+			OptionInstance<String> invitesOption = VoiceSettingsScreen.invitesOption(config);
+			OptionInstance<String> activationOption = VoiceSettingsScreen.activationOption(config);
+			invites = invitesOption.createButton(minecraft.options, 0, 0, 125);
+			activation = activationOption.createButton(minecraft.options, 0, 0, 125);
+			gotIt = Button.builder(Component.translatable("yakvc.setup.ok"), button -> {
+				ClientConfig changed = VoiceSettingsScreen.withActivationAndInvites(config, activationOption, invitesOption)
+						.with("", "setup_done", "true");
+				VoiceSettingsScreen.applyAndSave(feeder, changed);
+				rebuildWidgets();
+			}).width(52).build();
+		}
+
+		@Override
+		public void extractContent(GuiGraphicsExtractor graphics, int mouseX, int mouseY, boolean hovered, float a) {
+			int x = getContentX();
+			int y = getContentY();
+			int width = getContentWidth();
+			graphics.outline(x - 4, y, width + 8, SETUP_HEIGHT - 4, 0xFFA0A0A0);
+			Component prompt = Component.translatable("yakvc.setup.prompt");
+			graphics.text(font, prompt, x + (width - font.width(prompt)) / 2, y + 5, 0xFFFFFFFF, false);
+			invites.setPosition(x, y + 17);
+			activation.setPosition(invites.getRight() + 4, y + 17);
+			gotIt.setPosition(activation.getRight() + 4, y + 17);
+			invites.extractRenderState(graphics, mouseX, mouseY, a);
+			activation.extractRenderState(graphics, mouseX, mouseY, a);
+			gotIt.extractRenderState(graphics, mouseX, mouseY, a);
+			Component later = Component.translatable("yakvc.setup.later");
+			graphics.text(font, later, x + (width - font.width(later)) / 2, y + 41, 0xFFA0A0A0, false);
+		}
+
+		@Override
+		public List<? extends GuiEventListener> children() {
+			return List.of(invites, activation, gotIt);
+		}
+
+		@Override
+		public List<? extends NarratableEntry> narratables() {
+			return List.of(invites, activation, gotIt);
+		}
+	}
+
 	/** Face, name, verified badge, talking icon and voice connection on the left; volume and mute on the right. */
-	private final class PlayerRow extends ContainerObjectSelectionList.Entry<PlayerRow> {
+	private final class PlayerRow extends Row {
 		private final UUID uuid;
 		private final VolumeSlider volume;
 		private final Button mute;
