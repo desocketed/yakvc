@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use tokio::signal::unix::{SignalKind, signal};
-use yakvc_proto::{IssuerKey, SecretKey};
+use yakvc_proto::{EndpointId, IssuerKey, RelayUrl, SecretKey};
 use yakvc_server::Config;
 
 /// Yak VC rendezvous server.
@@ -35,6 +35,14 @@ enum Command {
     EndpointId { key: PathBuf },
     /// Print the IssuerId of an issuer key.
     IssuerId { key: PathBuf },
+    /// Sign in to a rendezvous through its relay as an offline player, and
+    /// exit 0 once registered. A health check: no Mojang call is made.
+    Probe {
+        #[arg(long)]
+        endpoint_id: EndpointId,
+        #[arg(long)]
+        relay: RelayUrl,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -56,6 +64,7 @@ fn main() -> anyhow::Result<()> {
             println!("{}", IssuerKey::from_bytes(&read_key(&key)?).id());
             Ok(())
         }
+        Command::Probe { endpoint_id, relay } => probe(endpoint_id, relay),
     }
 }
 
@@ -139,6 +148,13 @@ fn read_key(path: &Path) -> anyhow::Result<[u8; 32]> {
     bytes
         .try_into()
         .map_err(|_| anyhow::anyhow!("{}: a key file holds 32 bytes", path.display()))
+}
+
+#[tokio::main]
+async fn probe(endpoint_id: EndpointId, relay: RelayUrl) -> anyhow::Result<()> {
+    yakvc_server::probe(endpoint_id, relay).await?;
+    println!("registered");
+    Ok(())
 }
 
 #[cfg(test)]
