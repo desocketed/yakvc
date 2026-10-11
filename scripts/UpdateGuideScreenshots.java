@@ -30,6 +30,13 @@ void main(String[] args) throws IOException {
 	}
 	if (screenshots.isEmpty()) throw new IOException("no screenshots in " + from);
 	Files.createDirectories(to);
+	// A guide image whose screenshot the gametest no longer takes goes stale without anyone noticing.
+	try (Stream<Path> files = Files.list(to)) {
+		files.filter(file -> file.toString().endsWith(".png"))
+				.filter(file -> !Files.exists(from.resolve(file.getFileName())))
+				.sorted()
+				.forEach(file -> IO.println("WARNING: no screenshot for " + file));
+	}
 	for (Path screenshot : screenshots) {
 		Path current = to.resolve(screenshot.getFileName());
 		int changed = Files.exists(current) ? changedPixels(screenshot.toFile(), current.toFile()) : Integer.MAX_VALUE;
@@ -46,6 +53,8 @@ void main(String[] args) throws IOException {
 int changedPixels(File a, File b) throws IOException {
 	BufferedImage imageA = ImageIO.read(a);
 	BufferedImage imageB = ImageIO.read(b);
+	if (imageA == null) throw new IOException(a + " is not an image");
+	if (imageB == null) throw new IOException(b + " is not an image");
 	if (imageA.getWidth() != imageB.getWidth() || imageA.getHeight() != imageB.getHeight()) return Integer.MAX_VALUE;
 	int changed = 0;
 	for (int y = 0; y < imageA.getHeight(); y++) {

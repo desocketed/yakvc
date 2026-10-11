@@ -58,6 +58,25 @@ class SessionJoinerTest {
 		assertEquals(List.of(), calls);
 	}
 
+	/** The engine waits for an answer, so a failing check must answer false rather than throw. */
+	@Test
+	void aFailingAccountCheckAnswersFalse() throws Exception {
+		List<String> calls = new ArrayList<>();
+		SessionJoiner joiner = new SessionJoiner(new SessionJoiner.Mojang() {
+			@Override
+			public void joinServer(String serverId) {
+				calls.add(serverId);
+			}
+
+			@Override
+			public boolean hasAccount() {
+				throw new IllegalStateException("no user yet");
+			}
+		});
+		assertFalse(joiner.joinAsync("1").get(5, TimeUnit.SECONDS));
+		assertEquals(List.of(), calls);
+	}
+
 	@Test
 	void offlineLaunchersHaveNoAccount() {
 		UUID account = UUID.fromString("069a79f4-44e9-4726-a5be-fca90e38aaf5");

@@ -75,6 +75,14 @@ impl Resampler {
     }
 }
 
+impl Resampler {
+    /// Output samples (per channel) that come out before the first input
+    /// sample's conversion: the filter's own delay. Zero when passing through.
+    pub(crate) fn delay(&self) -> usize {
+        self.fft.as_ref().map_or(0, |f| f.output_delay())
+    }
+}
+
 impl std::fmt::Debug for Resampler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Resampler")

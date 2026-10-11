@@ -15,6 +15,11 @@
 //! [`TestNet`] plays the game server: it keeps every client's position and
 //! pushes each client a world snapshot at 20 Hz containing the clients it
 //! sees within tracking range.
+//!
+//! Tests need tokio's multi-thread flavor (`#[tokio::test(flavor =
+//! "multi_thread")]`): the engines and the server block on their own
+//! threads, and the test's own runtime must keep serving the clients' event
+//! forwarders while the test body sleeps.
 
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
@@ -364,7 +369,7 @@ impl<'a> ClientBuilder<'a> {
 
     /// Starts the engine and waits until it is registered with the rendezvous.
     pub async fn start(self) -> TestClient {
-        let mut client = self.spawn();
+        let mut client = self.spawn().await;
         client
             .wait_for("registration", |e| {
                 matches!(e, Event::Rendezvous(RendezvousState::Registered { .. }))
@@ -374,8 +379,9 @@ impl<'a> ClientBuilder<'a> {
         client
     }
 
-    /// Starts the engine without waiting for it to register.
-    pub fn spawn(self) -> TestClient {
+    /// Starts the engine without waiting for it to register. Async because
+    /// it puts the client's event forwarder on the caller's runtime.
+    pub async fn spawn(self) -> TestClient {
         let n = self.net.clients_started.fetch_add(1, Ordering::Relaxed);
         let name = self.name.unwrap_or_else(|| format!("player{n}"));
         let uuid = if self.offline {
@@ -513,7 +519,16 @@ impl TestClient {
     }
 
     pub async fn wait_for_peer(&mut self, uuid: Uuid, state: PeerState) -> Result<(), Timeout> {
-        // The event may have been discarded by an earlier wait.
+        let is_it = |e: &Event| matches!(e, Event::Peer { uuid: u, state: s, .. } if (*u, *s) == (uuid, state));
+        // Events already queued come first, so one that has arrived is
+        // consumed now rather than satisfying a later wait after the peer
+        // has moved on. The event may also have been discarded by an earlier
+        // wait, so the peer table is checked next.
+        while let Ok(event) = self.events.try_recv() {
+            if is_it(&event) {
+                return Ok(());
+            }
+        }
         let already = self
             .engine
             .peers()
@@ -522,12 +537,9 @@ impl TestClient {
         if already {
             return Ok(());
         }
-        self.wait_for(
-            &format!("peer {uuid} to become {state:?}"),
-            |e| matches!(e, Event::Peer { uuid: u, state: s, .. } if (*u, *s) == (uuid, state)),
-        )
-        .await
-        .map(|_| ())
+        self.wait_for(&format!("peer {uuid} to become {state:?}"), is_it)
+            .await
+            .map(|_| ())
     }
 
     fn update_player(&self, change: impl FnOnce(&mut Player)) {
@@ -559,6 +571,11 @@ fn answer_joins(
     answering: Arc<AtomicBool>,
 ) -> mpsc::UnboundedReceiver<Event> {
     let (tx, rx) = mpsc::unbounded_channel();
+    debug_assert_eq!(
+        tokio::runtime::Handle::current().runtime_flavor(),
+        tokio::runtime::RuntimeFlavor::MultiThread,
+        "testkit tests need #[tokio::test(flavor = \"multi_thread\")]"
+    );
     // Weak, so dropping the client still shuts the engine down.
     let engine = Arc::downgrade(engine);
     tokio::spawn(async move {

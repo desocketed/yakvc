@@ -88,7 +88,7 @@
 	"yakvc.settings.invites.everyone": "Everyone",
 	"yakvc.settings.invites.friends": "Friends",
 	"yakvc.settings.invites.nobody": "Nobody",
-	"yakvc.settings.invites.tooltip": "Who may invite you to a voice group. Friends are the players listed in friends_only in the config file.",
+	"yakvc.settings.invites.tooltip": "Who may invite you to a voice group. To allow only your friends, set invites = \"friends\" and the friends_only list in the config file.",
 	"yakvc.settings.account": "Account",
 	"yakvc.settings.account.verified": "Your Minecraft account is verified: other players see a badge next to your name.",
 	"yakvc.settings.account.unverified": "You're playing without a verified Minecraft account: voice works on offline-mode servers only, and players who allow only verified players don't hear you.",
