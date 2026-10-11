@@ -3,7 +3,7 @@
 	"id": "yakvc",
 	"version": "${version}",
 	"name": "Yak VC",
-	"description": "Peer-to-peer proximity voice chat for online-mode servers. No server mod required.",
+	"description": "Peer-to-peer proximity voice chat with nothing on the server; offline-mode servers work too, with unverified identities.",
 	"license": "MIT OR Apache-2.0",
 	"icon": "assets/yakvc/icon.png",
 	"contact": {
