@@ -448,7 +448,7 @@ int32_t  yakvc_set_game_device(YakVcEngine *e, const uint8_t *name, size_t len);
 int32_t  yakvc_stats(YakVcEngine *e, uint8_t *buf, size_t cap, size_t *needed);       // JSON snapshot for the debug overlay (ABI 3); retry if needed > cap
 int32_t  yakvc_invite(YakVcEngine *e, const uint8_t target[16]);               // ABI 5
 int32_t  yakvc_accept_invite(YakVcEngine *e, const uint8_t from_uuid[16]);       // joins the group of the last invite from that player
-int32_t  yakvc_join_group(YakVcEngine *e, const uint8_t id_hex64[64]);           // a public group from the list
+int32_t  yakvc_join_group(YakVcEngine *e, const uint8_t *id_hex, size_t len);    // a public group from the list
 int32_t  yakvc_leave_group(YakVcEngine *e);
 int32_t  yakvc_set_group_public(YakVcEngine *e, bool public_);
 int32_t  yakvc_set_group_label(YakVcEngine *e, const uint8_t *label, size_t len);  // empty: none
@@ -457,7 +457,7 @@ size_t   yakvc_last_error(uint8_t *buf, size_t cap);         // message for this
 ```
 
 - **Header:** `cbindgen` generates `crates/yakvc-ffi/include/yakvc.h`, which is checked in. `cargo xtask header --check` fails CI when it is stale, so changes to the ABI show up in review. Java bindings are hand-written (23 functions) rather than generated with `jextract`, which is not part of the JDK.
-- **ABI check:** Java calls `yakvc_abi_version()` before anything else and refuses to continue on a mismatch; `yakvc_create` checks again. The current version is 6.
+- **ABI check:** Java calls `yakvc_abi_version()` before anything else and refuses to continue on a mismatch; `yakvc_create` checks again. The current version is 7.
 - **Argument checks:** every call rejects with `YAKVC_ERR_INVALID_ARGUMENT` rather than guessing: null or misaligned pointers with a non-zero length, invalid UTF-8, non-finite coordinates, unknown input flag bits, game volume outside 0..=1, negative or non-finite peer volume, a group label over 32 characters, and an event buffer too small for even one record (nothing is lost; poll again with a bigger buffer). A group action that can't be done right now (not in a group, no invite from that player, nobody announcing that group) returns `YAKVC_ERR_UNAVAILABLE` (-8).
 - **Memory:** each wrapper call uses a confined `Arena` for strings and small buffers, freed on return. `yakvc_push_world` and `yakvc_poll_events` run every tick, so their handles use `Linker.Option.critical(true)`, and Java passes `MemorySegment.ofArray(...)` heap arrays with no copy. Native code never keeps a pointer after the call returns.
 - **Events** are little-endian TLV records `u16 type | u16 len | payload` written into a reusable buffer: `JoinRequest{id, server_id}`, `RendezvousState{code, value, verified}`, `PeerState{uuid, connecting|direct|relayed|relay_full|failed|gone, verified}` (`verified` is a byte, 1 for a verified ticket; added in ABI version 2), `Talking{uuid, bool}`, `MicLevel{f32}`, `Error{msg}`, and from ABI 5 `Invite{from}` (a group invite we may accept), `GroupNotice{kind, uuid, by}` (joined, left, made public or private, label changed). Records are never split; if the buffer fills, the rest stay queued for the next poll.

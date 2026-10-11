@@ -83,7 +83,7 @@ class NativeBridgeTest {
 			assertUnavailable(() -> bridge.setGroupLabel(engine, "Miners"));
 			YakVcException notHex = assertThrows(YakVcException.class, () -> bridge.joinGroup(engine, "z".repeat(64)));
 			assertEquals(-1, notHex.code());
-			assertThrows(IllegalArgumentException.class, () -> bridge.joinGroup(engine, "00"));
+			assertEquals(-1, assertThrows(YakVcException.class, () -> bridge.joinGroup(engine, "00")).code());
 			bridge.leaveGroup(engine);
 		} finally {
 			bridge.destroy(engine);

@@ -112,7 +112,7 @@ fn every_engine_call_rejects_a_null_engine() {
             yakvc_stats(null, buf.as_mut_ptr(), buf.len(), &mut len),
             yakvc_invite(null, uuid.as_ptr()),
             yakvc_accept_invite(null, uuid.as_ptr()),
-            yakvc_join_group(null, [b'0'; 64].as_ptr()),
+            yakvc_join_group(null, ptr::null(), 0),
             yakvc_leave_group(null),
             yakvc_set_group_public(null, true),
             yakvc_set_group_label(null, ptr::null(), 0),
@@ -397,10 +397,17 @@ fn groups_through_the_c_abi() {
         );
         assert_eq!(last_error(), "not in a group");
         let id = [b'a'; 64];
-        assert_eq!(yakvc_join_group(engine, id.as_ptr()), YAKVC_ERR_UNAVAILABLE);
+        assert_eq!(
+            yakvc_join_group(engine, id.as_ptr(), 64),
+            YAKVC_ERR_UNAVAILABLE
+        );
         let bad = [b'z'; 64];
         assert_eq!(
-            yakvc_join_group(engine, bad.as_ptr()),
+            yakvc_join_group(engine, bad.as_ptr(), 64),
+            YAKVC_ERR_INVALID_ARGUMENT
+        );
+        assert_eq!(
+            yakvc_join_group(engine, id.as_ptr(), 40),
             YAKVC_ERR_INVALID_ARGUMENT
         );
         assert_eq!(yakvc_leave_group(engine), YAKVC_OK);

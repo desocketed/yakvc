@@ -33,7 +33,7 @@ import java.util.UUID;
  */
 public final class NativeBridge {
 	/** Must equal {@code YAKVC_ABI_VERSION} in {@code yakvc.h}. */
-	public static final int ABI_VERSION = 6;
+	public static final int ABI_VERSION = 7;
 
 	public static final int INPUT_PUSH_TO_TALK = 1;
 	public static final int INPUT_MUTED = 1 << 1;
@@ -107,7 +107,7 @@ public final class NativeBridge {
 		acceptInvite = linker.downcallHandle(find(library, "yakvc_accept_invite"),
 				FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
 		joinGroup = linker.downcallHandle(find(library, "yakvc_join_group"),
-				FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+				FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, SIZE_T));
 		leaveGroup = linker.downcallHandle(find(library, "yakvc_leave_group"), FunctionDescriptor.of(JAVA_INT, ADDRESS));
 		setGroupPublic = linker.downcallHandle(find(library, "yakvc_set_group_public"),
 				FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_BOOLEAN));
@@ -252,11 +252,9 @@ public final class NativeBridge {
 
 	/** Joins a public group from {@link #listGroups} by its id, 64 hex characters, leaving any other. */
 	public void joinGroup(MemorySegment engine, String id) {
-		byte[] bytes = id.getBytes(StandardCharsets.US_ASCII);
-		// Native code reads exactly 64 bytes.
-		if (bytes.length != 64) throw new IllegalArgumentException("a group id is 64 hex characters: " + id);
 		try (Arena arena = Arena.ofConfined()) {
-			check((int) invoke(joinGroup, engine, arena.allocateFrom(JAVA_BYTE, bytes)));
+			MemorySegment bytes = utf8(arena, id);
+			check((int) invoke(joinGroup, engine, bytes, bytes.byteSize()));
 		}
 	}
 
