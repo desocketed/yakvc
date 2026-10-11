@@ -269,13 +269,9 @@ fn print_stats(level_db: f32, stats: &StreamStats, devices: &DeviceHealth, json:
 
 /// Runs a direct call until Ctrl-C: dials `dial`, or listens if it is `None`.
 async fn call(config: Config, dial: Option<EndpointAddr>, json: bool) -> anyhow::Result<()> {
-    let data_dir = temp_data_dir();
     // A call is two people: the first peer to connect gets it, and the
     // printed address lets anyone call, so nobody else may listen in.
-    let (engine, mut events) = Engine::builder(config)
-        .data_dir(&data_dir)
-        .max_peers(1)
-        .start()?;
+    let (engine, mut events) = Engine::builder(config).ephemeral().max_peers(1).start()?;
     let name = if dial.is_some() { "caller" } else { "listener" };
     engine.enable_direct_calls(Uuid::new_v4(), name);
     let listening = dial.is_none();
@@ -317,23 +313,19 @@ async fn call(config: Config, dial: Option<EndpointAddr>, json: bool) -> anyhow:
         }
     }
 
-    drop(engine);
-    let _ = std::fs::remove_dir_all(&data_dir);
     Ok(())
 }
 
 async fn net_report(config: Config, json: bool) -> anyhow::Result<()> {
-    let data_dir = temp_data_dir();
     // Silent test audio I/O: a network report should not open the microphone.
     let (engine, _events) = Engine::builder(config)
-        .data_dir(&data_dir)
+        .ephemeral()
         .audio_source(SilenceSource::new())
         .audio_sink(NullSink::new().0)
         .start()?;
     eprintln!("Measuring, this takes a few seconds…");
     let report = engine.net_report().await;
     drop(engine);
-    let _ = std::fs::remove_dir_all(&data_dir);
 
     if json {
         println!("{}", serde_json::to_string_pretty(&report)?);
@@ -422,11 +414,6 @@ fn load_config(path: Option<&Path>) -> anyhow::Result<Config> {
     let toml = std::fs::read_to_string(path)
         .map_err(|err| anyhow::anyhow!("read {}: {err}", path.display()))?;
     Ok(Config::from_toml(&toml)?)
-}
-
-/// A fresh key per run: the CLI has no persistent identity to keep.
-fn temp_data_dir() -> PathBuf {
-    std::env::temp_dir().join(format!("yakvc-cli-{}", std::process::id()))
 }
 
 /// For waiting on events and Ctrl-C. The engine runs its own runtime.
