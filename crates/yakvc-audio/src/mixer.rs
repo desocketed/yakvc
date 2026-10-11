@@ -1,6 +1,6 @@
 use std::f32::consts::FRAC_PI_4;
 
-use crate::{MonoFrame, StereoFrame};
+use crate::{FRAME_SAMPLES, MonoFrame, Reverb, StereoFrame};
 
 /// Samples below this magnitude pass the limiter untouched.
 const LIMITER_THRESHOLD: f32 = 0.9;
@@ -19,22 +19,33 @@ pub struct Spatial {
     ///
     /// [`Muffle`]: crate::Muffle
     pub muffle: f32,
+    /// How much of the source goes to the room's reverb, from 0 (none) to 1.
+    pub reverb: f32,
 }
 
-/// Mixes mono sources into one stereo frame, with master gain and a soft
-/// limiter.
+/// Mixes mono sources into one stereo frame, with the room's reverb, master
+/// gain and a soft limiter.
 #[derive(Debug)]
 pub struct Mixer {
     master_gain: f32,
+    reverb: Reverb,
 }
 
 impl Mixer {
     pub fn new() -> Self {
-        Mixer { master_gain: 1.0 }
+        Mixer {
+            master_gain: 1.0,
+            reverb: Reverb::new(),
+        }
     }
 
     pub fn set_master_gain(&mut self, gain: f32) {
         self.master_gain = gain;
+    }
+
+    /// How long the room's reverb rings, in seconds until it fades by 60 dB.
+    pub fn set_reverb_decay(&mut self, seconds: f32) {
+        self.reverb.set_decay(seconds);
     }
 
     /// Overwrites `out` with the mix of `sources`.
@@ -43,14 +54,19 @@ impl Mixer {
         sources: impl IntoIterator<Item = (&'a MonoFrame, Spatial)>,
         out: &mut StereoFrame,
     ) {
-        *out = [[0.0; 2]; crate::FRAME_SAMPLES];
+        *out = [[0.0; 2]; FRAME_SAMPLES];
+        let mut sends: MonoFrame = [0.0; FRAME_SAMPLES];
         for (frame, spatial) in sources {
             let [left, right] = pan_gains(spatial);
-            for (sample, mixed) in frame.iter().zip(out.iter_mut()) {
+            let send = spatial.gain * spatial.reverb.clamp(0.0, 1.0);
+            for ((sample, mixed), sent) in frame.iter().zip(out.iter_mut()).zip(&mut sends) {
                 mixed[0] += sample * left;
                 mixed[1] += sample * right;
+                *sent += sample * send;
             }
         }
+        // Every frame, even with nobody talking, so tails ring out.
+        self.reverb.process(&sends, out);
         for sample in out.iter_mut().flatten() {
             *sample = soft_limit(*sample * self.master_gain);
         }
@@ -114,6 +130,7 @@ mod tests {
                     gain: 1.0,
                     pan: 0.0,
                     muffle: 0.0,
+                    reverb: 0.0,
                 },
             )],
             1.0,
@@ -132,6 +149,7 @@ mod tests {
                     gain: 1.0,
                     pan: -1.0,
                     muffle: 0.0,
+                    reverb: 0.0,
                 },
             )],
             1.0,
@@ -145,6 +163,7 @@ mod tests {
                     gain: 1.0,
                     pan: 1.0,
                     muffle: 0.0,
+                    reverb: 0.0,
                 },
             )],
             1.0,
@@ -162,6 +181,7 @@ mod tests {
                     gain: 0.5,
                     pan: -1.0,
                     muffle: 0.0,
+                    reverb: 0.0,
                 },
             ),
             (
@@ -170,6 +190,7 @@ mod tests {
                     gain: 1.0,
                     pan: -1.0,
                     muffle: 0.0,
+                    reverb: 0.0,
                 },
             ),
         ];
@@ -187,6 +208,7 @@ mod tests {
                 gain: 1.0,
                 pan: -1.0,
                 muffle: 0.0,
+                reverb: 0.0,
             },
         ); 8];
         let out = mix(&sources, 1.0);
@@ -199,6 +221,7 @@ mod tests {
                     gain: 1.0,
                     pan: 1.0,
                     muffle: 0.0,
+                    reverb: 0.0,
                 },
             )],
             1.0,

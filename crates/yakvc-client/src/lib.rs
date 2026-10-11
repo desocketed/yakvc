@@ -27,4 +27,4 @@ pub use crate::config::{
 pub use crate::engine::{Engine, EngineBuilder, NetReport, PeerAudio, PeerInfo, StartError};
 pub use crate::event::{Event, Events, GroupNoticeKind, JoinId, PeerState, RendezvousState};
 pub use crate::voice::{AudioStats, GroupError, GroupInfo};
-pub use crate::world::{Input, Player, Pose, Vec3, World};
+pub use crate::world::{Input, Player, Pose, Room, Vec3, World};

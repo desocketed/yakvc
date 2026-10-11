@@ -800,6 +800,7 @@ mod tests {
                     uuid(other),
                     Vec3::new(them, 64.0, 0.0),
                 )],
+                ..Default::default()
             });
         }
 

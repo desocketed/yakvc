@@ -23,6 +23,18 @@ pub struct World {
     pub listener: Pose,
     /// Players with a tracked entity, spectators already removed.
     pub players: Vec<Player>,
+    /// The listener's surroundings, which set the reverb.
+    pub room: Room,
+}
+
+/// How the space around the listener rings, as the game estimates it.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Room {
+    /// How much of each positional voice goes to the reverb: 0 in open air,
+    /// up to 1 shut in.
+    pub reverb: f32,
+    /// Seconds until the reverb fades by 60 dB: longer in bigger spaces.
+    pub decay: f32,
 }
 
 /// Another player as the listener hears them.
@@ -95,7 +107,15 @@ pub(crate) fn interpolate(from: &World, to: &World, t: f64) -> World {
             },
         )
         .collect();
-    World { listener, players }
+    let room = Room {
+        reverb: lerp(f64::from(from.room.reverb), f64::from(to.room.reverb)) as f32,
+        decay: lerp(f64::from(from.room.decay), f64::from(to.room.decay)) as f32,
+    };
+    World {
+        listener,
+        players,
+        room,
+    }
 }
 
 #[cfg(test)]
@@ -113,6 +133,7 @@ mod tests {
                 Uuid::from_u128(1),
                 Vec3::new(player_x, 64.0, 0.0),
             )],
+            ..Default::default()
         }
     }
 
