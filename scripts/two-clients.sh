@@ -51,7 +51,7 @@ mc_port=$((30000 + RANDOM % 10000))
 step() { printf '\n==> %s\n' "$*"; }
 
 step "build xtask and the mod's launch arguments"
-cargo build --quiet -p xtask
+cargo build --quiet --locked -p xtask
 (cd mod && ./gradlew writeDevLaunchArgs --console=plain --quiet)
 mapfile -t server_args < mod/build/devlaunch/server.args
 mapfile -t client_args < mod/build/devlaunch/client.args

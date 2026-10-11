@@ -197,7 +197,7 @@ def prebuiltServer = providers.gradleProperty('yakvc.prebuiltServer')
 def cargoServer = tasks.register('cargoServer', Exec) {
 	description = 'Builds yakvc-server for the client gametest.'
 	workingDir = rootDir.parentFile
-	commandLine 'cargo', 'build', '--quiet', '-p', 'yakvc-server'
+	commandLine 'cargo', 'build', '--quiet', '--locked', '-p', 'yakvc-server'
 	// Cargo does its own up-to-date checking.
 	outputs.upToDateWhen { false }
 }

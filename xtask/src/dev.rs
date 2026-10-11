@@ -6,7 +6,7 @@ use std::process::Command;
 
 use anyhow::{Context, Result, ensure};
 
-use crate::root;
+use crate::{cargo, root};
 
 /// Builds yakvc-server, creates keys in `dir` (kept across runs, so the
 /// printed client config stays valid), writes `dir/client.toml` and runs the
@@ -17,10 +17,7 @@ pub fn dev(port: u16, dir: Option<PathBuf>, write_client_config: bool) -> Result
     fs::create_dir_all(&dir)?;
     let dir = dir.canonicalize()?;
 
-    let status = Command::new("cargo")
-        .args(["build", "--quiet", "-p", "yakvc-server"])
-        .current_dir(&root)
-        .status()?;
+    let status = cargo(&["build", "--quiet", "-p", "yakvc-server"]).status()?;
     ensure!(status.success(), "building yakvc-server failed");
     let server = root
         .join("target/debug/yakvc-server")

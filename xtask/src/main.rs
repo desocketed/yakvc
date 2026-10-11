@@ -143,8 +143,7 @@ fn natives(target: &str, out: &Path) -> Result<()> {
 /// the host) and returns the library's path. Linux targets are built with
 /// cargo-zigbuild, so the library runs on any glibc since 2.17.
 fn build_ffi(target: Option<&str>) -> Result<PathBuf> {
-    let mut cmd = cargo();
-    cmd.args(["build", "--profile", "dist", "--package", "yakvc-ffi"]);
+    let mut cmd = cargo(&["build", "--profile", "dist", "--package", "yakvc-ffi"]);
     let mut built = root().join("target");
     let os = match target {
         None => env::consts::OS,
@@ -155,9 +154,8 @@ fn build_ffi(target: Option<&str>) -> Result<PathBuf> {
                 // which refuses cross builds unless allowed. Its search path
                 // comes from PKG_CONFIG_PATH_<triple> (see flake.nix and the
                 // CI workflow).
-                cmd = cargo();
-                cmd.args(["zigbuild", "--profile", "dist", "--package", "yakvc-ffi"])
-                    .arg(format!("--target={triple}.{GLIBC}"))
+                cmd = cargo(&["zigbuild", "--profile", "dist", "--package", "yakvc-ffi"]);
+                cmd.arg(format!("--target={triple}.{GLIBC}"))
                     .env("PKG_CONFIG_ALLOW_CROSS", "1");
             } else {
                 cmd.arg(format!("--target={triple}"));
@@ -203,9 +201,12 @@ fn parse_triple(triple: &str) -> Result<(&'static str, &'static str)> {
     Ok((os, arch))
 }
 
-fn cargo() -> Command {
+/// `cargo <args> --locked` on the workspace. Locked, so a Cargo.toml that no
+/// longer matches Cargo.lock fails instead of quietly re-resolving and
+/// shipping a dependency graph the lock never recorded.
+fn cargo(args: &[&str]) -> Command {
     let mut cmd = Command::new(env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
-    cmd.current_dir(root());
+    cmd.current_dir(root()).args(args).arg("--locked");
     cmd
 }
 
@@ -303,9 +304,10 @@ fn dist(from: Option<&Path>) -> Result<()> {
 /// `yakvc-server:<version>` and `yakvc-server:latest`.
 fn server_image() -> Result<()> {
     let triple = "x86_64-unknown-linux-musl";
-    run(cargo()
-        .args(["zigbuild", "--release", "--package", "yakvc-server"])
-        .arg(format!("--target={triple}")))?;
+    run(
+        cargo(&["zigbuild", "--release", "--package", "yakvc-server"])
+            .arg(format!("--target={triple}")),
+    )?;
 
     let context = root().join("target/server-image");
     if context.exists() {
@@ -332,8 +334,8 @@ fn server_image() -> Result<()> {
 /// Apache and BSD licences (libopus's among them) require to ship with it.
 fn third_party_licenses(package: &str, out: &Path) -> Result<()> {
     fs::create_dir_all(out.parent().unwrap())?;
-    run(cargo()
-        .args(["about", "generate", "--fail", "--config", "about.toml"])
+    run(cargo(&["about", "generate"])
+        .args(["--fail", "--config", "about.toml"])
         .arg("--manifest-path")
         .arg(format!("crates/{package}/Cargo.toml"))
         .arg("--output-file")

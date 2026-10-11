@@ -20,22 +20,22 @@ step() { printf '\n==> %s\n' "$*"; }
 step "rust: fmt"
 cargo fmt --all --check
 step "rust: clippy"
-cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 step "rust: clippy on the client crates as they ship (no sim feature)"
-cargo clippy -p yakvc-client -p yakvc-ffi -p yakvc-cli --all-targets -- -D warnings
+cargo clippy -p yakvc-client -p yakvc-ffi -p yakvc-cli --all-targets --locked -- -D warnings
 step "rust: header"
 cargo xtask header --check
 step "rust: test"
-cargo test --workspace --all-features
+cargo test --workspace --all-features --locked
 step "rust: server has no audio dependencies"
 # cargo tree on its own line: inside the `if` its failure would pass.
-deps=$(cargo tree -p yakvc-server -e normal --prefix none)
+deps=$(cargo tree --locked -p yakvc-server -e normal --prefix none)
 if grep -E '^(yakvc-audio|yakvc-client|cpal|opus|audiopus|alsa)' <<<"$deps"; then
 	echo "yakvc-server must not depend on audio crates" >&2
 	exit 1
 fi
 step "deny"
-cargo deny check
+cargo deny --locked check
 
 if [ "${1:-}" = --fast ]; then
 	step "skipped the release builds, mod build and gametest (--fast)"
