@@ -194,6 +194,10 @@ struct Inner {
     /// Our ticket from the rendezvous, sent in every peer hello.
     own_ticket: watch::Sender<Option<SignedTicket>>,
     trust: Mutex<Trust>,
+    /// Lock order: a `tab_list` borrow is never held while taking `peers`.
+    /// A watch borrow is a read lock, and a waiting `set_tab_list` blocks
+    /// new readers, so borrowing under `peers` could deadlock against a
+    /// borrow held while waiting for `peers`. Clone the tab list first.
     peers: Mutex<HashMap<EndpointId, PeerEntry>>,
     banned: Bans,
     joins: Mutex<Joins>,
@@ -366,12 +370,20 @@ impl Net {
             trust.verifier = verifier;
             trust.verified_only = verified_only;
         }
-        let peers = self.inner.peers.lock().unwrap();
-        for (&remote, entry) in peers.iter() {
-            let (Some(conn), Some(ticket)) = (entry.open_conn(), &entry.ticket) else {
-                continue;
-            };
-            if let Err(code) = self.inner.verify_peer(ticket, remote) {
+        // Verifying borrows the tab list, which is never done under the
+        // peers lock (see `Inner::peers`), so collect the links first.
+        let links: Vec<(Connection, SignedTicket, EndpointId)> = {
+            let peers = self.inner.peers.lock().unwrap();
+            peers
+                .iter()
+                .filter_map(|(&remote, entry)| {
+                    let (conn, ticket) = (entry.open_conn()?, entry.ticket.as_ref()?);
+                    Some((conn.clone(), ticket.clone(), remote))
+                })
+                .collect()
+        };
+        for (conn, ticket, remote) in &links {
+            if let Err(code) = self.inner.verify_peer(ticket, *remote) {
                 close(conn, code);
             }
         }
@@ -593,7 +605,7 @@ impl Inner {
     /// Peers we can see, best first (see [`Rank`]).
     fn ranked(&self) -> Vec<EndpointId> {
         let direct_calls = self.trust.lock().unwrap().direct_calls;
-        let visible = self.tab_list.borrow();
+        let visible = self.tab_list.borrow().clone();
         let now = tokio::time::Instant::now();
         let peers = self.peers.lock().unwrap();
         let ranks = peers
