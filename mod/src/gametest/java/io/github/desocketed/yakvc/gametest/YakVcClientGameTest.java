@@ -7,6 +7,7 @@ import com.terraformersmc.modmenu.gui.widget.entries.ModListEntry;
 import io.github.desocketed.yakvc.GameStateFeeder;
 import io.github.desocketed.yakvc.Occlusion;
 import io.github.desocketed.yakvc.Room;
+import io.github.desocketed.yakvc.SoundPath;
 import io.github.desocketed.yakvc.YakVcClient;
 import io.github.desocketed.yakvc.config.ClientConfig;
 import io.github.desocketed.yakvc.config.PlayerVolumes;
@@ -183,6 +184,7 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 
 			checkOcclusion(context, singleplayer);
 			checkRoom(context, singleplayer);
+			checkSoundPath(context, singleplayer);
 
 			if (context.computeOnClient(mc -> feeder.errorEvents() != 0 || feeder.closed())) {
 				throw new AssertionError("engine reported errors; see the log");
@@ -231,6 +233,43 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		singleplayer.getServer().runCommand("fill 10 -61 10 30 -61 30 grass_block");
 		if (!(open.reverb() < 0.1f && small.reverb() > 0.5f && hall.reverb() > 0.5f && hall.decay() > small.decay())) {
 			throw new AssertionError("rooms: open " + open + ", small " + small + ", hall " + hall);
+		}
+	}
+
+	/**
+	 * A voice behind a thick wall comes round its open end, from that side and less muffled than through it; shut in
+	 * with no way round, it comes straight through.
+	 */
+	private static void checkSoundPath(ClientGameTestContext context, TestSingleplayerContext singleplayer) {
+		Vec3 listener = new Vec3(40.5, -58.5, 40.5);
+		Vec3 speaker = new Vec3(40.5, -58.5, 48.5);
+		// Too tall to go over within the search box, and the way round is short only past x 44.
+		singleplayer.getServer().runCommand("fill 26 -60 43 44 -45 45 stone");
+		context.waitTicks(3);
+		SoundPath around = context.computeOnClient(mc -> SoundPath.between(mc.level, listener, speaker));
+		if (!(around.occlusion() > 0.4f && around.occlusion() < 0.875f && around.heardFrom().x > 41)) {
+			throw new AssertionError("round the wall: " + around);
+		}
+		// Wall the end off and cut a doorway beside the players: a closed door is no way round, an open one is.
+		singleplayer.getServer().runCommand("fill 45 -60 43 47 -45 45 stone");
+		singleplayer.getServer().runCommand("fill 41 -59 43 41 -58 45 air");
+		singleplayer.getServer().runCommand("setblock 41 -59 44 oak_door[facing=north,half=lower]");
+		singleplayer.getServer().runCommand("setblock 41 -58 44 oak_door[facing=north,half=upper]");
+		context.waitTicks(3);
+		SoundPath closed = context.computeOnClient(mc -> SoundPath.between(mc.level, listener, speaker));
+		singleplayer.getServer().runCommand("setblock 41 -59 44 oak_door[facing=north,half=lower,open=true]");
+		singleplayer.getServer().runCommand("setblock 41 -58 44 oak_door[facing=north,half=upper,open=true]");
+		context.waitTicks(3);
+		SoundPath open = context.computeOnClient(mc -> SoundPath.between(mc.level, listener, speaker));
+		if (!(closed.heardFrom().equals(speaker) && open.occlusion() < 0.6f && open.heardFrom().x > 40.5)) {
+			throw new AssertionError("doors: closed " + closed + ", open " + open);
+		}
+		singleplayer.getServer().runCommand("fill 20 -60 43 60 -45 45 stone");
+		context.waitTicks(3);
+		SoundPath through = context.computeOnClient(mc -> SoundPath.between(mc.level, listener, speaker));
+		singleplayer.getServer().runCommand("fill 20 -60 43 60 -45 45 air");
+		if (!(through.occlusion() > 0.85f && through.heardFrom().equals(speaker))) {
+			throw new AssertionError("through the wall: " + through);
 		}
 	}
 

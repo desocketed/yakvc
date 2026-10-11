@@ -43,9 +43,13 @@ pub struct Player {
     pub uuid: Uuid,
     /// Eye position.
     pub pos: Vec3,
-    /// How much of the direct path from them to the listener is blocked,
-    /// from 0 (open air) to 1 (fully blocked), as the game estimates it.
+    /// How much the sound reaching the listener is blocked, from 0 (open
+    /// air) to 1 (fully blocked), as the game estimates it.
     pub occlusion: f32,
+    /// Where their voice seems to come from: their eyes, or, when walls are
+    /// in the way, a point in the direction of the opening the sound comes
+    /// through, as far away as the path it takes.
+    pub heard_from: Vec3,
 }
 
 /// Local input state.
@@ -65,6 +69,7 @@ impl Player {
             uuid,
             pos,
             occlusion: 0.0,
+            heard_from: pos,
         }
     }
 }
@@ -100,6 +105,7 @@ pub(crate) fn interpolate(from: &World, to: &World, t: f64) -> World {
             |&to| match from.players.iter().find(|p| p.uuid == to.uuid) {
                 Some(before) => Player {
                     pos: lerp_pos(before.pos, to.pos),
+                    heard_from: lerp_pos(before.heard_from, to.heard_from),
                     occlusion: lerp(f64::from(before.occlusion), f64::from(to.occlusion)) as f32,
                     ..to
                 },

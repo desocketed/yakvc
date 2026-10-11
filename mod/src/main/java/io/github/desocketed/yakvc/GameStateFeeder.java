@@ -26,6 +26,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -37,6 +38,7 @@ import net.minecraft.client.player.AbstractClientPlayer;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.network.chat.Component;
 import net.minecraft.sounds.SoundSource;
+import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.phys.Vec3;
 import org.jspecify.annotations.Nullable;
@@ -88,6 +90,9 @@ public final class GameStateFeeder {
 	private boolean worldEmpty = true;
 	/** The listener's surroundings, smoothed from tick to tick. */
 	private Room room = Room.OPEN_AIR;
+	/** Each occluded player's way around, if any: see {@link #heard}. */
+	private final Map<UUID, Optional<SoundPath>> detours = new HashMap<>();
+	private static final int DETOUR_TICKS = 10;
 	/** The engine starts with no input flags set. */
 	private int inputFlags = 0;
 	private float gameVolume = -1;
@@ -400,7 +405,26 @@ public final class GameStateFeeder {
 		tracked = List.of();
 		worldEmpty = true;
 		room = Room.OPEN_AIR;
+		detours.clear();
 		bridge.pushWorld(engine, new double[7], new byte[0], new double[0]);
+	}
+
+	/**
+	 * How {@code other}'s voice reaches the listener. Straight through is checked every tick; the search for a way
+	 * around costs more, so each player's runs every {@link #DETOUR_TICKS} ticks, staggered, and is reused between.
+	 */
+	private SoundPath heard(BlockGetter level, Vec3 eye, AbstractClientPlayer other) {
+		Vec3 pos = other.getEyePosition();
+		float direct = Occlusion.between(level, eye, pos);
+		if (direct < SoundPath.CLEAR) {
+			detours.remove(other.getUUID());
+			return new SoundPath(pos, direct);
+		}
+		if (!detours.containsKey(other.getUUID()) || (other.tickCount + other.getId()) % DETOUR_TICKS == 0) {
+			detours.put(other.getUUID(), Optional.ofNullable(SoundPath.around(level, eye, pos)));
+		}
+		return detours.get(other.getUUID()).filter(around -> around.occlusion() < direct)
+				.orElse(new SoundPath(pos, direct));
 	}
 
 	/**
@@ -425,12 +449,15 @@ public final class GameStateFeeder {
 			if (blocked.contains(other.getUUID())) continue;
 			Vec3 pos = other.getEyePosition();
 			uuids.add(other.getUUID());
-			players.add(new double[] {pos.x, pos.y, pos.z, Occlusion.between(minecraft.level, eye, pos)});
+			SoundPath heard = heard(minecraft.level, eye, other);
+			players.add(new double[] {pos.x, pos.y, pos.z, heard.occlusion(), heard.heardFrom().x,
+					heard.heardFrom().y, heard.heardFrom().z});
 		}
-		double[] flat = new double[4 * players.size()];
+		double[] flat = new double[7 * players.size()];
 		for (int i = 0; i < players.size(); i++) {
-			System.arraycopy(players.get(i), 0, flat, 4 * i, 4);
+			System.arraycopy(players.get(i), 0, flat, 7 * i, 7);
 		}
+		detours.keySet().retainAll(uuids);
 		tracked = uuids;
 		worldEmpty = false;
 		bridge.pushWorld(engine, listener, NativeBridge.uuidBytes(uuids), flat);
