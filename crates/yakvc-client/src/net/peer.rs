@@ -308,7 +308,7 @@ async fn serve(inner: Arc<Inner>, conn: Connection, dialed: bool, hello: Hello) 
 /// Opens each agreed protocol's control stream, hands the protocol its
 /// [`PeerLink`], and routes datagrams to it. Everything runs in the returned
 /// tasks.
-async fn start_protocols(
+pub(super) async fn start_protocols(
     conn: &Connection,
     dialed: bool,
     agreed: &[(Arc<dyn Protocol>, u16)],

@@ -38,12 +38,12 @@ if [[ "${YAKVC_ACCEPT_MINECRAFT_EULA:-}" != 1 ]]; then
 	exit 2
 fi
 
+cd "$(dirname "$0")/.."
 if [[ -z "${YAKVC_TWO_CLIENTS_INNER:-}" ]]; then
 	export YAKVC_TWO_CLIENTS_INNER=1
-	exec nix shell nixpkgs#xorg-server --command nix develop --command "$0" "$@"
+	exec nix shell --inputs-from . nixpkgs#xorg-server --command nix develop --command scripts/two-clients.sh "$@"
 fi
 
-cd "$(dirname "$0")/.."
 root=$PWD
 work=$root/mod/build/two-clients
 step() { printf '\n==> %s\n' "$*"; }

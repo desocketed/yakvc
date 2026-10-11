@@ -3,8 +3,15 @@
 # starts an Xvfb display, exported as DISPLAY and killed on exit. Minecraft
 # 26.3 finds no sRGB GLX config on Xvfb and falls back to Vulkan, which Mesa's
 # lavapipe provides.
+#
+# `nixpkgs` is the flake's locked input (--inputs-from), not the registry's
+# channel, so the renderers (and the guide screenshots they produce) don't
+# drift between runs.
 
-store() { nix build --no-link --print-out-paths "$@"; }
+store() {
+	nix build --no-link --print-out-paths \
+		--inputs-from "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" "$@"
+}
 mesa=$(store nixpkgs#mesa | head -1)
 libs=$(store nixpkgs#libglvnd nixpkgs#vulkan-loader nixpkgs#xorg.libX11 nixpkgs#xorg.libXext \
 	nixpkgs#xorg.libXcursor nixpkgs#xorg.libXrandr nixpkgs#xorg.libXxf86vm nixpkgs#xorg.libXi \

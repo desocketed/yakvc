@@ -22,6 +22,7 @@ use yakvc_audio::{
     InputProcessor, JitterConfig, Microphone, Mixer, MonoFrame, Packet, Pulled, ReceiveStream,
     Speakers, StereoFrame, StreamStats, level_db,
 };
+use yakvc_proto::peer::CloseCode;
 use yakvc_proto::voice::{VERSION, VoiceHeader, VoiceMsg};
 use yakvc_proto::{GroupAnnounce, GroupId, ProtocolId, Uuid};
 
@@ -139,23 +140,13 @@ impl Voice {
     /// Starts the audio thread.
     pub(crate) fn start(config: &Config, io: AudioIo, events: EventSender) -> Voice {
         let (to_audio, from_net) = std_mpsc::sync_channel(AUDIO_QUEUE);
-        let mut state = VoiceState::new(
-            config.audio.clone(),
-            config.voice_range,
-            config.friends_only.clone(),
-        );
-        state.invites_from = config.invites;
-        let shared = Arc::new(Shared {
-            state: Mutex::new(state),
-            peers: Mutex::new(HashMap::new()),
-            to_audio: Mutex::new(to_audio),
-            receive_policy: watch::Sender::new(()),
-            stats: Mutex::new(HashMap::new()),
-            audio_stats: Mutex::new(AudioStats::default()),
+        let shared = Arc::new(Shared::new(
+            config,
+            to_audio,
             events,
             #[cfg(feature = "sim")]
-            impairment: io.impairment.clone(),
-        });
+            io.impairment.clone(),
+        ));
         let stop = Arc::new(AtomicBool::new(false));
         let audio_thread = std::thread::Builder::new()
             .name("yakvc-audio".into())
@@ -300,6 +291,31 @@ impl Drop for Voice {
 }
 
 impl Shared {
+    fn new(
+        config: &Config,
+        to_audio: std_mpsc::SyncSender<Frame>,
+        events: EventSender,
+        #[cfg(feature = "sim")] impairment: Option<crate::sim::Impairment>,
+    ) -> Shared {
+        let mut state = VoiceState::new(
+            config.audio.clone(),
+            config.voice_range,
+            config.friends_only.clone(),
+        );
+        state.invites_from = config.invites;
+        Shared {
+            state: Mutex::new(state),
+            peers: Mutex::new(HashMap::new()),
+            to_audio: Mutex::new(to_audio),
+            receive_policy: watch::Sender::new(()),
+            stats: Mutex::new(HashMap::new()),
+            audio_stats: Mutex::new(AudioStats::default()),
+            events,
+            #[cfg(feature = "sim")]
+            impairment,
+        }
+    }
+
     fn send_to_audio(&self, frame: Frame) {
         // Fails when the queue is full (see `AUDIO_QUEUE`) or the audio
         // thread has stopped; a lost frame is concealed like any other.
@@ -314,6 +330,22 @@ impl Shared {
             .get(&uuid)
             .and_then(|links| links.first())
             .is_some_and(|p| p.peer.link_id() == link_id)
+    }
+
+    /// Stores what the peer announced over `link_id`. Kept for an older
+    /// link too, for when it takes over, but only the current link's counts.
+    /// Returns whether it differs from what the link announced before, so
+    /// a repeated announcement costs no group refresh.
+    fn set_announcement(&self, uuid: Uuid, link_id: usize, group: Option<GroupAnnounce>) -> bool {
+        let mut peers = self.peers.lock().unwrap();
+        let mut links = peers.get_mut(&uuid).into_iter().flatten();
+        match links.find(|p| p.peer.link_id() == link_id) {
+            Some(peer) if peer.group != group => {
+                peer.group = group;
+                true
+            }
+            _ => false,
+        }
     }
 
     /// What each player's current link last announced.
@@ -391,7 +423,7 @@ async fn serve_peer(shared: Arc<Shared>, link: PeerLink) {
     let link_id = peer.link_id();
     let wants_audio = Arc::new(AtomicBool::new(true));
     let newest = VoicePeer {
-        peer,
+        peer: peer.clone(),
         wants_audio: wants_audio.clone(),
         group: None,
     };
@@ -404,8 +436,7 @@ async fn serve_peer(shared: Arc<Shared>, link: PeerLink) {
         .insert(0, newest);
     let reader = tokio::spawn(read_control(
         shared.clone(),
-        uuid,
-        link_id,
+        peer,
         control_recv,
         wants_audio,
     ));
@@ -466,26 +497,27 @@ async fn serve_peer(shared: Arc<Shared>, link: PeerLink) {
 
 async fn read_control(
     shared: Arc<Shared>,
-    uuid: Uuid,
-    link_id: usize,
+    peer: Peer,
     mut control: ControlRecv,
     wants_audio: Arc<AtomicBool>,
 ) {
+    let uuid = peer.uuid();
+    let link_id = peer.link_id();
     while let Some(msg) = control.recv::<VoiceMsg>().await {
+        // An oversize label is as malformed as a message that won't decode,
+        // and a peer sending one is off the protocol.
+        if !group::labels_fit(&msg) {
+            peer.close(CloseCode::ProtocolError);
+            break;
+        }
         match msg {
             VoiceMsg::ReceiveState { wants_audio: wants } => {
                 wants_audio.store(wants, Ordering::Relaxed);
             }
             VoiceMsg::Group(group) => {
-                // Kept for an older link too, for when it takes over, but
-                // only the current link's counts.
-                let mut peers = shared.peers.lock().unwrap();
-                let mut links = peers.get_mut(&uuid).into_iter().flatten();
-                if let Some(peer) = links.find(|p| p.peer.link_id() == link_id) {
-                    peer.group = group;
+                if shared.set_announcement(uuid, link_id, group) {
+                    shared.refresh_group_mates();
                 }
-                drop(peers);
-                shared.refresh_group_mates();
             }
             // The rest speak for the player only over its current link.
             _ if !shared.is_current(uuid, link_id) => {}
@@ -980,7 +1012,80 @@ impl std::fmt::Debug for AudioIo {
 
 #[cfg(test)]
 mod tests {
+    use iroh::endpoint::{ConnectionError, VarInt};
+    use yakvc_proto::{GroupKey, PublicGroup};
+
     use super::*;
+    use crate::net::test_util::{Served, eventually, probe, serve_protocols, uuid};
+
+    /// The voice protocol as `uuid(1)`, without an audio thread, linked to
+    /// a test probe standing in for `uuid(2)`'s voice protocol.
+    async fn linked_to_probe() -> (Arc<Shared>, PeerLink, Served) {
+        let (events, _rx) = crate::event::channel();
+        let (to_audio, _from_net) = std_mpsc::sync_channel(AUDIO_QUEUE);
+        let shared = Arc::new(Shared::new(
+            &Config::default(),
+            to_audio,
+            events,
+            #[cfg(feature = "sim")]
+            None,
+        ));
+        shared.state.lock().unwrap().own_uuid = Some(uuid(1));
+        let voice: Arc<dyn Protocol> = Arc::new(VoiceProtocol(shared.clone()));
+        let (probe, mut links) = probe(ProtocolId::VOICE.0, VERSION);
+        let served = serve_protocols(voice, probe).await;
+        let link = links.recv().await.unwrap();
+        (shared, link, served)
+    }
+
+    fn announcement(label: &str) -> GroupAnnounce {
+        let key = GroupKey::random();
+        GroupAnnounce {
+            proof: key.proof(uuid(2)),
+            public: Some(PublicGroup {
+                key,
+                label: label.into(),
+            }),
+        }
+    }
+
+    #[tokio::test]
+    async fn an_oversize_label_closes_the_link_as_a_protocol_error() {
+        let (shared, mut bob, served) = linked_to_probe().await;
+        let oversize = announcement(&"x".repeat(33));
+        bob.control_send
+            .send(&VoiceMsg::Group(Some(oversize)))
+            .await
+            .unwrap();
+        let reason = served.conn_b.closed().await;
+        assert!(
+            matches!(&reason, ConnectionError::ApplicationClosed(close)
+                if close.error_code == VarInt::from_u32(CloseCode::ProtocolError as u32)),
+            "{reason:?}"
+        );
+        assert!(shared.announced().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_repeated_announcement_changes_nothing() {
+        let (shared, mut bob, _served) = linked_to_probe().await;
+        let group = announcement("Miners");
+        bob.control_send
+            .send(&VoiceMsg::Group(Some(group.clone())))
+            .await
+            .unwrap();
+        eventually("alice stores the announcement", || {
+            shared.announced() == [(uuid(2), group.clone())]
+        })
+        .await;
+        // Each end numbers its own connection, so ask alice's side.
+        let link_id = shared.peers.lock().unwrap()[&uuid(2)][0].peer.link_id();
+        assert!(!shared.set_announcement(uuid(2), link_id, Some(group.clone())));
+        assert!(shared.set_announcement(uuid(2), link_id, None));
+        assert!(shared.announced().is_empty());
+        // An unknown link stores nothing.
+        assert!(!shared.set_announcement(uuid(2), link_id + 1, Some(group)));
+    }
 
     fn missing(choice: &DeviceChoice) -> Result<&'static str, AudioError> {
         Err(AudioError::NoDevice(format!("{choice:?}")))
