@@ -15,7 +15,7 @@ Yak VC is a client-only Fabric mod that gives players on any vanilla server, onl
 | Bridge | Java's FFM API over a C ABI; no JNI |
 | License | `MIT OR Apache-2.0` for the mod, crates and server (see licensing) |
 | Distribution | Mod jar on Modrinth (slugs `yakvc` and `yak-vc` were free on 2026-10-03) and CurseForge; server image on GHCR; nothing on crates.io |
-| Hosting | One maintainer-run VPS in US East for the default rendezvous and relay, `relay.yak.dsktd.net`: a Linode running NixOS with the `services.yakvc-server` module. `deploy/README.md` documents Docker and bare-binary setups for self-hosters |
+| Hosting | One maintainer-run VPS in US East for the default rendezvous and relay, `relay.yak.dsktd.net`: a Linode running NixOS with the `services.yakvc-server` module, switched to each release by the CI `deploy` job. `deploy/README.md` documents Docker and bare-binary setups for self-hosters |
 | Platforms | Mod: every platform Minecraft Java runs on (Windows, macOS, Linux). `yakvc-server`: Linux only, permanently, so it may rely on Linux-specific features (see deployment) |
 
 **Goals**
@@ -370,6 +370,7 @@ Players in a group hear each other at any distance, and only each other: a membe
 - Clients ship with the default server's EndpointId and relay URL. Self-hosters change two config values and add their issuer key to `trusted_issuers`. The client verifies its own ticket from the rendezvous against that list too, so a missing issuer fails at registration. The built-in server is the production one, `relay.yak.dsktd.net` (`yakvc_client::config::built_in_rendezvous`). Clients know it only by EndpointId and relay URL, with no IP address: they reach the rendezvous through its relay, by DNS, and Iroh finds the direct path from there. So the server can move to a new machine with a DNS change, as long as it keeps its two key files. It applies when `client.toml` has no `[rendezvous]` table and `dev_mode` is off; its issuer is added to `trusted_issuers`.
 - Key files hold the 32 raw secret-key bytes. `run` creates missing key files on first start (and says so on stderr, since clients are configured with their ids), and `keygen` writes one ahead of time for scripts; both use mode 0600 and never overwrite an existing file. `run` stops cleanly on SIGTERM.
 - Single instance in v1. If needed later, add regions or shards that share the issuer key, with a shared pub/sub for cross-instance matches.
+- The production host is a NixOS flake kept outside this repository, which imports the module from `flake.nix`. The box is too small to compile the server, so a deploy builds the system elsewhere and pushes it with `nixos-rebuild switch --target-host`: the CI `deploy` job does that after each release, or on a manual run with "Deploy the relay" ticked, with the `yakvc` input overridden to the commit being shipped. Where the flake lives, the login and the host keys are repository secrets (`RELAY_FLAKE`, `RELAY_TARGET`, `RELAY_DEPLOY_KEY`, `RELAY_KNOWN_HOSTS`). The keys in `/var/lib/yakvc` are the only state and survive every deploy.
 
 ## yakvc-cli
 

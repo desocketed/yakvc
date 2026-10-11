@@ -13,6 +13,11 @@ on:
   # when `changes` finds only docs and the build is skipped.
   pull_request:
   workflow_dispatch:
+    inputs:
+      deploy_relay:
+        description: Deploy the relay
+        type: boolean
+        default: false
 
 # Actions from outside GitHub's own `actions/` are pinned to a commit, since
 # a tag can be moved to other code; the comment names the release it was.
@@ -406,3 +411,43 @@ jobs:
           game-versions: "26.3"
           java: "25"
           dependencies: fabric-api(required)
+
+  # Puts the release on the production relay. The host's NixOS flake lives
+  # outside this repository; the job fetches it and the box's details from
+  # secrets, builds the system with this commit's yakvc-server and switches
+  # the box to it with nixos-rebuild over SSH. A manual run with "Deploy the
+  # relay" ticked does the same for any commit that passed CI. Secrets:
+  # RELAY_DEPLOY_KEY (an SSH key that reads the flake and logs in to the
+  # box), RELAY_FLAKE (flake URL with the configuration name, such as
+  # git+ssh://git@github.com/owner/relay#host), RELAY_TARGET (user@host) and
+  # RELAY_KNOWN_HOSTS (known_hosts lines for the git host and the box).
+  deploy:
+    if: >-
+      !cancelled() && needs.ci-ok.result == 'success'
+      && ((github.ref_type == 'tag' && needs.release.result == 'success')
+          || inputs.deploy_relay == true)
+    needs: [ci-ok, release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+      - name: Deploy
+        env:
+          RELAY_DEPLOY_KEY: ${{ secrets.RELAY_DEPLOY_KEY }}
+          RELAY_FLAKE: ${{ secrets.RELAY_FLAKE }}
+          RELAY_TARGET: ${{ secrets.RELAY_TARGET }}
+          RELAY_KNOWN_HOSTS: ${{ secrets.RELAY_KNOWN_HOSTS }}
+        run: |
+          if [[ -z $RELAY_DEPLOY_KEY || -z $RELAY_FLAKE || -z $RELAY_TARGET || -z $RELAY_KNOWN_HOSTS ]]; then
+            echo "the RELAY_* secrets are not all set; nothing to deploy to" >&2
+            exit 1
+          fi
+          install -m 600 /dev/null key && printf '%s\n' "$RELAY_DEPLOY_KEY" > key
+          printf '%s\n' "$RELAY_KNOWN_HOSTS" > known_hosts
+          ssh_opts="-i $PWD/key -o IdentitiesOnly=yes -o UserKnownHostsFile=$PWD/known_hosts"
+          # Nix fetches the flake with git, and copies the system with ssh.
+          export GIT_SSH_COMMAND="ssh $ssh_opts" NIX_SSHOPTS="$ssh_opts"
+          nix run nixpkgs#nixos-rebuild -- switch --flake "$RELAY_FLAKE" \
+            --override-input yakvc "github:${GITHUB_REPOSITORY}/${GITHUB_SHA}" \
+            --target-host "$RELAY_TARGET" --use-remote-sudo
+          ssh $ssh_opts "$RELAY_TARGET" systemctl is-active yakvc-server
