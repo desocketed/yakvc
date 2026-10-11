@@ -26,4 +26,16 @@ export DISPLAY=:$((90 + RANDOM % 100))
 Xvfb "$DISPLAY" -screen 0 1280x720x24 >/dev/null 2>&1 &
 xvfb=$!
 trap 'kill $xvfb' EXIT
-sleep 2
+# Ready once its socket exists; it exits early when the display is taken.
+for _ in $(seq 100); do
+	[ -S "/tmp/.X11-unix/X${DISPLAY#:}" ] && break
+	if ! kill -0 "$xvfb" 2>/dev/null; then
+		echo "Xvfb exited before serving $DISPLAY" >&2
+		exit 1
+	fi
+	sleep 0.1
+done
+if [ ! -S "/tmp/.X11-unix/X${DISPLAY#:}" ]; then
+	echo "Xvfb did not serve $DISPLAY within 10 s" >&2
+	exit 1
+fi

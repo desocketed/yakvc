@@ -413,7 +413,7 @@ fn load_config(path: Option<&Path>) -> anyhow::Result<Config> {
     };
     let toml = std::fs::read_to_string(path)
         .map_err(|err| anyhow::anyhow!("read {}: {err}", path.display()))?;
-    Ok(Config::from_toml(&toml)?)
+    Config::from_toml(&toml).map_err(|err| anyhow::anyhow!("{}: {err}", path.display()))
 }
 
 /// For waiting on events and Ctrl-C. The engine runs its own runtime.

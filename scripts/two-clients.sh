@@ -46,9 +46,17 @@ fi
 
 root=$PWD
 work=$root/mod/build/two-clients
-rdv_port=$((20000 + RANDOM % 10000))
-mc_port=$((30000 + RANDOM % 10000))
 step() { printf '\n==> %s\n' "$*"; }
+# A random port above $1 that nothing listens on (TCP or UDP).
+free_port() {
+	local port
+	while :; do
+		port=$(($1 + RANDOM % 10000))
+		ss -Hltnu | awk '{print $5}' | grep -q ":$port\$" || { echo "$port"; return; }
+	done
+}
+rdv_port=$(free_port 20000)
+mc_port=$(free_port 30000)
 
 step "build xtask and the mod's launch arguments"
 cargo build --quiet -p xtask

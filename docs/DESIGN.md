@@ -473,7 +473,7 @@ size_t   yakvc_last_error(uint8_t *buf, size_t cap);         // message for this
 
 ## Build, packaging and CI
 
-`cargo xtask` is the single entry point that builds `yakvc-ffi` for each platform and stages it into the mod's resources. Gradle calls it for host-only dev builds, and CI builds each platform on its native runner and assembles one jar.
+`cargo xtask` is the single entry point that builds `yakvc-ffi` for each platform and stages it into the mod's resources. Gradle calls it for host-only dev builds, and CI builds each platform on its native runner and assembles one jar. `natives` empties a platform's output directory before staging, and a `yakvc-ffi` unit test checks the header lists exactly the exported functions.
 
 The headless scripts and `cargo xtask with-pipewire` take Xvfb, Mesa and PipeWire from the flake's locked nixpkgs (`nix ... --inputs-from <repo root>`), never from the registry's channel, so the gametest rendering and the guide screenshots don't drift between runs.
 
