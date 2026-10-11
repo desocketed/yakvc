@@ -433,6 +433,20 @@ impl VoiceState {
     }
 }
 
+/// Whether every label in `msg` fits [`label_fits`]. A message that fails
+/// is malformed: nothing of it is kept, so an oversize label never sits in
+/// a peer's stored announcement to be cloned on every refresh.
+pub(crate) fn labels_fit(msg: &VoiceMsg) -> bool {
+    match msg {
+        VoiceMsg::ReceiveState { .. } => true,
+        VoiceMsg::Group(group) => group
+            .as_ref()
+            .and_then(|group| group.public.as_ref())
+            .is_none_or(|public| label_fits(&public.label)),
+        VoiceMsg::Invite { state, .. } | VoiceMsg::GroupState(state) => state.is_valid(),
+    }
+}
+
 fn notice(kind: GroupNoticeKind, uuid: Uuid, by: Uuid) -> Event {
     Event::GroupNotice { kind, uuid, by }
 }
@@ -721,6 +735,40 @@ mod tests {
                 .len(),
             2
         );
+    }
+
+    #[test]
+    fn messages_with_an_oversize_label_are_malformed() {
+        let key = GroupKey::random();
+        let state = |label: &str| GroupState {
+            label: label.into(),
+            ..GroupState::new(uuid(1))
+        };
+        let announce = |label: &str| {
+            VoiceMsg::Group(Some(GroupAnnounce {
+                proof: key.proof(uuid(1)),
+                public: Some(PublicGroup {
+                    key: key.clone(),
+                    label: label.into(),
+                }),
+            }))
+        };
+        let fits = "x".repeat(32);
+        let too_long = "x".repeat(33);
+        assert!(labels_fit(&VoiceMsg::ReceiveState { wants_audio: true }));
+        assert!(labels_fit(&VoiceMsg::Group(None)));
+        assert!(labels_fit(&announce(&fits)));
+        assert!(!labels_fit(&announce(&too_long)));
+        assert!(labels_fit(&VoiceMsg::GroupState(state(&fits))));
+        assert!(!labels_fit(&VoiceMsg::GroupState(state(&too_long))));
+        assert!(labels_fit(&VoiceMsg::Invite {
+            key: key.clone(),
+            state: state(&fits),
+        }));
+        assert!(!labels_fit(&VoiceMsg::Invite {
+            key,
+            state: state(&too_long),
+        }));
     }
 
     #[test]
