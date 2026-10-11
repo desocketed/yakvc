@@ -117,6 +117,11 @@ impl Peer {
             .map_err(|_| LinkError::Closed)
     }
 
+    /// Closes the connection, for a peer that broke the protocol.
+    pub fn close(&self, code: CloseCode) {
+        close(&self.conn, code);
+    }
+
     /// Whether traffic currently goes through the relay.
     pub fn is_relayed(&self) -> bool {
         self.status.is_relayed()
