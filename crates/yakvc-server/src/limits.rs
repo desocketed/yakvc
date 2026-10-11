@@ -29,9 +29,15 @@ impl TokenBucket {
 
     /// Takes one token if there is one.
     pub fn take(&mut self, now: Instant) -> bool {
+        self.take_many(1, now)
+    }
+
+    /// Takes `n` tokens if there are that many.
+    pub fn take_many(&mut self, n: u64, now: Instant) -> bool {
         self.refill(now);
-        if self.tokens >= 1.0 {
-            self.tokens -= 1.0;
+        let n = n as f64;
+        if self.tokens >= n {
+            self.tokens -= n;
             true
         } else {
             false

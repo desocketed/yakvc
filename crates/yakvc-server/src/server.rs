@@ -85,6 +85,12 @@ pub struct Limits {
     pub auth_per_ip_per_min: u32,
     pub max_pairs: usize,
     pub pair_updates_per_sec: u32,
+    /// Hashes per second the matcher may spend on one session's pair
+    /// updates, with a burst of `2 * max_pairs` so a full tab list costs
+    /// nothing. A real pair costs one hash per token, so only sessions that
+    /// hold one token under many UUIDs (to make every update expensive)
+    /// run out, and they are closed with `RateLimited`.
+    pub pair_hashes_per_sec: u32,
     /// Bytes per second each client may send into the relay.
     pub relay_client_bytes_per_sec: u32,
     /// How long a relay client may stay without a rendezvous session.
@@ -419,6 +425,7 @@ impl Default for Limits {
             auth_per_ip_per_min: 30,
             max_pairs: rdv::MAX_PAIRS,
             pair_updates_per_sec: rdv::PAIR_UPDATES_PER_SEC,
+            pair_hashes_per_sec: 512,
             relay_client_bytes_per_sec: 80_000,
             relay_grace: Duration::from_secs(30),
             auth_timeout: Duration::from_secs(30),

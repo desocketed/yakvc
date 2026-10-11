@@ -109,16 +109,22 @@ impl Sessions {
             .pair_count_after_adding(id, tokens)
     }
 
-    pub fn set_pairs(&self, id: EndpointId, tokens: Vec<PairToken>) {
+    /// Returns how many hashes the update cost (see [`Matcher::hashes`]).
+    pub fn set_pairs(&self, id: EndpointId, tokens: Vec<PairToken>) -> u64 {
         let mut inner = self.0.lock().unwrap();
+        let before = inner.matcher.hashes();
         let notices = inner.matcher.set_pairs(id, tokens);
         inner.deliver(notices);
+        inner.matcher.hashes() - before
     }
 
-    pub fn add_pairs(&self, id: EndpointId, tokens: Vec<PairToken>) {
+    /// Returns how many hashes the update cost (see [`Matcher::hashes`]).
+    pub fn add_pairs(&self, id: EndpointId, tokens: Vec<PairToken>) -> u64 {
         let mut inner = self.0.lock().unwrap();
+        let before = inner.matcher.hashes();
         let notices = inner.matcher.add_pairs(id, tokens);
         inner.deliver(notices);
+        inner.matcher.hashes() - before
     }
 
     pub fn remove_pairs(&self, id: EndpointId, tokens: Vec<PairToken>) {
