@@ -39,6 +39,8 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	private final OptionInstance<Integer> bitrateKbps;
 	private final Dropdown inputDevice;
 	private final Dropdown outputDevice;
+	/** The device names, once listed: the listing runs on a worker thread while the screen shows "Loading…". */
+	private GameStateFeeder.@Nullable Devices devices;
 	private final OptionInstance<Boolean> relayOnly;
 	private final OptionInstance<Boolean> respectChatRestrictions;
 	private final OptionInstance<Boolean> muteBlockedPlayers;
@@ -74,9 +76,9 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.bitrate.tooltip")),
 				(caption, value) -> Options.genericValueLabel(caption, Component.translatable("yakvc.settings.bitrate.kbps", value)),
 				new OptionInstance.IntRange(16, 64), Math.clamp(initial.bitrate() / 1000, 16, 64), OptionInstance.NO_ACTION);
-		inputDevice = device("yakvc.settings.input_device", feeder.devices(true), initial.inputDevice(),
+		inputDevice = device("yakvc.settings.input_device", true, initial.inputDevice(),
 				"yakvc.settings.input_device.default");
-		outputDevice = device("yakvc.settings.output_device", feeder.devices(false), initial.outputDevice(),
+		outputDevice = device("yakvc.settings.output_device", false, initial.outputDevice(),
 				"yakvc.settings.output_device.default");
 		relayOnly = OptionInstance.createBoolean("yakvc.settings.relay_only",
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.relay_only.tooltip")),
@@ -94,6 +96,8 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		debugOverlay = OptionInstance.createBoolean("yakvc.settings.debug_overlay",
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.debug_overlay.tooltip")),
 				feeder.debugOverlay(), feeder::setDebugOverlay);
+		// Last, after both pickers exist: a stopped engine answers at once.
+		feeder.listDevices().thenAccept(this::fillDevices);
 	}
 
 	/** Push to talk or voice activation. Shared with the voice menu's setup card. */
@@ -128,18 +132,42 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	}
 
 	/**
-	 * A device picker over the listed devices' ids, shown by name, plus the configured one if it is unplugged right
-	 * now.
+	 * A device picker, showing the configured device, which gets the listed ones once they are known. Disabled until
+	 * then: there is nothing to pick yet.
 	 */
-	private static Dropdown device(String caption, Map<String, String> devices, @Nullable String current,
-			String defaultLabel) {
+	private Dropdown device(String caption, boolean inputs, @Nullable String current, String defaultLabel) {
+		Dropdown picker = new Dropdown(Component.translatable(caption), values(Map.of(), current),
+				current == null ? DEFAULT_DEVICE : current, value -> {
+					if (devices == null) return Component.translatable("yakvc.settings.devices_loading");
+					if (value.isEmpty()) return Component.translatable(defaultLabel);
+					Map<String, String> names = inputs ? devices.inputs() : devices.outputs();
+					return Component.literal(names.getOrDefault(value, value));
+				});
+		picker.active = false;
+		return picker;
+	}
+
+	/** The listed devices' ids, plus the configured one if it is unplugged right now. */
+	private static List<String> values(Map<String, String> devices, @Nullable String current) {
 		List<String> values = new ArrayList<>();
 		values.add(DEFAULT_DEVICE);
 		values.addAll(devices.keySet());
 		if (current != null && !values.contains(current)) values.add(current);
-		return new Dropdown(Component.translatable(caption), values, current == null ? DEFAULT_DEVICE : current,
-				value -> value.isEmpty() ? Component.translatable(defaultLabel)
-						: Component.literal(devices.getOrDefault(value, value)));
+		return values;
+	}
+
+	/** On the client thread, possibly after the screen closed, which is harmless. */
+	private void fillDevices(GameStateFeeder.Devices listed) {
+		devices = listed;
+		inputDevice.setValues(values(listed.inputs(), initial.inputDevice()));
+		outputDevice.setValues(values(listed.outputs(), initial.outputDevice()));
+		inputDevice.active = true;
+		outputDevice.active = true;
+	}
+
+	/** Whether the device pickers have their lists. For the client gametest. */
+	public boolean devicesListed() {
+		return devices != null;
 	}
 
 	@Override

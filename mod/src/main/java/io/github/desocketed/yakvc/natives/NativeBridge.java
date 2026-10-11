@@ -27,6 +27,9 @@ import java.util.UUID;
  * <p>{@code engine} arguments are the handle from {@link #create}. Strings and small buffers live in a confined arena
  * for one call. The two per-tick calls, {@link #pushWorld} and {@link #pollEvents}, are linked as critical so they
  * can take Java arrays without copying.
+ *
+ * <p>A failed call's message is read on the thread that made it, as the engine keeps it per thread, so calls may
+ * come from any thread; keeping them from overlapping {@link #destroy} is the caller's job.
  */
 public final class NativeBridge {
 	/** Must equal {@code YAKVC_ABI_VERSION} in {@code yakvc.h}. */

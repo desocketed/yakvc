@@ -81,12 +81,17 @@ impl RelayGate {
     fn admit(&self, id: EndpointId, now: Instant) -> Admission {
         if id == self.rendezvous || self.sessions.contains(id) {
             Admission::Session
-        } else if self.grace_limiter.lock().unwrap().allow(id, now)
-            && self.grace_admissions.lock().unwrap().take(now)
-        {
-            Admission::Grace
         } else {
-            Admission::Refused
+            // The relay-wide budget is looked at first, so a flood of fresh
+            // keys stops costing a bucket each once it is spent, and taken
+            // last, so a refused connect charges neither limit.
+            let mut limiter = self.grace_limiter.lock().unwrap();
+            let mut admissions = self.grace_admissions.lock().unwrap();
+            if admissions.has_token(now) && limiter.allow(id, now) && admissions.take(now) {
+                Admission::Grace
+            } else {
+                Admission::Refused
+            }
         }
     }
 
@@ -299,6 +304,32 @@ mod tests {
             gate.admit(SecretKey::generate().public(), later),
             Admission::Refused
         );
+    }
+
+    #[test]
+    fn a_refused_grace_admission_charges_neither_limit() {
+        let gate = RelayGate::new(Arc::default(), id(0), Duration::from_secs(30));
+        let now = Instant::now();
+        for _ in 0..GRACE_BURST {
+            assert_eq!(
+                gate.admit(SecretKey::generate().public(), now),
+                Admission::Grace
+            );
+        }
+        // Refused keys get no bucket, so a flood can't grow the map.
+        for _ in 0..GRACE_ADMISSIONS {
+            assert_eq!(gate.admit(id(1), now), Admission::Refused);
+        }
+        assert_eq!(
+            gate.grace_limiter.lock().unwrap().len(),
+            GRACE_BURST as usize
+        );
+        // And the refusals cost the honest client none of its admissions.
+        let later = now + Duration::from_secs(2);
+        for _ in 0..GRACE_ADMISSIONS {
+            assert_eq!(gate.admit(id(1), later), Admission::Grace);
+        }
+        assert_eq!(gate.admit(id(1), later), Admission::Refused);
     }
 
     /// Every relay listener bound to `[::]` serves IPv4 too. The rendezvous

@@ -24,7 +24,7 @@ final class Dropdown extends AbstractButton {
 	private static final int MAX_ROWS = 8;
 
 	private final Component caption;
-	private final List<String> values;
+	private List<String> values;
 	private final Function<String, Component> label;
 	private String selected;
 	private boolean open;
@@ -49,6 +49,12 @@ final class Dropdown extends AbstractButton {
 
 	void close() {
 		open = false;
+	}
+
+	/** Replaces the values and redraws the label. The selected value must be among the new ones. */
+	void setValues(List<String> values) {
+		this.values = values;
+		select(selected);
 	}
 
 	private void select(String value) {
