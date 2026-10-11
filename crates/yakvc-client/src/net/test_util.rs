@@ -2,16 +2,17 @@
 
 use std::net::Ipv4Addr;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use iroh::endpoint::{Connection, presets};
 use iroh::{Endpoint, EndpointAddr, RelayMode, SecretKey, TransportAddr};
 use tokio::sync::mpsc;
+use tokio::task::JoinSet;
 use yakvc_proto::peer::ALPN;
 use yakvc_proto::{IssuerKey, ProtocolId, SignedTicket, TicketBody, Uuid};
 
-use super::{PeerLink, Protocol};
+use super::{Bans, PeerLink, PeerStatus, Protocol, peer};
 
 /// An endpoint on 127.0.0.1 with no relay, speaking the peer ALPN.
 pub(crate) async fn loopback_endpoint() -> Endpoint {
@@ -50,6 +51,46 @@ pub(crate) async fn connect(from: &Endpoint, to: &Endpoint) -> (Connection, Conn
     };
     let dialed = from.connect(loopback_addr(to), ALPN).await.unwrap();
     (dialed, accept.await.unwrap())
+}
+
+/// Two protocols linked by [`serve_protocols`]. The connection stays up
+/// while this is alive.
+pub(crate) struct Served {
+    /// The connection on `b`'s side.
+    pub conn_b: Connection,
+    _conn_a: Connection,
+    _endpoints: [Endpoint; 2],
+    _tasks: [JoinSet<()>; 2],
+}
+
+/// Connects two loopback endpoints and serves `a` on one end and `b` on
+/// the other, skipping the handshake: `a` sees its peer as `uuid(2)`, `b`
+/// as `uuid(1)`.
+pub(crate) async fn serve_protocols(a: Arc<dyn Protocol>, b: Arc<dyn Protocol>) -> Served {
+    let (endpoint_a, endpoint_b) = (loopback_endpoint().await, loopback_endpoint().await);
+    let (conn_a, conn_b) = connect(&endpoint_a, &endpoint_b).await;
+    let status = |n| {
+        let (events, _rx) = crate::event::channel();
+        Arc::new(PeerStatus {
+            uuid: uuid(n),
+            events,
+            flags: Mutex::default(),
+        })
+    };
+    let bans = Bans::default();
+    let agreed_a = [(a.clone(), a.version())];
+    let agreed_b = [(b.clone(), b.version())];
+    let (status_a, status_b) = (status(2), status(1));
+    let (tasks_a, tasks_b) = tokio::join!(
+        peer::start_protocols(&conn_a, true, &agreed_a, &status_a, &bans),
+        peer::start_protocols(&conn_b, false, &agreed_b, &status_b, &bans),
+    );
+    Served {
+        conn_b,
+        _conn_a: conn_a,
+        _endpoints: [endpoint_a, endpoint_b],
+        _tasks: [tasks_a, tasks_b],
+    }
 }
 
 /// A protocol that hands each [`PeerLink`] to the test.
