@@ -88,6 +88,7 @@ pub(super) async fn run(
             Err(ended) => ended,
             Ok(never) => match never {},
         };
+        inner.forget_joins();
         if session.registered {
             network_backoff.reset();
             // A registered session closed for exceeding a limit keeps
@@ -161,12 +162,13 @@ impl Session<'_> {
             .open_bi()
             .await
             .map_err(|err| Ended::Failed(err.to_string()))?;
+        // Trimmed, since the rendezvous rejects oversize addresses.
+        let addr = yakvc_proto::rdv::fit_addr(&self.inner.endpoint.addr());
         let hello = Hello {
             mod_version: env!("CARGO_PKG_VERSION").to_owned(),
             uuid: self.identity.uuid,
             name: self.identity.name.clone(),
-            // Trimmed, since the rendezvous rejects oversize addresses.
-            addr: yakvc_proto::rdv::fit_addr(&self.inner.endpoint.addr()),
+            addr: addr.clone(),
             cached_ticket: self.cached_ticket(),
         };
         wire::write_msg(&mut send, &ClientMsg::Hello(hello)).await?;
@@ -183,7 +185,9 @@ impl Session<'_> {
                 }
             }
         });
-        let result = self.event_loop(conn, &mut send, &mut from_server).await;
+        let result = self
+            .event_loop(conn, &mut send, &mut from_server, addr)
+            .await;
         reader.abort();
         result
     }
@@ -193,6 +197,8 @@ impl Session<'_> {
         conn: &Connection,
         send: &mut SendStream,
         from_server: &mut mpsc::Receiver<Result<Option<ServerMsg>, wire::WireError>>,
+        // The address the rendezvous holds for us, as sent in the hello.
+        mut sent_addr: EndpointAddr,
     ) -> Result<Infallible, Ended> {
         let mut identity = self.inner.identity.subscribe();
         identity.mark_unchanged();
@@ -326,9 +332,14 @@ impl Session<'_> {
                 }
                 // Before registration the rendezvous only accepts the
                 // challenge reply; the Hello already carried our address.
+                // The endpoint reports changes the trimmed address doesn't
+                // show, which would eat into the pair batches' message rate.
                 Ok(addr) = our_addr.updated(), if self.registered => {
                     let addr = yakvc_proto::rdv::fit_addr(&addr);
-                    wire::write_msg(send, &ClientMsg::UpdateAddr(addr)).await?;
+                    if addr != sent_addr {
+                        wire::write_msg(send, &ClientMsg::UpdateAddr(addr.clone())).await?;
+                        sent_addr = addr;
+                    }
                 }
                 Ok(()) = identity.changed() => return Err(Ended::IdentityChanged),
             }
@@ -490,14 +501,14 @@ fn rdv_close(code: CloseCode) -> iroh::endpoint::VarInt {
 
 /// Exponential backoff with jitter.
 #[derive(Debug)]
-struct Backoff {
+pub(super) struct Backoff {
     first: Duration,
     max: Duration,
     next: Duration,
 }
 
 impl Backoff {
-    fn new(first: Duration, max: Duration) -> Self {
+    pub(super) fn new(first: Duration, max: Duration) -> Self {
         Backoff {
             first,
             max,
@@ -505,14 +516,14 @@ impl Backoff {
         }
     }
 
-    fn next(&mut self) -> Duration {
+    pub(super) fn next(&mut self) -> Duration {
         let delay = self.next;
         self.next = (self.next * 2).min(self.max);
         // ±25 % so clients that failed together don't retry together.
         delay.mul_f64(rand::rng().random_range(0.75..1.25))
     }
 
-    fn reset(&mut self) {
+    pub(super) fn reset(&mut self) {
         self.next = self.first;
     }
 }

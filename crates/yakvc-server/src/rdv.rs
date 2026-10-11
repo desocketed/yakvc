@@ -11,7 +11,7 @@
 
 use std::collections::HashSet;
 use std::net::IpAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use iroh::TransportAddr;
@@ -296,11 +296,11 @@ impl Client {
     }
 
     /// Starts a renewal. A challenge left unanswered by a failed
-    /// `joinServer` is simply replaced.
+    /// `joinServer` is simply replaced. A renewal is a session update like
+    /// any other, so it counts against the same rate limit: the auth limits
+    /// alone only refuse it, which would leave a renewal flood free.
     fn on_renew(&mut self) -> Result<(), CloseCode> {
-        if !self.is_registered() {
-            return Err(CloseCode::ProtocolError);
-        }
+        self.check_update()?;
         self.challenge = None;
         if self.shared.auth.is_dev() {
             let (uuid, name) = self.identity();
@@ -321,11 +321,16 @@ impl Client {
             return self.retry_later(secs);
         }
         // The challenge is what counts against the auth limits, so a
-        // `Decline` (which must answer one) is counted too.
+        // `Decline` (which must answer one) is counted too. The server-wide
+        // budgets are checked first and charged last, so a player refused
+        // for want of budget keeps their own auth attempts.
+        if let Some(secs) = self.challenge_budget_wait(offline, false) {
+            return self.retry_later(secs);
+        }
         if let Err(code) = self.check_auth_rate() {
             return self.refuse(code);
         }
-        if let Some(secs) = self.check_challenge_budget(offline) {
+        if let Some(secs) = self.challenge_budget_wait(offline, true) {
             return self.retry_later(secs);
         }
         let nonce = Nonce::random();
@@ -508,23 +513,32 @@ impl Client {
         }
     }
 
-    /// Takes a challenge from the server-wide budgets, or returns the seconds
-    /// to wait. Taken when the challenge is issued rather than at `Joined`,
-    /// so a refused player hasn't called `joinServer` for nothing. An offline
+    /// Takes a challenge from the server-wide budgets (with `take` false,
+    /// only checks that there is one), or returns the seconds to wait.
+    /// Taken when the challenge is issued rather than at `Joined`, so a
+    /// refused player hasn't called `joinServer` for nothing. An offline
     /// player may only decline, so their Mojang check is taken at `Joined`
     /// instead: declines must not drain the budget signed-in players need.
-    fn check_challenge_budget(&self, offline: bool) -> Option<u32> {
+    fn challenge_budget_wait(&self, offline: bool, take: bool) -> Option<u32> {
         let now = Instant::now();
-        if self.ip.is_none() {
-            let mut bucket = self.shared.unknown_ip_challenges.lock().unwrap();
-            if !bucket.take(now) {
-                return Some(bucket.secs_to_next_token(now));
-            }
+        let wait = |bucket: &Mutex<TokenBucket>| {
+            let mut bucket = bucket.lock().unwrap();
+            let ok = if take {
+                bucket.take(now)
+            } else {
+                bucket.has_token(now)
+            };
+            (!ok).then(|| bucket.secs_to_next_token(now))
+        };
+        if self.ip.is_none()
+            && let Some(secs) = wait(&self.shared.unknown_ip_challenges)
+        {
+            return Some(secs);
         }
         if offline {
             return None;
         }
-        self.check_mojang_budget()
+        wait(&self.shared.mojang_checks)
     }
 
     /// Takes a Mojang check from the server-wide budget, or returns the

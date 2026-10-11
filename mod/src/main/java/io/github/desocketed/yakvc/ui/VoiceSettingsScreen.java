@@ -47,6 +47,9 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	private final OptionInstance<Boolean> verifiedOnly;
 	private final OptionInstance<String> invites;
 	private final OptionInstance<Boolean> debugOverlay;
+	/** The account line, which follows the rendezvous state while the screen is open. */
+	private @Nullable MultiLineTextWidget accountText;
+	private Component shownAccountState = Component.empty();
 
 	/**
 	 * The settings over {@code parent}, or an alert if the engine isn't running: the settings need it to check and
@@ -109,9 +112,14 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 				config.voiceActivation() ? VOICE : PUSH_TO_TALK, OptionInstance.NO_ACTION);
 	}
 
-	/** Who may invite us to a group. Shared with the voice menu's setup card. */
+	/**
+	 * Who may invite us to a group. Shared with the voice menu's setup card. "friends" is left out because no screen
+	 * edits the friends list, so picking it here would mean nobody; a hand-edited config may still say it, and shows
+	 * as "Friends" until the player picks something else.
+	 */
 	static OptionInstance<String> invitesOption(ClientConfig config) {
-		List<String> values = List.of("everyone", "friends", "nobody");
+		List<String> values = new ArrayList<>(List.of("everyone", "nobody"));
+		if (config.invites().equals("friends")) values.add("friends");
 		return new OptionInstance<>("yakvc.settings.invites",
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.invites.tooltip")),
 				(caption, value) -> Component.translatable("yakvc.settings.invites." + value),
@@ -183,10 +191,22 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		list.addSmall(relayOnly, respectChatRestrictions);
 		list.addSmall(muteBlockedPlayers, invites);
 		list.addHeader(Component.translatable("yakvc.settings.account"));
-		list.addBig(new MultiLineTextWidget(accountState(), font).setMaxWidth(310).setCentered(true));
+		shownAccountState = accountState();
+		accountText = new MultiLineTextWidget(shownAccountState, font).setMaxWidth(310).setCentered(true);
+		list.addBig(accountText);
 		list.addSmall(verifiedOnly);
 		list.addHeader(Component.translatable("yakvc.settings.troubleshooting"));
 		list.addSmall(debugOverlay);
+	}
+
+	@Override
+	public void tick() {
+		super.tick();
+		Component now = accountState();
+		if (accountText != null && !now.equals(shownAccountState)) {
+			shownAccountState = now;
+			accountText.setMessage(now);
+		}
 	}
 
 	/** Whether the rendezvous verified our Mojang account. */
@@ -253,7 +273,8 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 			changed = changed.with("", "verified_only", String.valueOf(verifiedOnly.get()));
 		}
 		changed = withActivationAndInvites(changed, activation, invites);
-		if (bitrateKbps.get() * 1000 != initial.bitrate()) {
+		// In kbps: a hand-edited bitrate that isn't a whole kbps would otherwise be rewritten on every close.
+		if (bitrateKbps.get() != initial.bitrate() / 1000) {
 			changed = changed.with("audio", "bitrate", String.valueOf(bitrateKbps.get() * 1000));
 		}
 		if (!inputDevice.get().equals(Objects.requireNonNullElse(initial.inputDevice(), DEFAULT_DEVICE))) {

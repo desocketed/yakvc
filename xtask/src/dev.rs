@@ -6,7 +6,7 @@ use std::process::Command;
 
 use anyhow::{Context, Result, ensure};
 
-use crate::root;
+use crate::{cargo, root};
 
 /// Builds yakvc-server, creates keys in `dir` (kept across runs, so the
 /// printed client config stays valid), writes `dir/client.toml` and runs the
@@ -17,9 +17,8 @@ pub fn dev(port: u16, dir: Option<PathBuf>, write_client_config: bool) -> Result
     fs::create_dir_all(&dir)?;
     let dir = dir.canonicalize()?;
 
-    let status = Command::new("cargo")
+    let status = cargo()
         .args(["build", "--quiet", "-p", "yakvc-server"])
-        .current_dir(&root)
         .status()?;
     ensure!(status.success(), "building yakvc-server failed");
     let server = root
@@ -77,9 +76,14 @@ fn output(cmd: &mut Command) -> Result<String> {
     Ok(String::from_utf8(out.stdout)?.trim().to_owned())
 }
 
-/// A TOML string for a path; single quotes keep Windows backslashes literal.
+/// A TOML basic string for a path: backslashes (Windows) and quotes escaped.
 fn toml_path(path: &Path) -> String {
-    format!("'{}'", path.display())
+    let escaped = path
+        .display()
+        .to_string()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"");
+    format!("\"{escaped}\"")
 }
 
 /// Replaces this process with the server on Unix, so a script that starts
@@ -95,4 +99,18 @@ fn run(cmd: &mut Command) -> Result<()> {
     let status = cmd.status().context("starting yakvc-server")?;
     ensure!(status.success(), "yakvc-server exited with {status}");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn toml_path_escapes_backslashes_and_quotes() {
+        assert_eq!(toml_path(Path::new("/a/b")), "\"/a/b\"");
+        assert_eq!(
+            toml_path(Path::new("C:\\x\\it's \"here\"")),
+            "\"C:\\\\x\\\\it's \\\"here\\\"\""
+        );
+    }
 }

@@ -8,12 +8,12 @@
 # Screenshots land in mod/build/run/clientGameTest/screenshots/.
 set -euo pipefail
 
+cd "$(dirname "$0")/.."
 if [[ -z "${YAKVC_GAMETEST_INNER:-}" ]]; then
 	export YAKVC_GAMETEST_INNER=1
-	exec nix shell nixpkgs#xorg-server --command nix develop --command "$0" "$@"
+	exec nix shell --inputs-from . nixpkgs#xorg-server --command nix develop --command scripts/gametest-headless.sh "$@"
 fi
 
-source "$(dirname "$0")/headless-env.sh"
-cd "$(dirname "$0")/.."
+source scripts/headless-env.sh
 (cd mod && ./gradlew runClientGameTest --console=plain "$@")
 java scripts/UpdateGuideScreenshots.java
