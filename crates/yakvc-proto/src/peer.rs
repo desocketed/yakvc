@@ -13,6 +13,10 @@ use crate::ticket::SignedTicket;
 
 pub const ALPN: &[u8] = b"yakvc/peer/1";
 
+/// Most protocols a hello may list. There are far fewer; a longer list is a
+/// protocol error.
+pub const MAX_PROTOCOLS: usize = 16;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PeerMsg {
     Hello(PeerHello),

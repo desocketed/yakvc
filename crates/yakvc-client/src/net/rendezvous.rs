@@ -59,7 +59,11 @@ impl From<wire::WireError> for Ended {
     }
 }
 
-pub(super) async fn run(inner: Arc<Inner>, config: RendezvousConfig, ticket_cache: PathBuf) {
+pub(super) async fn run(
+    inner: Arc<Inner>,
+    config: RendezvousConfig,
+    ticket_cache: Option<PathBuf>,
+) {
     // Network trouble retries quickly; rate limits and auth failures back off
     // as DESIGN.md "Limits" asks: 10 s doubling to 10 min.
     let mut network_backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(60));
@@ -76,7 +80,7 @@ pub(super) async fn run(inner: Arc<Inner>, config: RendezvousConfig, ticket_cach
         let mut session = Session {
             inner: &inner,
             config: &config,
-            ticket_cache: &ticket_cache,
+            ticket_cache: ticket_cache.as_deref(),
             identity: current,
             registered: false,
         };
@@ -84,6 +88,7 @@ pub(super) async fn run(inner: Arc<Inner>, config: RendezvousConfig, ticket_cach
             Err(ended) => ended,
             Ok(never) => match never {},
         };
+        inner.forget_joins();
         if session.registered {
             network_backoff.reset();
             // A registered session closed for exceeding a limit keeps
@@ -125,7 +130,8 @@ fn report(inner: &Inner, state: RendezvousState) {
 struct Session<'a> {
     inner: &'a Arc<Inner>,
     config: &'a RendezvousConfig,
-    ticket_cache: &'a Path,
+    /// `None` for an ephemeral engine, which never caches its ticket.
+    ticket_cache: Option<&'a Path>,
     identity: Identity,
     /// Got a ticket on this connection.
     registered: bool,
@@ -156,12 +162,13 @@ impl Session<'_> {
             .open_bi()
             .await
             .map_err(|err| Ended::Failed(err.to_string()))?;
+        // Trimmed, since the rendezvous rejects oversize addresses.
+        let addr = yakvc_proto::rdv::fit_addr(&self.inner.endpoint.addr());
         let hello = Hello {
             mod_version: env!("CARGO_PKG_VERSION").to_owned(),
             uuid: self.identity.uuid,
             name: self.identity.name.clone(),
-            // Trimmed, since the rendezvous rejects oversize addresses.
-            addr: yakvc_proto::rdv::fit_addr(&self.inner.endpoint.addr()),
+            addr: addr.clone(),
             cached_ticket: self.cached_ticket(),
         };
         wire::write_msg(&mut send, &ClientMsg::Hello(hello)).await?;
@@ -178,7 +185,9 @@ impl Session<'_> {
                 }
             }
         });
-        let result = self.event_loop(conn, &mut send, &mut from_server).await;
+        let result = self
+            .event_loop(conn, &mut send, &mut from_server, addr)
+            .await;
         reader.abort();
         result
     }
@@ -188,6 +197,8 @@ impl Session<'_> {
         conn: &Connection,
         send: &mut SendStream,
         from_server: &mut mpsc::Receiver<Result<Option<ServerMsg>, wire::WireError>>,
+        // The address the rendezvous holds for us, as sent in the hello.
+        mut sent_addr: EndpointAddr,
     ) -> Result<Infallible, Ended> {
         let mut identity = self.inner.identity.subscribe();
         identity.mark_unchanged();
@@ -321,9 +332,14 @@ impl Session<'_> {
                 }
                 // Before registration the rendezvous only accepts the
                 // challenge reply; the Hello already carried our address.
+                // The endpoint reports changes the trimmed address doesn't
+                // show, which would eat into the pair batches' message rate.
                 Ok(addr) = our_addr.updated(), if self.registered => {
                     let addr = yakvc_proto::rdv::fit_addr(&addr);
-                    wire::write_msg(send, &ClientMsg::UpdateAddr(addr)).await?;
+                    if addr != sent_addr {
+                        wire::write_msg(send, &ClientMsg::UpdateAddr(addr.clone())).await?;
+                        sent_addr = addr;
+                    }
                 }
                 Ok(()) = identity.changed() => return Err(Ended::IdentityChanged),
             }
@@ -336,7 +352,9 @@ impl Session<'_> {
     fn accept_ticket(&mut self, signed: SignedTicket) -> Result<Ticket, Ended> {
         let ticket = self.verify_own(&signed).map_err(Ended::AuthFailed)?;
         // Losing the cache only costs a fresh Mojang check next start.
-        let _ = std::fs::write(self.ticket_cache, signed.to_bytes());
+        if let Some(cache) = self.ticket_cache {
+            let _ = std::fs::write(cache, signed.to_bytes());
+        }
         self.inner.own_ticket.send_replace(Some(signed));
         self.registered = true;
         let expires_at = SystemTime::UNIX_EPOCH + Duration::from_secs(ticket.expires_at);
@@ -353,7 +371,7 @@ impl Session<'_> {
     /// Our cached ticket, if it still names us and has enough time left for
     /// the rendezvous to accept it.
     fn cached_ticket(&self) -> Option<SignedTicket> {
-        let bytes = std::fs::read(self.ticket_cache).ok()?;
+        let bytes = std::fs::read(self.ticket_cache?).ok()?;
         let signed = SignedTicket::from_bytes(&bytes).ok()?;
         let ticket = self.verify_own(&signed).ok()?;
         (ticket.remaining(SystemTime::now()) > RENEW_WINDOW).then_some(signed)
@@ -483,14 +501,14 @@ fn rdv_close(code: CloseCode) -> iroh::endpoint::VarInt {
 
 /// Exponential backoff with jitter.
 #[derive(Debug)]
-struct Backoff {
+pub(super) struct Backoff {
     first: Duration,
     max: Duration,
     next: Duration,
 }
 
 impl Backoff {
-    fn new(first: Duration, max: Duration) -> Self {
+    pub(super) fn new(first: Duration, max: Duration) -> Self {
         Backoff {
             first,
             max,
@@ -498,14 +516,14 @@ impl Backoff {
         }
     }
 
-    fn next(&mut self) -> Duration {
+    pub(super) fn next(&mut self) -> Duration {
         let delay = self.next;
         self.next = (self.next * 2).min(self.max);
         // ±25 % so clients that failed together don't retry together.
         delay.mul_f64(rand::rng().random_range(0.75..1.25))
     }
 
-    fn reset(&mut self) {
+    pub(super) fn reset(&mut self) {
         self.next = self.first;
     }
 }

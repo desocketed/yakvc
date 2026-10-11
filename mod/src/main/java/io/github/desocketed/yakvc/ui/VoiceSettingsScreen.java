@@ -39,12 +39,17 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	private final OptionInstance<Integer> bitrateKbps;
 	private final Dropdown inputDevice;
 	private final Dropdown outputDevice;
+	/** The device names, once listed: the listing runs on a worker thread while the screen shows "Loading…". */
+	private GameStateFeeder.@Nullable Devices devices;
 	private final OptionInstance<Boolean> relayOnly;
 	private final OptionInstance<Boolean> respectChatRestrictions;
 	private final OptionInstance<Boolean> muteBlockedPlayers;
 	private final OptionInstance<Boolean> verifiedOnly;
 	private final OptionInstance<String> invites;
 	private final OptionInstance<Boolean> debugOverlay;
+	/** The account line, which follows the rendezvous state while the screen is open. */
+	private @Nullable MultiLineTextWidget accountText;
+	private Component shownAccountState = Component.empty();
 
 	/**
 	 * The settings over {@code parent}, or an alert if the engine isn't running: the settings need it to check and
@@ -74,9 +79,9 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.bitrate.tooltip")),
 				(caption, value) -> Options.genericValueLabel(caption, Component.translatable("yakvc.settings.bitrate.kbps", value)),
 				new OptionInstance.IntRange(16, 64), Math.clamp(initial.bitrate() / 1000, 16, 64), OptionInstance.NO_ACTION);
-		inputDevice = device("yakvc.settings.input_device", feeder.devices(true), initial.inputDevice(),
+		inputDevice = device("yakvc.settings.input_device", true, initial.inputDevice(),
 				"yakvc.settings.input_device.default");
-		outputDevice = device("yakvc.settings.output_device", feeder.devices(false), initial.outputDevice(),
+		outputDevice = device("yakvc.settings.output_device", false, initial.outputDevice(),
 				"yakvc.settings.output_device.default");
 		relayOnly = OptionInstance.createBoolean("yakvc.settings.relay_only",
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.relay_only.tooltip")),
@@ -94,6 +99,8 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		debugOverlay = OptionInstance.createBoolean("yakvc.settings.debug_overlay",
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.debug_overlay.tooltip")),
 				feeder.debugOverlay(), feeder::setDebugOverlay);
+		// Last, after both pickers exist: a stopped engine answers at once.
+		feeder.listDevices().thenAccept(this::fillDevices);
 	}
 
 	/** Push to talk or voice activation. Shared with the voice menu's setup card. */
@@ -105,9 +112,14 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 				config.voiceActivation() ? VOICE : PUSH_TO_TALK, OptionInstance.NO_ACTION);
 	}
 
-	/** Who may invite us to a group. Shared with the voice menu's setup card. */
+	/**
+	 * Who may invite us to a group. Shared with the voice menu's setup card. "friends" is left out because no screen
+	 * edits the friends list, so picking it here would mean nobody; a hand-edited config may still say it, and shows
+	 * as "Friends" until the player picks something else.
+	 */
 	static OptionInstance<String> invitesOption(ClientConfig config) {
-		List<String> values = List.of("everyone", "friends", "nobody");
+		List<String> values = new ArrayList<>(List.of("everyone", "nobody"));
+		if (config.invites().equals("friends")) values.add("friends");
 		return new OptionInstance<>("yakvc.settings.invites",
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.invites.tooltip")),
 				(caption, value) -> Component.translatable("yakvc.settings.invites." + value),
@@ -128,18 +140,42 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	}
 
 	/**
-	 * A device picker over the listed devices' ids, shown by name, plus the configured one if it is unplugged right
-	 * now.
+	 * A device picker, showing the configured device, which gets the listed ones once they are known. Disabled until
+	 * then: there is nothing to pick yet.
 	 */
-	private static Dropdown device(String caption, Map<String, String> devices, @Nullable String current,
-			String defaultLabel) {
+	private Dropdown device(String caption, boolean inputs, @Nullable String current, String defaultLabel) {
+		Dropdown picker = new Dropdown(Component.translatable(caption), values(Map.of(), current),
+				current == null ? DEFAULT_DEVICE : current, value -> {
+					if (devices == null) return Component.translatable("yakvc.settings.devices_loading");
+					if (value.isEmpty()) return Component.translatable(defaultLabel);
+					Map<String, String> names = inputs ? devices.inputs() : devices.outputs();
+					return Component.literal(names.getOrDefault(value, value));
+				});
+		picker.active = false;
+		return picker;
+	}
+
+	/** The listed devices' ids, plus the configured one if it is unplugged right now. */
+	private static List<String> values(Map<String, String> devices, @Nullable String current) {
 		List<String> values = new ArrayList<>();
 		values.add(DEFAULT_DEVICE);
 		values.addAll(devices.keySet());
 		if (current != null && !values.contains(current)) values.add(current);
-		return new Dropdown(Component.translatable(caption), values, current == null ? DEFAULT_DEVICE : current,
-				value -> value.isEmpty() ? Component.translatable(defaultLabel)
-						: Component.literal(devices.getOrDefault(value, value)));
+		return values;
+	}
+
+	/** On the client thread, possibly after the screen closed, which is harmless. */
+	private void fillDevices(GameStateFeeder.Devices listed) {
+		devices = listed;
+		inputDevice.setValues(values(listed.inputs(), initial.inputDevice()));
+		outputDevice.setValues(values(listed.outputs(), initial.outputDevice()));
+		inputDevice.active = true;
+		outputDevice.active = true;
+	}
+
+	/** Whether the device pickers have their lists. For the client gametest. */
+	public boolean devicesListed() {
+		return devices != null;
 	}
 
 	@Override
@@ -155,10 +191,22 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		list.addSmall(relayOnly, respectChatRestrictions);
 		list.addSmall(muteBlockedPlayers, invites);
 		list.addHeader(Component.translatable("yakvc.settings.account"));
-		list.addBig(new MultiLineTextWidget(accountState(), font).setMaxWidth(310).setCentered(true));
+		shownAccountState = accountState();
+		accountText = new MultiLineTextWidget(shownAccountState, font).setMaxWidth(310).setCentered(true);
+		list.addBig(accountText);
 		list.addSmall(verifiedOnly);
 		list.addHeader(Component.translatable("yakvc.settings.troubleshooting"));
 		list.addSmall(debugOverlay);
+	}
+
+	@Override
+	public void tick() {
+		super.tick();
+		Component now = accountState();
+		if (accountText != null && !now.equals(shownAccountState)) {
+			shownAccountState = now;
+			accountText.setMessage(now);
+		}
 	}
 
 	/** Whether the rendezvous verified our Mojang account. */
@@ -225,7 +273,8 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 			changed = changed.with("", "verified_only", String.valueOf(verifiedOnly.get()));
 		}
 		changed = withActivationAndInvites(changed, activation, invites);
-		if (bitrateKbps.get() * 1000 != initial.bitrate()) {
+		// In kbps: a hand-edited bitrate that isn't a whole kbps would otherwise be rewritten on every close.
+		if (bitrateKbps.get() != initial.bitrate() / 1000) {
 			changed = changed.with("audio", "bitrate", String.valueOf(bitrateKbps.get() * 1000));
 		}
 		if (!inputDevice.get().equals(Objects.requireNonNullElse(initial.inputDevice(), DEFAULT_DEVICE))) {

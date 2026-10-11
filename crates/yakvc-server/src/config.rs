@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::Deserialize;
-use yakvc_proto::{IssuerKey, SecretKey};
+use yakvc_proto::{IssuerKey, MAX_TICKET_LIFETIME, SecretKey};
 
 use crate::server::{RelayOptions, RelayTls, Server, ServerBuilder};
 
@@ -76,7 +76,12 @@ impl Config {
             if hours == 0 {
                 return Err(invalid("ticket_lifetime_hours must be at least 1"));
             }
-            builder = builder.ticket_lifetime(Duration::from_secs(hours * 3600));
+            // Clients refuse longer tickets.
+            let lifetime = Duration::from_secs(hours.saturating_mul(3600));
+            if lifetime > MAX_TICKET_LIFETIME {
+                return Err(invalid("ticket_lifetime_hours must be at most a week"));
+            }
+            builder = builder.ticket_lifetime(lifetime);
         }
         if let Some(addr) = self.metrics_bind {
             builder = builder.metrics(addr);

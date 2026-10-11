@@ -52,6 +52,12 @@ impl TokenBucket {
         (secs as u32).max(1)
     }
 
+    /// Whether `take` would succeed, without taking.
+    pub fn has_token(&mut self, now: Instant) -> bool {
+        self.refill(now);
+        self.tokens >= 1.0
+    }
+
     fn is_full(&mut self, now: Instant) -> bool {
         self.refill(now);
         self.tokens >= self.capacity
@@ -93,6 +99,11 @@ impl<K: Hash + Eq> RateLimiter<K> {
     /// same. Keeps the map from growing with every key ever seen.
     pub fn prune(&mut self, now: Instant) {
         self.buckets.retain(|_, bucket| !bucket.is_full(now));
+    }
+
+    #[cfg(test)]
+    pub fn len(&self) -> usize {
+        self.buckets.len()
     }
 }
 

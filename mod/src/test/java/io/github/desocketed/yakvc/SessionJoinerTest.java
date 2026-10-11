@@ -31,7 +31,7 @@ class SessionJoinerTest {
 	void refusesWhileTheGameIsLoggingIn() {
 		List<String> calls = new ArrayList<>();
 		SessionJoiner joiner = new SessionJoiner(calls::add);
-		joiner.loginStarted();
+		joiner.loginStarted(false);
 		assertFalse(joiner.join("1"));
 		assertEquals(List.of(), calls, "joinServer must not be called");
 
@@ -55,6 +55,25 @@ class SessionJoinerTest {
 			}
 		});
 		assertFalse(joiner.join("1"));
+		assertEquals(List.of(), calls);
+	}
+
+	/** The engine waits for an answer, so a failing check must answer false rather than throw. */
+	@Test
+	void aFailingAccountCheckAnswersFalse() throws Exception {
+		List<String> calls = new ArrayList<>();
+		SessionJoiner joiner = new SessionJoiner(new SessionJoiner.Mojang() {
+			@Override
+			public void joinServer(String serverId) {
+				calls.add(serverId);
+			}
+
+			@Override
+			public boolean hasAccount() {
+				throw new IllegalStateException("no user yet");
+			}
+		});
+		assertFalse(joiner.joinAsync("1").get(5, TimeUnit.SECONDS));
 		assertEquals(List.of(), calls);
 	}
 
@@ -82,7 +101,7 @@ class SessionJoinerTest {
 		assertTrue(joinStarted.await(5, TimeUnit.SECONDS));
 
 		Thread login = Thread.ofVirtual().start(() -> {
-			joiner.loginStarted();
+			joiner.loginStarted(false);
 			order.add("game login");
 		});
 		login.join(200);
@@ -105,12 +124,36 @@ class SessionJoinerTest {
 		assertTrue(joinStarted.await(5, TimeUnit.SECONDS));
 
 		long start = System.nanoTime();
-		joiner.loginStarted();
+		joiner.loginStarted(false);
 		long waited = System.nanoTime() - start;
 		assertTrue(waited >= Duration.ofMillis(100).toNanos(), "waited " + waited + " ns");
 		assertTrue(waited < Duration.ofSeconds(4).toNanos(), "waited " + waited + " ns");
 		releaseJoin.countDown();
 		assertTrue(join.get());
+	}
+
+	/** Singleplayer and LAN hosts never call the game's own joinServer, so there is nothing to wait for or refuse. */
+	@Test
+	void aLocalLoginNeitherWaitsNorRefuses() throws Exception {
+		CountDownLatch joinStarted = new CountDownLatch(1);
+		CountDownLatch releaseJoin = new CountDownLatch(1);
+		List<String> calls = Collections.synchronizedList(new ArrayList<>());
+		SessionJoiner joiner = new SessionJoiner(serverId -> {
+			calls.add(serverId);
+			joinStarted.countDown();
+			await(releaseJoin);
+		});
+		CompletableFuture<Boolean> join = joiner.joinAsync("1");
+		assertTrue(joinStarted.await(5, TimeUnit.SECONDS));
+
+		long start = System.nanoTime();
+		joiner.loginStarted(true);
+		assertTrue(System.nanoTime() - start < Duration.ofSeconds(1).toNanos(), "a local login must not wait");
+		releaseJoin.countDown();
+		assertTrue(join.get());
+
+		assertTrue(joiner.join("2"), "a local login must not refuse voice joins");
+		assertEquals(List.of("1", "2"), calls);
 	}
 
 	@Test

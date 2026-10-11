@@ -58,9 +58,7 @@ public final class VoiceKeys {
 
 	/** Whether the debug overlay key was pressed since the last call. */
 	public boolean debugOverlayPressed() {
-		boolean pressed = false;
-		while (debugOverlay.consumeClick()) pressed = !pressed;
-		return pressed;
+		return pressed(debugOverlay);
 	}
 
 	/** Whether the voice menu key was pressed since the last call. */

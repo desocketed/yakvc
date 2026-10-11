@@ -29,6 +29,8 @@ public final class PlayerVolumes {
 
 	private final Path file;
 	private final Map<UUID, Setting> settings;
+	/** Whether a setting changed since the last save: the menu saves on close, and most closes change nothing. */
+	private boolean dirty;
 
 	private PlayerVolumes(Path file, Map<UUID, Setting> settings) {
 		this.file = file;
@@ -74,11 +76,16 @@ public final class PlayerVolumes {
 	}
 
 	public void set(UUID player, Setting setting) {
+		if (setting.equals(get(player))) return;
 		if (setting.equals(DEFAULT)) settings.remove(player);
 		else settings.put(player, setting);
+		dirty = true;
 	}
 
+	/** Writes the file if anything changed since the last save. */
 	public void save() throws IOException {
+		if (!dirty) return;
 		AtomicFile.write(file, GSON.toJson(settings));
+		dirty = false;
 	}
 }

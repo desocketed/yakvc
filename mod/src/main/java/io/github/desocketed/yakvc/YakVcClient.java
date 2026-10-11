@@ -103,7 +103,8 @@ public final class YakVcClient implements ClientModInitializer {
 			}
 		});
 		// The game calls joinServer itself during the login phase; the configuration phase comes after it.
-		ClientLoginConnectionEvents.INIT.register((handler, minecraft) -> joiner.loginStarted());
+		// isLocalServer is set before the game connects to its integrated server, and cleared on disconnect.
+		ClientLoginConnectionEvents.INIT.register((handler, minecraft) -> joiner.loginStarted(minecraft.isLocalServer()));
 		ClientLoginConnectionEvents.DISCONNECT.register((handler, minecraft) -> joiner.loginEnded());
 		ClientConfigurationConnectionEvents.INIT.register((handler, minecraft) -> joiner.loginEnded());
 

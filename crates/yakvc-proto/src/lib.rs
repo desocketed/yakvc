@@ -20,7 +20,8 @@ pub use crate::auth::{is_offline_player, offline_uuid};
 pub use crate::group::{GroupAnnounce, GroupId, GroupKey, GroupState, PublicGroup};
 pub use crate::pair::PairToken;
 pub use crate::ticket::{
-    IssuerId, IssuerKey, SignedTicket, Ticket, TicketBody, TicketError, TicketVerifier,
+    IssuerId, IssuerKey, MAX_TICKET_LIFETIME, SignedTicket, Ticket, TicketBody, TicketError,
+    TicketVerifier,
 };
 pub use crate::wire::WireError;
 

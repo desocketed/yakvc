@@ -615,6 +615,63 @@ async fn sessions_are_capped_per_ip() {
 }
 
 #[tokio::test]
+async fn sessions_are_capped() {
+    let limits = Limits {
+        max_sessions: 1,
+        ..Limits::default()
+    };
+    let server = builder()
+        .insecure_dev_auth()
+        .relay(relay_options())
+        .limits(limits)
+        .spawn()
+        .await
+        .unwrap();
+    let mut alice = Client::connect(&server, "alice").await;
+    alice.register().await;
+    // However the next session arrives.
+    let mut bob = Client::connect_via_relay(&server, "bob").await;
+    bob.send(bob.hello(None)).await;
+    assert_eq!(bob.close_code().await, code(CloseCode::LimitExceeded));
+
+    // Alice leaving makes room.
+    alice.conn.close(0u32.into(), b"");
+    wait_for("alice's session to end", || server.stats().sessions == 0).await;
+    let mut carol = Client::connect(&server, "carol").await;
+    carol.register().await;
+}
+
+#[tokio::test]
+async fn sessions_without_a_known_ip_are_capped() {
+    let limits = Limits {
+        max_sessions_unknown_ip: 1,
+        ..Limits::default()
+    };
+    let server = builder()
+        .insecure_dev_auth()
+        .relay(relay_options())
+        .limits(limits)
+        .spawn()
+        .await
+        .unwrap();
+    let mut alice = Client::connect_via_relay(&server, "alice").await;
+    alice.register().await;
+    let mut bob = Client::connect_via_relay(&server, "bob").await;
+    bob.send(bob.hello(None)).await;
+    assert_eq!(bob.close_code().await, code(CloseCode::LimitExceeded));
+
+    // Direct connections are covered by the per-IP cap instead.
+    let mut carol = Client::connect(&server, "carol").await;
+    carol.register().await;
+
+    // Alice leaving makes room.
+    alice.conn.close(0u32.into(), b"");
+    wait_for("alice's session to end", || server.stats().sessions == 1).await;
+    let mut dave = Client::connect_via_relay(&server, "dave").await;
+    dave.register().await;
+}
+
+#[tokio::test]
 async fn large_messages_before_registering_are_a_protocol_error() {
     let server = dev_server().await;
     let mut client = Client::connect(&server, "alice").await;
@@ -1506,4 +1563,26 @@ async fn the_probe_signs_in_through_the_relay_without_mojang() {
     crate::probe(server.endpoint_id(), server.relay_url().unwrap())
         .await
         .unwrap();
+}
+
+/// A renewal is a session update too: a flood of them is closed like a
+/// flood of pair updates, instead of only being refused.
+#[tokio::test]
+async fn renewals_count_as_pair_updates() {
+    let limits = Limits {
+        pair_updates_per_sec: 3,
+        ..Limits::default()
+    };
+    let server = builder()
+        .insecure_dev_auth()
+        .limits(limits)
+        .spawn()
+        .await
+        .unwrap();
+    let mut client = Client::connect(&server, "alice").await;
+    client.register().await;
+    for _ in 0..4 {
+        client.send(ClientMsg::Renew).await;
+    }
+    assert_eq!(client.close_code().await, code(CloseCode::RateLimited));
 }

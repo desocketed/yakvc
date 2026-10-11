@@ -33,7 +33,7 @@ EOF
 
 cat <<EOF
 
-Mod jar: $(ls "$PWD"/mod/build/libs/yakvc-*.jar | grep -v sources)
+Mod jar: $PWD/mod/build/libs/yakvc-$(sed -n 's/^version=//p' mod/gradle.properties).jar
 
 Put this in the client's config/yakvc/client.toml (no dev_mode, so the
 client only accepts a real ticket):
