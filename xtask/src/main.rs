@@ -5,6 +5,7 @@ use std::{env, fs};
 
 mod dev;
 mod pipewire;
+mod relay;
 
 use anyhow::{Context, Result, bail, ensure};
 use clap::{Parser, Subcommand};
@@ -65,6 +66,28 @@ enum Cmd {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
         command: Vec<String>,
     },
+    /// Switch the production relay to a commit of this repository: builds its
+    /// NixOS system here and pushes it with `nixos-rebuild --target-host`.
+    /// CI runs it after every release (the `deploy` job); the values are the
+    /// `RELAY_*` secrets.
+    DeployRelay {
+        /// The host flake with its configuration name, such as
+        /// `git+ssh://git@github.com/owner/relay#host`.
+        #[arg(long)]
+        flake: String,
+        /// `user@host` of the box; the user needs passwordless sudo.
+        #[arg(long)]
+        target: String,
+        /// SSH private key that reads the flake and logs in to the box.
+        #[arg(long)]
+        key: PathBuf,
+        /// known_hosts file with the git host and the box.
+        #[arg(long)]
+        known_hosts: PathBuf,
+        /// The yakvc commit to ship (default: HEAD).
+        #[arg(long)]
+        rev: Option<String>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -82,7 +105,34 @@ fn main() -> Result<()> {
             write_client_config,
         } => dev::dev(port, dir, write_client_config),
         Cmd::WithPipewire { command } => std::process::exit(pipewire::with_pipewire(&command)?),
+        Cmd::DeployRelay {
+            flake,
+            target,
+            key,
+            known_hosts,
+            rev,
+        } => relay::deploy(
+            &flake,
+            &target,
+            &key,
+            &known_hosts,
+            &match rev {
+                Some(rev) => rev,
+                None => head()?,
+            },
+        ),
     }
+}
+
+/// The checked-out commit.
+fn head() -> Result<String> {
+    let out = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(root())
+        .output()
+        .context("running git")?;
+    ensure!(out.status.success(), "git rev-parse HEAD failed");
+    Ok(String::from_utf8(out.stdout)?.trim().to_string())
 }
 
 fn root() -> PathBuf {
