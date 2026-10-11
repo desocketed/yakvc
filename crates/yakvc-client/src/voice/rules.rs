@@ -211,7 +211,7 @@ impl VoiceState {
             return Some(CENTRED);
         }
         let player = world.players.iter().find(|p| p.uuid == peer)?;
-        let spatial = spatial(&world.listener, player.pos, self.voice_range)?;
+        let spatial = spatial(&world.listener, player.heard_from, self.voice_range)?;
         Some(Spatial {
             reverb: world.room.reverb,
             ..occluded(spatial, player.occlusion)
@@ -564,6 +564,17 @@ mod tests {
         assert_eq!(walled.muffle, 1.0);
         assert!(walled.gain < open.gain);
         assert_eq!(walled.pan, open.pan);
+    }
+
+    #[test]
+    fn voices_come_from_where_they_are_heard() {
+        let mut state = state();
+        // Bob is in front, but his voice comes round a wall from the right.
+        state.world.players = vec![Player {
+            heard_from: at(-10.0, 0.0),
+            ..Player::new(uuid(1), at(0.0, 10.0))
+        }];
+        assert!(nearby(&state, 1).unwrap().pan > 0.9);
     }
 
     #[test]

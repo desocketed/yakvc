@@ -203,7 +203,7 @@ fn engine_lifecycle_through_the_c_abi() {
     let me = [1u8; 16];
     let other = [2u8; 16];
     let listener = [0.0, 64.0, 0.0, 90.0, 0.0, 0.0, 1.0];
-    let players = [3.0, 64.0, 4.0, 0.0];
+    let players = [3.0, 64.0, 4.0, 0.0, 3.0, 64.0, 4.0];
     // SAFETY: `engine` is live and every buffer is valid for its length.
     unsafe {
         assert_eq!(

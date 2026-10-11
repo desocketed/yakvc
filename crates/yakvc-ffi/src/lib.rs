@@ -50,7 +50,7 @@ use crate::guard::{
 /// shared group state and kick votes; group-only voice in a group.
 /// 6: kick votes removed (`yakvc_vote_kick`, the kick vote event and notice).
 /// 7: `yakvc_join_group` takes the id length.
-pub const YAKVC_ABI_VERSION: u32 = 9;
+pub const YAKVC_ABI_VERSION: u32 = 10;
 
 pub const YAKVC_OK: i32 = 0;
 /// A null pointer, bad UUID, invalid UTF-8 or out-of-range value.
@@ -256,13 +256,14 @@ pub unsafe extern "C" fn yakvc_set_tab_list(
 
 /// Pushes one tick's world: `listener` is `x, y, z, yaw, pitch, reverb,
 /// decay`, the last two describing the room around it (see `Room`); then `count`
-/// tracked players as UUIDs and, per player, `x, y, z, occlusion`: the eye
-/// position, and how much of the direct path to the listener is blocked,
-/// from 0 (open air) to 1 (fully blocked).
+/// tracked players as UUIDs and, per player, `x, y, z, occlusion, heard_x,
+/// heard_y, heard_z`: the eye position, how much the sound reaching the
+/// listener is blocked, from 0 (open air) to 1 (fully blocked), and where
+/// the voice seems to come from (see `Player`).
 ///
 /// # Safety
 /// `engine` must be live; `listener` must point to 7 doubles, `uuids` to
-/// `16 * count` bytes and `players` to `4 * count` doubles.
+/// `16 * count` bytes and `players` to `7 * count` doubles.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn yakvc_push_world(
     engine: *mut YakVcEngine,
@@ -279,9 +280,9 @@ pub unsafe extern "C" fn yakvc_push_world(
             // SAFETY: the caller guarantees `uuids` points to `16 * count` bytes.
             let uuids = uuids_arg(uuids, count, "uuids")?;
             let players_len = count
-                .checked_mul(4)
+                .checked_mul(7)
                 .ok_or_else(|| FfiError::invalid("count is too large"))?;
-            // SAFETY: the caller guarantees `players` points to `4 * count` doubles.
+            // SAFETY: the caller guarantees `players` points to `7 * count` doubles.
             let players = slice_arg(players, players_len, "players")?;
             if !listener.iter().chain(players).all(|v| v.is_finite()) {
                 return Err(FfiError::invalid("world contains NaN or infinity"));
@@ -289,10 +290,12 @@ pub unsafe extern "C" fn yakvc_push_world(
 
             let players = uuids
                 .into_iter()
-                .zip(players.as_chunks::<4>().0)
-                .map(|(uuid, &[x, y, z, occlusion])| Player {
+                .zip(players.as_chunks::<7>().0)
+                .map(|(uuid, &[x, y, z, occlusion, hx, hy, hz])| Player {
+                    uuid,
+                    pos: Vec3::new(x, y, z),
                     occlusion: occlusion as f32,
-                    ..Player::new(uuid, Vec3::new(x, y, z))
+                    heard_from: Vec3::new(hx, hy, hz),
                 })
                 .collect();
             let room = Room {
