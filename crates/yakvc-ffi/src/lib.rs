@@ -728,8 +728,9 @@ fn stats_json(engine: &Engine) -> serde_json::Value {
     })
 }
 
-/// Copies this thread's last error message into `buf` (truncated to `cap`)
-/// and returns its full length, or 0 if there is none.
+/// Copies this thread's last error message into `buf` (truncated to `cap`,
+/// at a character boundary, so what is copied is still UTF-8) and returns
+/// its full length, or 0 if there is none.
 ///
 /// # Safety
 /// `buf` must be writable for `cap` bytes.
@@ -738,7 +739,7 @@ pub unsafe extern "C" fn yakvc_last_error(buf: *mut u8, cap: usize) -> usize {
     let message = guard::last_error();
     // SAFETY: the caller guarantees `buf` is writable for `cap` bytes.
     if let Ok(buf) = unsafe { buf_arg(buf, cap, "buf") } {
-        let n = message.len().min(buf.len());
+        let n = message.floor_char_boundary(buf.len());
         buf[..n].copy_from_slice(&message.as_bytes()[..n]);
     }
     message.len()
@@ -778,6 +779,16 @@ mod tests {
         let mut big = [0u8; 6];
         assert_eq!(write_if_fits(b"abcd", &mut big), 4);
         assert_eq!(&big[..4], b"abcd");
+    }
+
+    #[test]
+    fn last_error_is_cut_between_characters() {
+        guard(|| Err(FfiError::invalid("ää")));
+        let mut buf = [0u8; 3];
+        // SAFETY: `buf` is writable for its length.
+        let len = unsafe { yakvc_last_error(buf.as_mut_ptr(), buf.len()) };
+        assert_eq!(len, 4);
+        assert_eq!(&buf, "ä\0".as_bytes());
     }
 
     #[test]

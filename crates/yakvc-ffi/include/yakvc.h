@@ -362,8 +362,9 @@ int32_t yakvc_list_devices(struct YakVcEngine *engine, uint8_t *buf, size_t cap,
 int32_t yakvc_stats(struct YakVcEngine *engine, uint8_t *buf, size_t cap, size_t *needed);
 
 /**
- * Copies this thread's last error message into `buf` (truncated to `cap`)
- * and returns its full length, or 0 if there is none.
+ * Copies this thread's last error message into `buf` (truncated to `cap`,
+ * at a character boundary, so what is copied is still UTF-8) and returns
+ * its full length, or 0 if there is none.
  *
  * # Safety
  * `buf` must be writable for `cap` bytes.

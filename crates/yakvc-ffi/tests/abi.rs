@@ -123,6 +123,12 @@ fn every_engine_call_rejects_a_null_engine() {
         assert_eq!(code, YAKVC_ERR_INVALID_ARGUMENT);
     }
     assert_eq!(last_error(), "engine is null");
+
+    // The list above is kept by hand: every engine call the header declares
+    // must be in it, except `yakvc_destroy`, which ignores null.
+    let header = include_str!("../include/yakvc.h");
+    let engine_calls = header.matches("(struct YakVcEngine *engine").count() - 1;
+    assert_eq!(codes.len(), engine_calls, "add the new call to this test");
 }
 
 #[test]

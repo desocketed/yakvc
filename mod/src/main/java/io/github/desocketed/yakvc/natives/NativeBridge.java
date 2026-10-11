@@ -29,7 +29,8 @@ import java.util.UUID;
  * can take Java arrays without copying.
  *
  * <p>A failed call's message is read on the thread that made it, as the engine keeps it per thread, so calls may
- * come from any thread; keeping them from overlapping {@link #destroy} is the caller's job.
+ * come from any platform thread, never a virtual one: it could move to another carrier thread between the call
+ * and the read of its message. Keeping calls from overlapping {@link #destroy} is the caller's job.
  */
 public final class NativeBridge {
 	/** Must equal {@code YAKVC_ABI_VERSION} in {@code yakvc.h}. */
