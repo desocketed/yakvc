@@ -1,5 +1,7 @@
-# Shortcuts for common tasks. Run them inside the dev shell:
-# `nix develop --command just <recipe>`, or `just` alone to list them.
+# Shortcuts for common tasks; `just` alone lists them. Every recipe runs in
+# the dev shell, so the host's own Java and Rust never get in the way.
+
+set shell := ["nix", "develop", "--quiet", "--command", "bash", "-euc"]
 
 default:
     @just --list
