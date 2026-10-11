@@ -214,6 +214,8 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 			}
 		}
 		singleplayer.getServer().runCommand("setblock 12 -59 5 air");
+	}
+
 	/** Open ground has almost no reverb; a small stone box has plenty, and a short one; a big hall rings longer. */
 	private static void checkRoom(ClientGameTestContext context, TestSingleplayerContext singleplayer) {
 		Vec3 eye = new Vec3(20.5, -58.5, 20.5);
