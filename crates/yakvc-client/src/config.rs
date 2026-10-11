@@ -154,21 +154,22 @@ impl Config {
     }
 }
 
-/// The server used when `client.toml` names none, and its issuer. For now a
-/// test server with a plain-HTTP relay; the production server replaces it (#12).
+/// The server used when `client.toml` names none, and its issuer. Reached
+/// through its relay by hostname, with no IP address, so the server can move
+/// to a new machine with a DNS change: Iroh finds the direct path from there.
 fn built_in_rendezvous() -> (RendezvousConfig, IssuerId) {
     let rendezvous = RendezvousConfig {
-        endpoint_id: "2d829764b4378d7b20fe2f38ebe4992f0ff3d840f177d320494f78bff94bbbe4"
+        endpoint_id: "5c9578695b7b258c587bebc826f1091a95da2e75ef93a4b7aeff45f28e2cde60"
             .parse()
             .expect("valid endpoint id"),
-        addrs: vec!["172.104.24.53:7843".parse().expect("valid address")],
+        addrs: Vec::new(),
         relay: Some(
-            "http://172.104.24.53:3340"
+            "https://relay.yak.dsktd.net"
                 .parse()
                 .expect("valid relay URL"),
         ),
     };
-    let issuer = "7cd6e747b8e51d9ea0427d327151fb39236cfa52a4f73c968fdabb17d5ac7a1f"
+    let issuer = "7e2624000ff23e1db237755c4e1f79ff29d78d314e66bf9eb5654a74b75bd20f"
         .parse()
         .expect("valid issuer id");
     (rendezvous, issuer)
