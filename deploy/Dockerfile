@@ -3,8 +3,11 @@
 # empty state/ directory.
 #
 # distroless/static is an empty image plus CA certificates (for Mojang's
-# session server) and a non-root user, uid 65532.
-FROM gcr.io/distroless/static-debian13:nonroot
+# session server) and a non-root user, uid 65532. Pinned by digest, since the
+# tag moves: a release then builds from a known base, and `docker build
+# --pull` can't swap it. To update, resolve the tag's new index digest (for
+# example `crane digest gcr.io/distroless/static-debian13:nonroot`).
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3
 LABEL org.opencontainers.image.source="https://github.com/desocketed/yakvc"
 LABEL org.opencontainers.image.description="Yak VC rendezvous server and relay"
 LABEL org.opencontainers.image.licenses="MIT OR Apache-2.0"

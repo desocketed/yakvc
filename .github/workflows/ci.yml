@@ -22,11 +22,18 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
 
+# A newer push to a pull request cancels its running checks. Pushes to main
+# and tag runs finish, since a cancelled tag run would publish half a release.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # Whether a pull request touches more than docs (the same files a push to
   # main ignores). Pushes and manual runs always build.
   changes:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     outputs:
       code: ${{ steps.diff.outputs.code }}
     steps:
@@ -47,6 +54,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       # cpal links ALSA; libopus is built from source with cmake (preinstalled).
@@ -75,6 +83,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
@@ -89,6 +98,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       - name: Install toolchain
@@ -159,6 +169,7 @@ jobs:
     # The server job's yakvc-server is the gametest's dev rendezvous.
     needs: [natives, server]
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       # ALSA for the natives at runtime; Xvfb and Mesa's software Vulkan for the gametest.
@@ -219,6 +230,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       - name: Install toolchain
@@ -273,6 +285,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
@@ -284,6 +297,7 @@ jobs:
     if: always()
     needs: [changes, rust, deny, natives, mod, server, nix]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
@@ -301,14 +315,13 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [rust, deny, mod, server, nix]
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: write
       packages: write
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
-      MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
-      CURSEFORGE_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -347,16 +360,22 @@ jobs:
           image=ghcr.io/${GITHUB_REPOSITORY_OWNER}/yakvc-server
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           docker load < server/yakvc-server-image.tar.gz
-          for tag in "$VERSION" latest; do
+          # Only a full release moves `latest`: a beta must not become what
+          # an unpinned `docker pull` gets.
+          tags=("$VERSION")
+          if [[ $VERSION != *-* ]]; then tags+=(latest); fi
+          for tag in "${tags[@]}"; do
             docker tag yakvc-server:latest "$image:$tag"
             docker push "$image:$tag"
           done
+      # Each site's token is given to its own step only, never to the whole
+      # job; a step's `if` can read `secrets` directly.
       - name: Modrinth
-        if: env.GITHUB_ONLY != 'true' && env.MODRINTH_TOKEN != '' && vars.MODRINTH_PROJECT_ID != ''
+        if: env.GITHUB_ONLY != 'true' && secrets.MODRINTH_TOKEN != '' && vars.MODRINTH_PROJECT_ID != ''
         uses: Kir-Antipov/mc-publish@52307b03863581dec6b652b83e597aec02ebb075 # v3.3.1
         with:
           modrinth-id: ${{ vars.MODRINTH_PROJECT_ID }}
-          modrinth-token: ${{ env.MODRINTH_TOKEN }}
+          modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
           files: dist/yakvc-${{ env.VERSION }}.jar
           name: Yak VC ${{ env.VERSION }}
           version: ${{ env.VERSION }}
@@ -365,11 +384,11 @@ jobs:
           java: "25"
           dependencies: fabric-api(required)
       - name: CurseForge
-        if: env.GITHUB_ONLY != 'true' && env.CURSEFORGE_TOKEN != '' && vars.CURSEFORGE_PROJECT_ID != ''
+        if: env.GITHUB_ONLY != 'true' && secrets.CURSEFORGE_TOKEN != '' && vars.CURSEFORGE_PROJECT_ID != ''
         uses: Kir-Antipov/mc-publish@52307b03863581dec6b652b83e597aec02ebb075 # v3.3.1
         with:
           curseforge-id: ${{ vars.CURSEFORGE_PROJECT_ID }}
-          curseforge-token: ${{ env.CURSEFORGE_TOKEN }}
+          curseforge-token: ${{ secrets.CURSEFORGE_TOKEN }}
           files: dist/yakvc-${{ env.VERSION }}.jar
           name: Yak VC ${{ env.VERSION }}
           version: ${{ env.VERSION }}

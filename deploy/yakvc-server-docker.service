@@ -8,7 +8,9 @@ After=docker.service network-online.target
 Wants=network-online.target
 
 [Service]
-# Pin a release and change it here to upgrade deliberately.
+# Pin a release and change it here to upgrade deliberately. The tag must be a
+# published version: alphas publish no image, so 0.1.0 names the first full
+# release and exists only once it is out.
 Environment=IMAGE=ghcr.io/desocketed/yakvc-server:0.1.0
 ExecStartPre=-/usr/bin/docker rm --force yakvc-server
 ExecStartPre=/usr/bin/docker pull ${IMAGE}

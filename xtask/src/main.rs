@@ -322,7 +322,16 @@ fn server_image() -> Result<()> {
 
     let tag = format!("yakvc-server:{VERSION}");
     run(Command::new("docker")
-        .args(["build", "--tag", &tag, "--tag", "yakvc-server:latest"])
+        // `--pull` checks the pinned base against the registry, so a stale
+        // local copy under the same tag can't slip into a release.
+        .args([
+            "build",
+            "--pull",
+            "--tag",
+            &tag,
+            "--tag",
+            "yakvc-server:latest",
+        ])
         .arg(&context))?;
     println!("built image {tag} (also yakvc-server:latest)");
     Ok(())
