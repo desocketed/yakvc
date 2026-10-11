@@ -265,6 +265,8 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 
 		context.clickScreenButton("yakvc.menu.settings");
 		context.waitForScreen(VoiceSettingsScreen.class);
+		// The device pickers fill once their worker thread has listed the devices.
+		context.waitFor(mc -> ((VoiceSettingsScreen) mc.gui.screen()).devicesListed());
 		screenshotScreen(context, "voice-settings");
 		pressOptionButton(context, "yakvc.settings.input_device");
 		screenshotScreen(context, "voice-settings-microphone");

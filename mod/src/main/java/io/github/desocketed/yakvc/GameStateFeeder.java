@@ -1,5 +1,6 @@
 package io.github.desocketed.yakvc;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -42,7 +43,7 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * Feeds the engine from the game on every client tick and drains its events. Owns the engine handle: everything here
- * runs on the client thread.
+ * runs on the client thread, except the device listing ({@link #listDevices}), which has a worker thread of its own.
  */
 public final class GameStateFeeder {
 	/** Fits the largest record: an error message of 65,535 bytes plus its header. */
@@ -68,6 +69,8 @@ public final class GameStateFeeder {
 	private volatile @Nullable VoiceSession session;
 	/** The engine was destroyed, or crashed and can only be destroyed. */
 	private boolean closed;
+	/** Keeps a device listing on its worker thread and {@link #close} from overlapping: destroy must be the last call. */
+	private final Object destroyLock = new Object();
 	/**
 	 * {@code joinServer} calls not yet answered. They are answered from {@link #tick} rather than the worker, so no
 	 * native call can race {@link #close}.
@@ -202,11 +205,13 @@ public final class GameStateFeeder {
 		}
 	}
 
-	/** Shuts the engine down. Must be the last call. */
+	/** Shuts the engine down. Must be the last call; waits for a device listing in flight. */
 	public void close() {
 		if (closed) return;
-		closed = true;
-		bridge.destroy(engine);
+		synchronized (destroyLock) {
+			closed = true;
+			bridge.destroy(engine);
+		}
 	}
 
 	/**
@@ -226,22 +231,65 @@ public final class GameStateFeeder {
 		return null;
 	}
 
-	/**
-	 * The audio devices, inputs or outputs, as id to name in the system's order. The id goes in the config, the name
-	 * is for the player. Empty if the system can't list them.
-	 */
-	public Map<String, String> devices(boolean inputs) {
-		if (closed) return Map.of();
-		Map<String, String> devices = new LinkedHashMap<>();
-		try {
-			JsonElement listed = JsonParser.parseString(bridge.listDevices(engine));
-			for (JsonElement device : listed.getAsJsonObject().getAsJsonArray(inputs ? "inputs" : "outputs")) {
+	/** The audio devices as id to name in the system's order. The id goes in the config, the name is for the player. */
+	public record Devices(Map<String, String> inputs, Map<String, String> outputs) {
+		public static final Devices NONE = new Devices(Map.of(), Map.of());
+
+		static Devices parse(String json) {
+			JsonObject listed = JsonParser.parseString(json).getAsJsonObject();
+			return new Devices(names(listed.getAsJsonArray("inputs")), names(listed.getAsJsonArray("outputs")));
+		}
+
+		private static Map<String, String> names(JsonArray devices) {
+			Map<String, String> names = new LinkedHashMap<>();
+			for (JsonElement device : devices) {
 				JsonObject fields = device.getAsJsonObject();
-				devices.put(fields.get("id").getAsString(), fields.get("name").getAsString());
+				names.put(fields.get("id").getAsString(), fields.get("name").getAsString());
 			}
-		} catch (YakVcException e) {
+			return names;
+		}
+	}
+
+	/**
+	 * Lists the audio devices on a worker thread, because some sound systems take seconds to enumerate them, and the
+	 * settings screen would freeze the game for that long. The future completes on the client thread, with no
+	 * devices if the system can't list them or the engine is stopped.
+	 */
+	public CompletableFuture<Devices> listDevices() {
+		if (closed) return CompletableFuture.completedFuture(Devices.NONE);
+		CompletableFuture<Devices> listed = new CompletableFuture<>();
+		// A platform thread: a native call pins a virtual thread's carrier for the whole enumeration.
+		Thread.ofPlatform().daemon().name("yakvc-list-devices").start(() -> {
+			try {
+				listed.complete(listDevicesNow());
+			} catch (RuntimeException e) {
+				listed.completeExceptionally(e);
+			}
+		});
+		return listed.handleAsync(this::devicesListed, Minecraft.getInstance());
+	}
+
+	/**
+	 * The one native call off the client thread. The bridge reads the call's error on the calling thread, and the
+	 * engine's device listing touches none of its state, so only {@link #close} must not overlap it.
+	 */
+	private Devices listDevicesNow() {
+		synchronized (destroyLock) {
+			if (closed) return Devices.NONE;
+			return Devices.parse(bridge.listDevices(engine));
+		}
+	}
+
+	/** Back on the client thread, where a crashed engine may be shut down. */
+	private Devices devicesListed(@Nullable Devices devices, @Nullable Throwable error) {
+		if (error instanceof YakVcException e) {
 			if (e.poisoned()) fail(e);
 			else YakVcClient.LOGGER.warn("Could not list audio devices: {}", e.getMessage());
+			return Devices.NONE;
+		}
+		if (error != null) {
+			YakVcClient.LOGGER.error("Could not list audio devices", error);
+			return Devices.NONE;
 		}
 		return devices;
 	}
