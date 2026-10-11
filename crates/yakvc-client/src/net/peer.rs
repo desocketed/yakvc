@@ -17,9 +17,10 @@ use iroh::{EndpointAddr, EndpointId};
 use tokio::sync::{Semaphore, mpsc, watch};
 use tokio::task::JoinSet;
 use tokio::time::Instant;
-use yakvc_proto::peer::{ALPN, CloseCode, PeerHello, PeerMsg};
+use yakvc_proto::peer::{ALPN, CloseCode, MAX_PROTOCOLS, PeerHello, PeerMsg};
 use yakvc_proto::{ProtocolId, SignedTicket, Ticket, Uuid, wire};
 
+use super::rendezvous::Backoff;
 use super::{
     Bans, ControlRecv, ControlSend, Inner, Link, Peer, PeerEntry, PeerLink, PeerStatus, Protocol,
     RETRY_AFTER_FAILURE, close, is_relayed,
@@ -29,6 +30,8 @@ use super::{
 const DIAL_GRACE: Duration = Duration::from_secs(3);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+/// The longest wait between dials of a peer we can't reach.
+const MAX_REDIAL_DELAY: Duration = Duration::from_secs(60);
 /// Incoming handshakes served at once.
 const MAX_HANDSHAKES: usize = 16;
 /// How often the selected path is checked for the direct/relayed state.
@@ -102,6 +105,8 @@ pub(super) async fn accept_loop(inner: Arc<Inner>) {
 /// Keeps a listed peer connected until it is no longer listed. The task is
 /// aborted when the rendezvous sends `PeerGone`.
 pub(super) async fn keep_connected(inner: Arc<Inner>, remote: EndpointId) {
+    // A peer we can't reach is dialed less and less often until we can.
+    let mut redial = Backoff::new(Duration::from_secs(1), MAX_REDIAL_DELAY);
     loop {
         let (addr, open_conn, retry_after) = {
             let peers = inner.peers.lock().unwrap();
@@ -116,6 +121,7 @@ pub(super) async fn keep_connected(inner: Arc<Inner>, remote: EndpointId) {
         };
         let Some(addr) = addr else { return };
         if let Some(conn) = open_conn {
+            redial.reset();
             conn.closed().await;
             continue;
         }
@@ -138,12 +144,15 @@ pub(super) async fn keep_connected(inner: Arc<Inner>, remote: EndpointId) {
             continue;
         }
         set_status(&inner, remote, |flags| flags.failed = false);
-        if let Err(SetupError::Rejected(_) | SetupError::TimedOut) = dial(&inner, addr).await {
-            mark_failed(&inner, remote);
-        } else if open_conn_of(&inner, remote).is_none() {
-            // Lost the connection during setup; try again shortly rather
-            // than spinning.
-            tokio::time::sleep(Duration::from_secs(1)).await;
+        match dial(&inner, addr).await {
+            Err(SetupError::Rejected(_) | SetupError::TimedOut) => mark_failed(&inner, remote),
+            Err(SetupError::Connection(_)) => tokio::time::sleep(redial.next()).await,
+            Ok(()) if open_conn_of(&inner, remote).is_none() => {
+                // Lost the connection during setup; try again shortly rather
+                // than spinning.
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+            Ok(()) => {}
         }
     }
 }
@@ -237,6 +246,9 @@ async fn handshake(
         Ok(None) => return Err(SetupError::Connection("stream ended".into())),
         Err(err) => return Err(SetupError::Connection(err.to_string())),
     };
+    if !protocols_well_formed(&theirs.protocols) {
+        return Err(SetupError::Rejected(CloseCode::ProtocolError));
+    }
     let ticket = inner
         .verify_peer(&theirs.ticket, remote)
         .map_err(SetupError::Rejected)?;
@@ -272,6 +284,12 @@ async fn handshake(
         control_recv: recv,
         own_ticket_updates,
     })
+}
+
+/// A hello's protocol list is short and names each protocol once.
+fn protocols_well_formed(protocols: &[(ProtocolId, u16)]) -> bool {
+    let mut seen = std::collections::HashSet::new();
+    protocols.len() <= MAX_PROTOCOLS && protocols.iter().all(|(id, _)| seen.insert(*id))
 }
 
 /// Serves a verified connection until it closes: protocol streams,
@@ -321,8 +339,12 @@ async fn start_protocols(
     // both go by protocol ID rather than by how each lists its protocols.
     let mut agreed = agreed.to_vec();
     agreed.sort_by_key(|(protocol, _)| protocol.id().0);
+    // A dialer that never opens its streams would otherwise hold the
+    // acceptor here for as long as the connection lasts.
+    let deadline = Instant::now() + HANDSHAKE_TIMEOUT;
     for (protocol, version) in &agreed {
-        let Ok((send, recv)) = open_protocol_stream(conn, dialed, protocol.id().0).await else {
+        let opened = open_protocol_stream(conn, dialed, protocol.id().0);
+        let Ok(Ok((send, recv))) = tokio::time::timeout_at(deadline, opened).await else {
             close(conn, CloseCode::ProtocolError);
             break;
         };
@@ -764,6 +786,37 @@ mod tests {
         let links = tokio::time::timeout(Duration::from_secs(5), both).await;
         assert!(matches!(links, Ok((Some(_), Some(_)))));
         assert!(conn_b.close_reason().is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_acceptor_gives_up_on_a_dialer_that_opens_no_streams() {
+        let (a, b) = (loopback_endpoint().await, loopback_endpoint().await);
+        let (conn_a, conn_b) = connect(&a, &b).await;
+        let (voice_b, _voice_links_b) = probe(1, 1);
+        let (status_b, _events_b) = status(uuid(1));
+        let agreed_b = vec![(voice_b, 1)];
+        let bans = Bans::default();
+        let started = start_protocols(&conn_b, false, &agreed_b, &status_b, &bans);
+        let _tasks = tokio::time::timeout(2 * HANDSHAKE_TIMEOUT, started)
+            .await
+            .expect("the acceptor stops waiting");
+        // The dialer sees the code the acceptor closed with.
+        assert!(closed_with(conn_a.closed().await, CloseCode::ProtocolError));
+    }
+
+    #[test]
+    fn hello_protocol_lists_are_short_and_distinct() {
+        let listed = |ids: &[u8]| {
+            ids.iter()
+                .map(|&id| (ProtocolId(id), 1))
+                .collect::<Vec<_>>()
+        };
+        assert!(protocols_well_formed(&listed(&[])));
+        assert!(protocols_well_formed(&listed(&[1, 2])));
+        assert!(!protocols_well_formed(&listed(&[1, 1])));
+        let many: Vec<u8> = (0..=MAX_PROTOCOLS as u8).collect();
+        assert!(!protocols_well_formed(&listed(&many)));
+        assert!(protocols_well_formed(&listed(&many[1..])));
     }
 
     /// A [`Net`] on a loopback endpoint, with no protocols.
