@@ -89,7 +89,7 @@ fn server(dir: &Path, launch: &Path) -> Result<Child> {
         &dir.join("server.properties"),
         &format!(
             "online-mode=false\nenforce-secure-profile=false\nwhite-list=false\nenforce-whitelist=false\n\
-             server-ip=127.0.0.1\nserver-port={SERVER_PORT}\ndifficulty=peaceful\nspawn-protection=0\n"
+             server-ip=127.0.0.1\nserver-port={SERVER_PORT}\ndifficulty=peaceful\nspawn-protection=0\ngamemode=creative\nforce-gamemode=true\n"
         ),
     )?;
     Command::new("java")
