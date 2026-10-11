@@ -6,3 +6,5 @@
 /CLAUDE.md
 # The maintainer's own Org export of the design, kept local.
 /docs/DESIGN.html
+# The relay host's private values (see nix/hosts/yakvc-relay/configuration.nix).
+/nix/hosts/yakvc-relay/private.nix
