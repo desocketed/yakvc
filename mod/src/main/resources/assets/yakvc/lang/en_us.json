@@ -72,6 +72,8 @@
 	"yakvc.settings.bitrate": "Bitrate",
 	"yakvc.settings.bitrate.kbps": "%s kbit/s",
 	"yakvc.settings.bitrate.tooltip": "Higher sounds better and uses more data. 24 kbit/s is plenty for speech.",
+	"yakvc.settings.noise_suppression": "Noise Filter",
+	"yakvc.settings.noise_suppression.tooltip": "Filters fans, hum and room noise out of your microphone. Turn it off if it makes your voice sound choppy or robotic, or if your microphone is already clean.",
 	"yakvc.settings.input_device": "Microphone",
 	"yakvc.settings.input_device.default": "System Default",
 	"yakvc.settings.devices_loading": "Loading…",

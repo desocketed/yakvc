@@ -140,6 +140,7 @@ Open the settings from **Options → Music & Sounds → Voice Chat…**, at the 
 - **Activation**: *Push to Talk* sends your voice only while you hold the key. *Voice* sends it whenever the microphone hears you speak.
 - **Range**: how far away players can hear you and you can hear them, from 1 to 256 blocks (48 by default). Between two players, the shorter of their ranges applies.
 - **Bitrate**: the sound quality of your voice, from 16 to 64 kbit/s. Higher sounds better and uses more data; 24 kbit/s is plenty for speech.
+- **Noise Filter**: filters fans, hum and room noise out of your microphone. On by default; turn it off if it makes your voice sound choppy or robotic, or if your microphone is already clean.
 - **Microphone**: which microphone to use. Click it for a list of your microphones and pick one; scroll the list if it is long. *System Default* follows your system's setting.
 - **Microphone Level**: shows live how loud your microphone hears you, so you can check it works without joining a world or holding the talk key. The bar turns green above the white mark, the level at which *Voice* activation starts sending (`vad_threshold_db` in the [config file](#the-config-file)). It shows the microphone in use, so after picking another one, leave and reopen the settings to see it.
 - **Speakers**: where voices play. Click it to pick from a list, like the microphone. *Same as Game* uses the game's sound device (Options → Music & Sounds → Device).
@@ -226,6 +227,7 @@ The keys that the settings screen shows:
 | `invites` | `"everyone"` | Group Invites (`"everyone"`, `"friends"` or `"nobody"`) |
 | `[audio]` `activation` | `"push_to_talk"` | Activation (`"push_to_talk"` or `"voice"`) |
 | `[audio]` `bitrate` | `24000` | Bitrate, in bits per second |
+| `[audio]` `noise_suppression` | `true` | Noise Filter |
 | `[audio]` `input_device` | unset | Microphone, by device id |
 | `[audio]` `output_device` | unset | Speakers, by device id |
 
@@ -235,7 +237,6 @@ A few more are only in the file:
 | --- | --- | --- |
 | `friends_only` | unset | A list of player UUIDs, like `["11111111-2222-3333-4444-555555555555"]`. When set, you hear and talk to only these players. |
 | `setup_done` | `false` | Set once the voice menu's first-run card is dismissed, so it shows only once. |
-| `[audio]` `noise_suppression` | `true` | Filters background noise out of your microphone. |
 | `[audio]` `input_gain` | `1.0` | Microphone volume, from 0 to 10. |
 | `[audio]` `vad_threshold_db` | `-45.0` | How loud you must be for *Voice* activation to send, from -100 (everything) to 0 (very loud only). |
 | `[rendezvous]` | the Yak VC server | Another voice server, for those who [run their own](../deploy/README.md). |

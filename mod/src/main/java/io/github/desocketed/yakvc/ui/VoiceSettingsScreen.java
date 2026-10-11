@@ -37,6 +37,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	private final OptionInstance<String> activation;
 	private final OptionInstance<Integer> range;
 	private final OptionInstance<Integer> bitrateKbps;
+	private final OptionInstance<Boolean> noiseSuppression;
 	private final Dropdown inputDevice;
 	private final Dropdown outputDevice;
 	/** The device names, once listed: the listing runs on a worker thread while the screen shows "Loading…". */
@@ -79,6 +80,9 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.bitrate.tooltip")),
 				(caption, value) -> Options.genericValueLabel(caption, Component.translatable("yakvc.settings.bitrate.kbps", value)),
 				new OptionInstance.IntRange(16, 64), Math.clamp(initial.bitrate() / 1000, 16, 64), OptionInstance.NO_ACTION);
+		noiseSuppression = OptionInstance.createBoolean("yakvc.settings.noise_suppression",
+				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.noise_suppression.tooltip")),
+				initial.noiseSuppression());
 		inputDevice = device("yakvc.settings.input_device", true, initial.inputDevice(),
 				"yakvc.settings.input_device.default");
 		outputDevice = device("yakvc.settings.output_device", false, initial.outputDevice(),
@@ -181,7 +185,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	@Override
 	protected void addOptions() {
 		list.addSmall(activation, range);
-		list.addSmall(bitrateKbps);
+		list.addSmall(bitrateKbps, noiseSuppression);
 		list.addBig(inputDevice);
 		list.addBig(new MicLevelMeter(feeder::micLevelDb, initial.vadThresholdDb()));
 		list.addBig(outputDevice);
@@ -276,6 +280,9 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		// In kbps: a hand-edited bitrate that isn't a whole kbps would otherwise be rewritten on every close.
 		if (bitrateKbps.get() != initial.bitrate() / 1000) {
 			changed = changed.with("audio", "bitrate", String.valueOf(bitrateKbps.get() * 1000));
+		}
+		if (noiseSuppression.get() != initial.noiseSuppression()) {
+			changed = changed.with("audio", "noise_suppression", String.valueOf(noiseSuppression.get()));
 		}
 		if (!inputDevice.get().equals(Objects.requireNonNullElse(initial.inputDevice(), DEFAULT_DEVICE))) {
 			changed = changed.with("audio", "input_device", deviceValue(inputDevice.get()));
