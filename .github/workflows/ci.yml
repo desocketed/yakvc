@@ -328,6 +328,9 @@ jobs:
           version=${GITHUB_REF_NAME#v}
           test -f "dist/yakvc-$version.jar" || { echo "tag $GITHUB_REF_NAME, but built $(ls dist)" >&2; exit 1; }
           echo "VERSION=$version" >> "$GITHUB_ENV"
+          # Alphas are playtest builds: a GitHub prerelease only, with no
+          # server image and nothing on Modrinth or CurseForge.
+          if [[ $version == *-alpha* ]]; then echo "GITHUB_ONLY=true" >> "$GITHUB_ENV"; fi
       - name: GitHub release
         run: |
           # A version like 0.2.0-beta.1 makes a prerelease.
@@ -339,6 +342,7 @@ jobs:
           (cd release && sha256sum -- * > SHA256SUMS)
           gh release create "$GITHUB_REF_NAME" "${flags[@]}" release/*
       - name: Server image to GHCR
+        if: env.GITHUB_ONLY != 'true'
         run: |
           image=ghcr.io/${GITHUB_REPOSITORY_OWNER}/yakvc-server
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
@@ -348,7 +352,7 @@ jobs:
             docker push "$image:$tag"
           done
       - name: Modrinth
-        if: env.MODRINTH_TOKEN != '' && vars.MODRINTH_PROJECT_ID != ''
+        if: env.GITHUB_ONLY != 'true' && env.MODRINTH_TOKEN != '' && vars.MODRINTH_PROJECT_ID != ''
         uses: Kir-Antipov/mc-publish@52307b03863581dec6b652b83e597aec02ebb075 # v3.3.1
         with:
           modrinth-id: ${{ vars.MODRINTH_PROJECT_ID }}
@@ -361,7 +365,7 @@ jobs:
           java: "25"
           dependencies: fabric-api(required)
       - name: CurseForge
-        if: env.CURSEFORGE_TOKEN != '' && vars.CURSEFORGE_PROJECT_ID != ''
+        if: env.GITHUB_ONLY != 'true' && env.CURSEFORGE_TOKEN != '' && vars.CURSEFORGE_PROJECT_ID != ''
         uses: Kir-Antipov/mc-publish@52307b03863581dec6b652b83e597aec02ebb075 # v3.3.1
         with:
           curseforge-id: ${{ vars.CURSEFORGE_PROJECT_ID }}
