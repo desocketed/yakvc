@@ -58,10 +58,14 @@ public final class SessionJoiner {
 	/**
 	 * The game started logging in to a server. Blocks until a voice join in flight finishes, for at most a few
 	 * seconds. Fabric's login {@code INIT} fires while the login listener is created, before the game sends its hello,
-	 * so the game's own {@code joinServer} only comes after this returns. It runs on the connect thread, or on the
-	 * client thread for singleplayer, where a wait only lengthens the loading screen.
+	 * so the game's own {@code joinServer} only comes after this returns. It runs on the connect thread.
+	 *
+	 * <p>Not for a {@code localServer} (a singleplayer world or a LAN host, reached in memory): the game never calls
+	 * {@code joinServer} for those, so there is no race, and the wait would only stall the client thread, which the
+	 * login runs on there.
 	 */
-	public synchronized void loginStarted() {
+	public synchronized void loginStarted(boolean localServer) {
+		if (localServer) return;
 		loggingIn = true;
 		long deadline = System.nanoTime() + loginWait.toNanos();
 		try {

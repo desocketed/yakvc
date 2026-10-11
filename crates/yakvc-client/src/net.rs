@@ -384,7 +384,7 @@ impl Net {
 
     /// Talks to the rendezvous until the engine shuts down: authenticates,
     /// keeps the ticket fresh, sends pair tokens and connects to matches.
-    pub(crate) fn start_rendezvous(&self, config: RendezvousConfig, ticket_cache: PathBuf) {
+    pub(crate) fn start_rendezvous(&self, config: RendezvousConfig, ticket_cache: Option<PathBuf>) {
         let inner = self.inner.clone();
         let task = self
             .inner

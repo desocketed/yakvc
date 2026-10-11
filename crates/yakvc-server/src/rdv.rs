@@ -96,7 +96,7 @@ pub(crate) async fn serve(shared: Arc<Shared>, incoming: Incoming) {
         pair_updates: None,
         pair_hashes: None,
         unregistered: Some((unregistered, unregistered_ip)),
-        session_slot: None,
+        session_slots: None,
     };
     let code = match client.run().await {
         Ok(()) => CloseCode::Normal,
@@ -159,9 +159,19 @@ struct Client {
     /// Held until registered, against `Limits::max_unregistered` and (with
     /// a known IP) `max_unregistered_per_ip`.
     unregistered: Option<(Slot, Option<IpSlot>)>,
-    /// Held from `Hello` on, against `Limits::max_sessions_per_ip`, when
-    /// the IP is known.
-    session_slot: Option<IpSlot>,
+    /// Held from `Hello` on: one against `Limits::max_sessions` and one
+    /// against `max_sessions_per_ip` or, with no known IP,
+    /// `max_sessions_unknown_ip`.
+    session_slots: Option<(Slot, SourceSlot)>,
+}
+
+/// The session slot for where a connection comes from, held only to be
+/// given back when dropped.
+#[derive(Debug)]
+#[expect(dead_code, reason = "held only for its drop")]
+enum SourceSlot {
+    Ip(IpSlot),
+    UnknownIp(Slot),
 }
 
 impl Client {
@@ -250,10 +260,16 @@ impl Client {
         if self.hello.is_some() || !valid_addr || !valid_name {
             return Err(CloseCode::ProtocolError);
         }
-        if let Some(ip) = self.ip {
-            let slot = self.shared.sessions_per_ip.take(ip);
-            self.session_slot = Some(slot.ok_or(CloseCode::LimitExceeded)?);
-        }
+        let shared = &self.shared;
+        let slot = shared
+            .session_slots
+            .take()
+            .ok_or(CloseCode::LimitExceeded)?;
+        let source = match self.ip {
+            Some(ip) => shared.sessions_per_ip.take(ip).map(SourceSlot::Ip),
+            None => shared.sessions_unknown_ip.take().map(SourceSlot::UnknownIp),
+        };
+        self.session_slots = Some((slot, source.ok_or(CloseCode::LimitExceeded)?));
         let cached = hello
             .cached_ticket
             .as_ref()
