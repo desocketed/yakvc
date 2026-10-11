@@ -2,6 +2,7 @@ package io.github.desocketed.yakvc.config;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -33,6 +34,24 @@ class PlayerVolumesTest {
 		volumes.set(ALICE, PlayerVolumes.DEFAULT);
 		volumes.save();
 		assertFalse(Files.readString(dir.resolve(PlayerVolumes.FILE_NAME)).contains(ALICE.toString()));
+	}
+
+	/** The menu saves on every close, and most closes change nothing. */
+	@Test
+	void savingWritesOnlyAfterAChange(@TempDir Path dir) throws Exception {
+		PlayerVolumes volumes = PlayerVolumes.load(dir);
+		volumes.set(ALICE, PlayerVolumes.DEFAULT);
+		volumes.save();
+		assertFalse(Files.exists(dir.resolve(PlayerVolumes.FILE_NAME)), "nothing changed");
+
+		volumes.set(ALICE, new PlayerVolumes.Setting(0.5f, false));
+		volumes.save();
+		Path file = dir.resolve(PlayerVolumes.FILE_NAME);
+		assertTrue(Files.exists(file));
+		Files.delete(file);
+		volumes.set(ALICE, new PlayerVolumes.Setting(0.5f, false));
+		volumes.save();
+		assertFalse(Files.exists(file), "setting the same value again is not a change");
 	}
 
 	@Test

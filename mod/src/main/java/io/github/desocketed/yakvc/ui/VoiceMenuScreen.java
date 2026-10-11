@@ -51,6 +51,9 @@ public final class VoiceMenuScreen extends Screen {
 	private @Nullable LinearLayout setupCard;
 	/** The players in the list, to rebuild it when someone joins or leaves. */
 	private List<UUID> shown = List.of();
+	/** The status line under the title, which follows the voice state while the menu is open. */
+	private @Nullable StringWidget statusText;
+	private Component shownStatus = Component.empty();
 
 	public VoiceMenuScreen(@Nullable Screen lastScreen, GameStateFeeder feeder) {
 		super(Component.translatable("yakvc.menu.title"));
@@ -65,7 +68,8 @@ public final class VoiceMenuScreen extends Screen {
 		LinearLayout header = layout.addToHeader(LinearLayout.vertical().spacing(4));
 		header.defaultCellSetting().alignHorizontallyCenter();
 		header.addChild(new StringWidget(title, font));
-		header.addChild(new StringWidget(status().copy().withStyle(ChatFormatting.GRAY), font));
+		shownStatus = status();
+		statusText = header.addChild(new StringWidget(shownStatus.copy().withStyle(ChatFormatting.GRAY), font));
 		setupCard = feeder.config().setupDone() ? null : header.addChild(setupCard());
 		layout.setHeaderHeight(setupCard == null ? HEADER_HEIGHT : HEADER_HEIGHT_WITH_CARD);
 
@@ -133,7 +137,15 @@ public final class VoiceMenuScreen extends Screen {
 
 	@Override
 	public void tick() {
-		if (!players().equals(shown)) rebuildWidgets();
+		if (!players().equals(shown)) {
+			rebuildWidgets();
+			return;
+		}
+		Component status = status();
+		if (statusText != null && !status.equals(shownStatus)) {
+			shownStatus = status;
+			statusText.setMessage(status.copy().withStyle(ChatFormatting.GRAY));
+		}
 	}
 
 	@Override
