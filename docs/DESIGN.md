@@ -517,7 +517,7 @@ CI runs on every push to `main` (except pushes that only touch docs), on version
 3. `mod`: download natives, `cargo xtask dist --from artifacts/`, run Fabric client gametests (load mod, create engine, destroy). Loom runs them under Xvfb on Linux when `CI` is set.
 4. `release` (on a `v<version>` tag): a GitHub release (prerelease when the version has a `-`) with the jar, the `yakvc-cli` binaries (for `net report` in bug reports, built in the `natives` jobs), the static server binary and a `SHA256SUMS` file covering them; the server image to GHCR; the jar to Modrinth and CurseForge with `mc-publish`, each skipped until its token secret and project ID variable exist. An alpha (`v0.1.0-alpha.0`) is a playtest build: only the GitHub prerelease, with no server image and nothing on Modrinth or CurseForge. The GHCR `latest` tag follows only full releases (versions without a prerelease suffix); the image's distroless base is pinned by digest, and `cargo xtask server-image` builds with `--pull`. Every job has a timeout, and pushes to a PR branch cancel that branch's earlier run.
 
-Third-party actions (anything not under `actions/`) are pinned to full commit SHAs, with the release named in a comment, so a moved tag can't change what runs with the release secrets.
+Third-party actions (anything not under `actions/`) are pinned to full commit SHAs, with the release named in a comment, so a moved tag can't change what runs with the release secrets. The Gradle wrapper pins its distribution by `distributionSha256Sum` (`./gradlew wrapper --gradle-version <v>` updates both); per-artifact dependency verification is left until 1.0, since the Fabric toolchain changes hundreds of artifacts per Minecraft bump.
 
 **Licensing**
 
