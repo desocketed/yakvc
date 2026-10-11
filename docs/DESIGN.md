@@ -471,6 +471,8 @@ size_t   yakvc_last_error(uint8_t *buf, size_t cap);         // message for this
 
 `cargo xtask` is the single entry point that builds `yakvc-ffi` for each platform and stages it into the mod's resources. Gradle calls it for host-only dev builds, and CI builds each platform on its native runner and assembles one jar.
 
+Every cargo invocation in CI, `scripts/ci-local.sh`, the dev scripts, the Gradle build and xtask passes `--locked`: a Cargo.toml requirement that no longer matches Cargo.lock fails the build instead of re-resolving. Update Cargo.lock deliberately (`cargo update -p <crate>`, or run `cargo build` once without the flag after editing a manifest) and commit it with the change.
+
 **Native targets**
 
 | Target | Built on | Notes |
