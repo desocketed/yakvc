@@ -11,7 +11,7 @@ use yakvc_audio::{
     InputProcessor, JitterConfig, Microphone, Mixer, NullSink, Packet, ReceiveStream,
     SilenceSource, Spatial, Speakers, StreamStats, WavSource,
 };
-use yakvc_client::{Config, EndpointAddr, Engine, Event, Input, PeerInfo, Uuid};
+use yakvc_client::{Config, EndpointAddr, Engine, Event, Input, PeerInfo, PeerState, Uuid};
 
 #[derive(Debug, Parser)]
 #[command(name = "yakvc", version)]
@@ -53,12 +53,17 @@ enum AudioCommand {
     },
 }
 
-/// A two-machine call with no rendezvous or Minecraft account. Both sides
-/// transmit all the time and print each peer's path, RTT and loss every
-/// second until Ctrl-C.
+/// A two-machine call with no rendezvous or Minecraft account. Once the
+/// call is up both sides transmit all the time and print the peer's path,
+/// RTT and loss every second until Ctrl-C.
 #[derive(Debug, Subcommand)]
 enum CallCommand {
     /// Wait for a call, printing the address to dial.
+    ///
+    /// The address is a capability: anyone who has it can call and hear the
+    /// microphone, so share it only with the person you want to talk to.
+    /// The first caller gets the call and later ones are refused; the
+    /// microphone stays closed until then.
     Listen,
     /// Call the address printed by `call listen`.
     Dial {
@@ -264,14 +269,11 @@ fn print_stats(level_db: f32, stats: &StreamStats, devices: &DeviceHealth, json:
 
 /// Runs a direct call until Ctrl-C: dials `dial`, or listens if it is `None`.
 async fn call(config: Config, dial: Option<EndpointAddr>, json: bool) -> anyhow::Result<()> {
-    let (engine, mut events) = Engine::builder(config).ephemeral().start()?;
+    // A call is two people: the first peer to connect gets it, and the
+    // printed address lets anyone call, so nobody else may listen in.
+    let (engine, mut events) = Engine::builder(config).ephemeral().max_peers(1).start()?;
     let name = if dial.is_some() { "caller" } else { "listener" };
     engine.enable_direct_calls(Uuid::new_v4(), name);
-    // A terminal has no push-to-talk key, so the microphone stays open.
-    engine.set_input(Input {
-        push_to_talk: true,
-        ..Input::default()
-    });
     let listening = dial.is_none();
     if let Some(addr) = dial {
         engine.call(addr);
@@ -284,7 +286,18 @@ async fn call(config: Config, dial: Option<EndpointAddr>, json: bool) -> anyhow:
     loop {
         tokio::select! {
             _ = &mut ctrl_c => break,
-            Some(event) = events.next() => print_event(&event),
+            Some(event) = events.next() => {
+                print_event(&event);
+                // A terminal has no push-to-talk key, so the microphone is
+                // open for the whole call, and only then: the engine starts
+                // with it closed, and it closes again when the peer goes.
+                if let Event::Peer { state, .. } = event {
+                    engine.set_input(Input {
+                        push_to_talk: in_call(state),
+                        ..Input::default()
+                    });
+                }
+            }
             _ = every_second.tick() => {
                 // The address gains public and relay entries as the
                 // endpoint learns them, so show it again when it changes.
@@ -320,6 +333,14 @@ async fn net_report(config: Config, json: bool) -> anyhow::Result<()> {
         println!("{report}");
     }
     Ok(())
+}
+
+/// Whether the one peer of a direct call can hear us in `state`.
+fn in_call(state: PeerState) -> bool {
+    matches!(
+        state,
+        PeerState::Direct | PeerState::Relayed | PeerState::RelayFull
+    )
 }
 
 /// Parses the address format that `call listen` prints.
@@ -424,5 +445,15 @@ mod tests {
         );
         assert_eq!(parse_addr(&text).unwrap(), addr);
         assert!(parse_addr("not json").is_err());
+    }
+
+    #[test]
+    fn the_microphone_opens_only_while_a_peer_is_linked() {
+        assert!(!in_call(PeerState::Connecting));
+        assert!(in_call(PeerState::Direct));
+        assert!(in_call(PeerState::Relayed));
+        assert!(in_call(PeerState::RelayFull));
+        assert!(!in_call(PeerState::Failed));
+        assert!(!in_call(PeerState::Gone));
     }
 }

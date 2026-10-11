@@ -427,8 +427,9 @@ impl EngineBuilder {
         self
     }
 
-    /// Lowers the connection cap, so tests can reach it with a few clients.
-    #[cfg(feature = "sim")]
+    /// Lowers the connection cap: tests reach it with a few clients, and a
+    /// direct call (`yakvc call`) takes one peer. A connection past the cap
+    /// is refused during its handshake, so no audio reaches it.
     pub fn max_peers(mut self, max_peers: usize) -> Self {
         self.max_peers = max_peers;
         self
@@ -838,6 +839,41 @@ mod tests {
         alice.talk(false);
         bob.stays_silent().await;
 
+        bob.talk(true);
+        alice.hears().await;
+    }
+
+    /// `yakvc call listen` takes one caller: at `max_peers(1)`, a second
+    /// direct call is refused during its handshake and the first stays up.
+    #[tokio::test]
+    async fn a_direct_call_past_the_peer_cap_is_refused() {
+        let (sink, recording) = NullSink::new();
+        let builder = Engine::builder(Config::default())
+            .data_dir(data_dir("cap-alice"))
+            .max_peers(1)
+            .audio_source(ToneSource::new(220.0))
+            .audio_sink(sink);
+        let mut alice = start_player(builder, 1, "cap-alice", recording);
+        let mut bob = player(2, "cap-bob");
+        let mut carol = player(3, "cap-carol");
+        call(&mut alice, &mut bob).await;
+
+        carol.engine.call(alice.engine.net.loopback_addr());
+        let refusal = async {
+            while let Some(event) = carol.events.next().await {
+                if let Event::Error(error) = event {
+                    return error;
+                }
+            }
+            panic!("carol's engine stopped");
+        };
+        let error = tokio::time::timeout(Duration::from_secs(10), refusal)
+            .await
+            .expect("carol's call was not refused");
+        assert!(error.starts_with("call failed: rejected"), "{error}");
+        assert!(carol.engine.peers().is_empty());
+        let linked: Vec<Uuid> = alice.engine.peers().iter().map(|p| p.uuid).collect();
+        assert_eq!(linked, vec![uuid(2)]);
         bob.talk(true);
         alice.hears().await;
     }
