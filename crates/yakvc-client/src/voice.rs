@@ -38,6 +38,10 @@ use self::rules::plan_send;
 
 /// How often the audio thread wakes to move frames.
 const AUDIO_TICK: Duration = Duration::from_millis(5);
+/// How long [`Voice::stop`] waits for the audio thread. It notices the stop
+/// flag within a tick unless it is stuck opening a device, and shutdown
+/// must not hang on that.
+const STOP_TIMEOUT: Duration = Duration::from_millis(200);
 /// Mic level is reported every this many frames, about 10 times a second.
 const LEVEL_EVERY_FRAMES: u32 = 5;
 /// A remote speaker counts as stopped after this many silent frames.
@@ -284,12 +288,23 @@ impl Voice {
         self.shared.audio_stats.lock().unwrap().clone()
     }
 
-    /// Stops the audio thread and waits for it.
+    /// Stops the audio thread and waits up to [`STOP_TIMEOUT`] for it. A
+    /// thread that takes longer (a device open that never returns) is left
+    /// to finish on its own.
     pub(crate) fn stop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(thread) = self.audio_thread.take() {
-            let _ = thread.join();
+        let Some(thread) = self.audio_thread.take() else {
+            return;
+        };
+        let deadline = Instant::now() + STOP_TIMEOUT;
+        while !thread.is_finished() {
+            if Instant::now() >= deadline {
+                tracing::warn!("audio thread did not stop in time; leaving it behind");
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(1));
         }
+        let _ = thread.join();
     }
 }
 
