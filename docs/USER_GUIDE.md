@@ -47,7 +47,7 @@ While you are in a world, a few icons in the top-left corner show how voice is d
 | --- | --- |
 | ![White microphone](guide/hud-ready.png) | Ready. The microphone is white while you are silent. |
 | ![Green microphone](guide/hud-talking.png) | Talking: your voice is going out. |
-| ![Red microphone](guide/hud-muted.png) | Muted. |
+| ![Red microphone with a slash](guide/hud-muted.png) | Muted. |
 | ![Red headphones](guide/hud-deafened.png) | Deafened. |
 
 Signal bars appear next to the microphone only while Yak VC isn't connected to its server: yellow while it is connecting (or trying again), and red when it can't reach it. A grey microphone with a short message means voice is off in this world:

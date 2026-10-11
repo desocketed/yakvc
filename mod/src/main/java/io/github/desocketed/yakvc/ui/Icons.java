@@ -14,6 +14,8 @@ public final class Icons {
 
 	public static final Component SPEAKER = icon('');
 	public static final Component MIC = icon('');
+	/** The microphone with a slash, while muted. */
+	public static final Component MIC_MUTED = icon('');
 	public static final Component HEADPHONES = icon('');
 	public static final Component SIGNAL = icon('');
 	/** Shown next to players whose account is verified with Mojang. */
