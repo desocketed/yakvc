@@ -1,6 +1,7 @@
 //! Frame sources and sinks that need no audio hardware, for the CLI's
 //! `--wav` / `--null-out` options, bots and integration tests.
 
+use std::collections::VecDeque;
 use std::f32::consts::TAU;
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -8,7 +9,8 @@ use std::time::Instant;
 
 use crate::resample::Resampler;
 use crate::{
-    AudioError, FRAME_DURATION, FrameSink, FrameSource, MonoFrame, SAMPLE_RATE, StereoFrame,
+    AudioError, FRAME_DURATION, FRAME_SAMPLES, FrameSink, FrameSource, MonoFrame, SAMPLE_RATE,
+    StereoFrame,
 };
 
 /// Loud enough to pass the default VAD threshold, quiet enough to leave room
@@ -83,9 +85,15 @@ impl WavSource {
         let mut resampler = Resampler::new(spec.sample_rate, SAMPLE_RATE, 1)?;
         resampler.process(&mono, &mut samples);
         if spec.sample_rate != SAMPLE_RATE {
-            // Push the resampler's last partial chunk through.
-            let flush = vec![0.0; spec.sample_rate as usize / 50];
+            // Push the resampler's last partial chunk through, then cut
+            // the result to the file's own length: the filter's delay at
+            // the front and the padding at the back would otherwise play
+            // as a silent gap on every pass of a looping file.
+            let flush = vec![0.0; spec.sample_rate as usize / 50 + resampler.delay()];
             resampler.process(&flush, &mut samples);
+            let length = mono.len() * SAMPLE_RATE as usize / spec.sample_rate as usize;
+            samples.drain(..resampler.delay().min(samples.len()));
+            samples.truncate(length);
         }
 
         Ok(WavSource {
@@ -198,8 +206,14 @@ pub struct Recording {
 struct Recorded {
     frames: usize,
     audible_frames: usize,
-    samples: Vec<[f32; 2]>,
+    /// The newest [`RECORDED_FRAMES`] frames, oldest first.
+    samples: VecDeque<[f32; 2]>,
 }
+
+/// How much of what a [`NullSink`] played is kept for [`Recording::take`]:
+/// 10 s. Enough for a test to listen in, without a long test with many
+/// clients growing without bound.
+const RECORDED_FRAMES: usize = 10 * 50;
 
 impl NullSink {
     pub fn new() -> (NullSink, Recording) {
@@ -225,7 +239,12 @@ impl FrameSink for NullSink {
         let mut recorded = lock(&self.recording.shared);
         recorded.frames += 1;
         recorded.audible_frames += usize::from(audible);
-        recorded.samples.extend_from_slice(frame);
+        recorded.samples.extend(frame);
+        let excess = recorded
+            .samples
+            .len()
+            .saturating_sub(RECORDED_FRAMES * FRAME_SAMPLES);
+        recorded.samples.drain(..excess);
     }
 }
 
@@ -240,11 +259,11 @@ impl Recording {
         lock(&self.shared).audible_frames
     }
 
-    /// Takes the samples recorded since the last call, leaving the buffer
-    /// empty. [`frames`](Self::frames) and
+    /// Takes the samples recorded since the last call (at most the last
+    /// 10 s), leaving the buffer empty. [`frames`](Self::frames) and
     /// [`audible_frames`](Self::audible_frames) keep counting from the start.
     pub fn take(&self) -> Vec<[f32; 2]> {
-        std::mem::take(&mut lock(&self.shared).samples)
+        lock(&self.shared).samples.drain(..).collect()
     }
 }
 
@@ -261,7 +280,6 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::FRAME_SAMPLES;
     use crate::input::level_db;
 
     /// Makes the next frame due without waiting.
@@ -356,6 +374,18 @@ mod tests {
         assert_eq!(recording.frames(), 3);
     }
 
+    #[test]
+    fn null_sink_keeps_only_the_newest_samples() {
+        let (mut sink, recording) = NullSink::new();
+        for i in 0..=RECORDED_FRAMES {
+            sink.write(&[[i as f32; 2]; FRAME_SAMPLES]);
+        }
+        let samples = recording.take();
+        assert_eq!(samples.len(), RECORDED_FRAMES * FRAME_SAMPLES);
+        assert_eq!(samples[0], [1.0; 2], "the oldest frame was dropped");
+        assert_eq!(recording.frames(), RECORDED_FRAMES + 1);
+    }
+
     fn write_wav(name: &str, spec: hound::WavSpec, seconds: f32) -> std::path::PathBuf {
         let file = format!("yakvc-audio-{}-{name}.wav", std::process::id());
         let path = std::env::temp_dir().join(file);
@@ -400,10 +430,30 @@ mod tests {
         let mut source = WavSource::open(&path, false).unwrap();
         std::fs::remove_file(&path).unwrap();
         let frames = read_all(&mut source);
-        // 0.5 s is 25 frames at 48 kHz, plus a partial one from the flush.
-        assert!((25..=27).contains(&frames.len()), "{}", frames.len());
+        // 0.5 s is exactly 25 frames at 48 kHz.
+        assert_eq!(frames.len(), 25);
         let peak = frames[10].iter().fold(0.0f32, |m, s| m.max(s.abs()));
         assert!((peak - 0.5).abs() < 0.02, "{peak}");
+    }
+
+    /// A resampled file keeps its tone right up to its end and from its
+    /// start, so a looping one has no silent gap at the seam.
+    #[test]
+    fn resampled_wav_has_no_gap_at_the_loop() {
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 44_100,
+            bits_per_sample: 32,
+            sample_format: hound::SampleFormat::Float,
+        };
+        let path = write_wav("seam", spec, 0.5);
+        let source = WavSource::open(&path, true).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        let edge = SAMPLE_RATE as usize / 200; // 5 ms, a few cycles of 500 Hz
+        let peak = |s: &[f32]| s.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        let n = source.samples.len();
+        assert!((peak(&source.samples[..edge]) - 0.5).abs() < 0.05);
+        assert!((peak(&source.samples[n - edge..]) - 0.5).abs() < 0.05);
     }
 
     #[test]
