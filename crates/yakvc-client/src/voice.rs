@@ -562,7 +562,10 @@ fn deliver_impaired(
             let datagram = datagram.clone();
             tokio::spawn(async move {
                 tokio::time::sleep(delay).await;
-                deliver(&shared, from, link_id, datagram);
+                // Checked again: a newer link may have taken over meanwhile.
+                if shared.is_current(from, link_id) {
+                    deliver(&shared, from, link_id, datagram);
+                }
             });
         }
     }

@@ -44,7 +44,7 @@ async fn players_without_accounts_talk_on_offline_mode_servers() {
 #[tokio::test(flavor = "multi_thread")]
 async fn players_without_accounts_get_nothing_on_online_mode_servers() {
     let net = TestNet::start_without_accounts(DAY).await;
-    let mut carol = net.client().name("carol").spawn();
+    let mut carol = net.client().name("carol").spawn().await;
     let alice = net.client().name("alice").offline().start().await;
     see_each_other(&[&alice, &carol]);
 
@@ -122,16 +122,20 @@ async fn only_the_newest_link_for_a_player_is_heard() {
             .iter()
             .all(|p| p.voice_version == Some(yakvc_proto::voice::VERSION))
     );
+    // Heard while it is the only link, so the silence below means something.
+    first.talk(true);
+    sleep(Duration::from_millis(500)).await;
+    let before = alice.recording().audible_frames();
+    sleep(Duration::from_secs(1)).await;
+    assert!(alice.recording().audible_frames() > before + 10);
 
-    // A second, silent "bob" links up after the first.
+    // A second, silent "bob" links up after the first, which keeps talking.
     let second = net.client().name("bob").offline().start().await;
     second.sees(&[&alice]);
     second.move_to(Vec3::new(5.0, 64.0, 0.0));
     links_to(&alice, bob, 2).await;
     sleep(Duration::from_millis(500)).await;
 
-    first.talk(true);
-    sleep(Duration::from_millis(500)).await;
     let before = alice.recording().audible_frames();
     sleep(Duration::from_secs(1)).await;
     assert_eq!(alice.recording().audible_frames(), before);
