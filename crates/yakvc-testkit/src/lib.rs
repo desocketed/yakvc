@@ -296,6 +296,7 @@ fn push_worlds(players: &Mutex<Vec<Player>>) {
                 pitch: 0.0,
             },
             players: visible,
+            ..World::default()
         });
     }
 }

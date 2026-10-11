@@ -86,6 +86,8 @@ public final class GameStateFeeder {
 	private Set<UUID> tabList = Set.of();
 	private List<UUID> tracked = List.of();
 	private boolean worldEmpty = true;
+	/** The listener's surroundings, smoothed from tick to tick. */
+	private Room room = Room.OPEN_AIR;
 	/** The engine starts with no input flags set. */
 	private int inputFlags = 0;
 	private float gameVolume = -1;
@@ -397,7 +399,8 @@ public final class GameStateFeeder {
 		if (worldEmpty) return;
 		tracked = List.of();
 		worldEmpty = true;
-		bridge.pushWorld(engine, new double[5], new byte[0], new double[0]);
+		room = Room.OPEN_AIR;
+		bridge.pushWorld(engine, new double[7], new byte[0], new double[0]);
 	}
 
 	/**
@@ -411,7 +414,8 @@ public final class GameStateFeeder {
 		Vec3 eye = camera.isInitialized() ? camera.position() : player.getEyePosition();
 		float yaw = camera.isInitialized() ? camera.yRot() : player.getYRot();
 		float pitch = camera.isInitialized() ? camera.xRot() : player.getXRot();
-		double[] listener = {eye.x, eye.y, eye.z, yaw, pitch};
+		room = room.towards(Room.around(minecraft.level, eye));
+		double[] listener = {eye.x, eye.y, eye.z, yaw, pitch, room.reverb(), room.decay()};
 
 		List<UUID> uuids = new ArrayList<>();
 		List<double[]> players = new ArrayList<>();

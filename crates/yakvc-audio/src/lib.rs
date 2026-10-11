@@ -16,6 +16,7 @@ mod mixer;
 mod muffle;
 mod receive;
 mod resample;
+mod reverb;
 mod test_io;
 
 use std::time::Duration;
@@ -26,6 +27,7 @@ pub use crate::input::{InputActivity, InputConfig, InputProcessor, level_db};
 pub use crate::mixer::{Mixer, Spatial};
 pub use crate::muffle::Muffle;
 pub use crate::receive::{JitterConfig, Packet, Pulled, ReceiveStream, StreamStats};
+pub use crate::reverb::Reverb;
 pub use crate::test_io::{NullSink, Recording, SilenceSource, ToneSource, WavSource};
 
 /// Sample rate used throughout the pipeline.

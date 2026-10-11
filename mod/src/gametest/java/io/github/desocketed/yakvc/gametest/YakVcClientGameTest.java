@@ -5,6 +5,7 @@ import com.terraformersmc.modmenu.gui.ModsScreen;
 import com.terraformersmc.modmenu.gui.widget.ModListWidget;
 import com.terraformersmc.modmenu.gui.widget.entries.ModListEntry;
 import io.github.desocketed.yakvc.GameStateFeeder;
+import io.github.desocketed.yakvc.Room;
 import io.github.desocketed.yakvc.YakVcClient;
 import io.github.desocketed.yakvc.config.ClientConfig;
 import io.github.desocketed.yakvc.config.PlayerVolumes;
@@ -55,6 +56,7 @@ import net.minecraft.client.player.RemotePlayer;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket.Action;
 import net.minecraft.world.level.GameType;
+import net.minecraft.world.phys.Vec3;
 
 /**
  * Starts the real client with the native engine, dev test audio and a dev rendezvous ({@link DevRendezvous}), opens a
@@ -178,11 +180,31 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 			singleplayer.getServer().runCommand("gamemode creative @a");
 			context.waitFor(mc -> (feeder.inputFlags() & NativeBridge.INPUT_SPECTATOR) == 0);
 
+			checkRoom(context, singleplayer);
+
 			if (context.computeOnClient(mc -> feeder.errorEvents() != 0 || feeder.closed())) {
 				throw new AssertionError("engine reported errors; see the log");
 			}
 			// After the check above, since these errors are made up.
 			checkEngineErrorToasts(context, feeder);
+		}
+	}
+
+	/** Open ground has almost no reverb; a small stone box has plenty, and a short one; a big hall rings longer. */
+	private static void checkRoom(ClientGameTestContext context, TestSingleplayerContext singleplayer) {
+		Vec3 eye = new Vec3(20.5, -58.5, 20.5);
+		Room open = context.computeOnClient(mc -> Room.around(mc.level, eye));
+		singleplayer.getServer().runCommand("fill 18 -61 18 22 -56 22 stone hollow");
+		context.waitTicks(3);
+		Room small = context.computeOnClient(mc -> Room.around(mc.level, eye));
+		singleplayer.getServer().runCommand("fill 18 -61 18 22 -56 22 air");
+		singleplayer.getServer().runCommand("fill 10 -61 10 30 -46 30 stone hollow");
+		context.waitTicks(3);
+		Room hall = context.computeOnClient(mc -> Room.around(mc.level, eye));
+		singleplayer.getServer().runCommand("fill 10 -61 10 30 -46 30 air");
+		singleplayer.getServer().runCommand("fill 10 -61 10 30 -61 30 grass_block");
+		if (!(open.reverb() < 0.1f && small.reverb() > 0.5f && hall.reverb() > 0.5f && hall.decay() > small.decay())) {
+			throw new AssertionError("rooms: open " + open + ", small " + small + ", hall " + hall);
 		}
 	}
 

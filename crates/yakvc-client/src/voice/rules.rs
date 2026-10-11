@@ -212,7 +212,10 @@ impl VoiceState {
         }
         let player = world.players.iter().find(|p| p.uuid == peer)?;
         let spatial = spatial(&world.listener, player.pos, self.voice_range)?;
-        Some(occluded(spatial, player.occlusion))
+        Some(Spatial {
+            reverb: world.room.reverb,
+            ..occluded(spatial, player.occlusion)
+        })
     }
 
     /// Whether to send this frame to `peer`, and how. Whether the peer
@@ -265,6 +268,7 @@ const CENTRED: Spatial = Spatial {
     gain: 1.0,
     pan: 0.0,
     muffle: 0.0,
+    reverb: 0.0,
 };
 
 /// Gain and pan for a source at `source`, heard by `listener` with voice
@@ -308,6 +312,7 @@ pub(crate) fn spatial(listener: &Pose, source: Vec3, range: f32) -> Option<Spati
         gain: gain as f32,
         pan: pan as f32,
         muffle: 0.0,
+        reverb: 0.0,
     })
 }
 
@@ -569,6 +574,7 @@ mod tests {
         let world = |x: f64| World {
             listener: listener(0.0),
             players: vec![Player::new(uuid(1), at(x, 0.0))],
+            ..World::default()
         };
         state.set_world(world(10.0), start);
         state.set_world(world(20.0), start + tick);

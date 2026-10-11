@@ -49,6 +49,7 @@ fn tone_reaches_the_sink() {
                     gain: 1.0,
                     pan: 0.0,
                     muffle: 0.0,
+                    reverb: 0.0,
                 },
             ));
             mixer.mix(sources, &mut mixed);

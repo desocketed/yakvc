@@ -32,7 +32,7 @@ use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 
 use yakvc_client::{
-    Config, ConfigError, Engine, GroupError, GroupId, Input, JoinId, PeerAudio, Player, Pose,
+    Config, ConfigError, Engine, GroupError, GroupId, Input, JoinId, PeerAudio, Player, Pose, Room,
     StartError, Uuid, Vec3, World,
 };
 
@@ -50,7 +50,7 @@ use crate::guard::{
 /// shared group state and kick votes; group-only voice in a group.
 /// 6: kick votes removed (`yakvc_vote_kick`, the kick vote event and notice).
 /// 7: `yakvc_join_group` takes the id length.
-pub const YAKVC_ABI_VERSION: u32 = 8;
+pub const YAKVC_ABI_VERSION: u32 = 9;
 
 pub const YAKVC_OK: i32 = 0;
 /// A null pointer, bad UUID, invalid UTF-8 or out-of-range value.
@@ -254,13 +254,14 @@ pub unsafe extern "C" fn yakvc_set_tab_list(
     }
 }
 
-/// Pushes one tick's world: `listener` is `x, y, z, yaw, pitch`; then `count`
+/// Pushes one tick's world: `listener` is `x, y, z, yaw, pitch, reverb,
+/// decay`, the last two describing the room around it (see `Room`); then `count`
 /// tracked players as UUIDs and, per player, `x, y, z, occlusion`: the eye
 /// position, and how much of the direct path to the listener is blocked,
 /// from 0 (open air) to 1 (fully blocked).
 ///
 /// # Safety
-/// `engine` must be live; `listener` must point to 5 doubles, `uuids` to
+/// `engine` must be live; `listener` must point to 7 doubles, `uuids` to
 /// `16 * count` bytes and `players` to `4 * count` doubles.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn yakvc_push_world(
@@ -273,8 +274,8 @@ pub unsafe extern "C" fn yakvc_push_world(
     // SAFETY: the caller guarantees `engine` is live.
     unsafe {
         with_engine(engine, |e| {
-            // SAFETY: the caller guarantees `listener` points to 5 doubles.
-            let listener = slice_arg(listener, 5, "listener")?;
+            // SAFETY: the caller guarantees `listener` points to 7 doubles.
+            let listener = slice_arg(listener, 7, "listener")?;
             // SAFETY: the caller guarantees `uuids` points to `16 * count` bytes.
             let uuids = uuids_arg(uuids, count, "uuids")?;
             let players_len = count
@@ -294,12 +295,20 @@ pub unsafe extern "C" fn yakvc_push_world(
                     ..Player::new(uuid, Vec3::new(x, y, z))
                 })
                 .collect();
+            let room = Room {
+                reverb: listener[5] as f32,
+                decay: listener[6] as f32,
+            };
             let listener = Pose {
                 pos: Vec3::new(listener[0], listener[1], listener[2]),
                 yaw: listener[3] as f32,
                 pitch: listener[4] as f32,
             };
-            e.engine.set_world(World { listener, players });
+            e.engine.set_world(World {
+                listener,
+                players,
+                room,
+            });
             Ok(())
         })
     }

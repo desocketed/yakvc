@@ -968,6 +968,7 @@ impl AudioLoop {
         }
 
         self.mixer.set_master_gain(state.game_volume);
+        self.mixer.set_reverb_decay(world.room.decay);
         let mut out: StereoFrame = [[0.0; 2]; FRAME_SAMPLES];
         self.mixer.mix(
             voices.iter().map(|(frame, spatial)| (frame, *spatial)),
