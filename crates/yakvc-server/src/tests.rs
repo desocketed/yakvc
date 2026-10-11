@@ -1564,3 +1564,25 @@ async fn the_probe_signs_in_through_the_relay_without_mojang() {
         .await
         .unwrap();
 }
+
+/// A renewal is a session update too: a flood of them is closed like a
+/// flood of pair updates, instead of only being refused.
+#[tokio::test]
+async fn renewals_count_as_pair_updates() {
+    let limits = Limits {
+        pair_updates_per_sec: 3,
+        ..Limits::default()
+    };
+    let server = builder()
+        .insecure_dev_auth()
+        .limits(limits)
+        .spawn()
+        .await
+        .unwrap();
+    let mut client = Client::connect(&server, "alice").await;
+    client.register().await;
+    for _ in 0..4 {
+        client.send(ClientMsg::Renew).await;
+    }
+    assert_eq!(client.close_code().await, code(CloseCode::RateLimited));
+}
