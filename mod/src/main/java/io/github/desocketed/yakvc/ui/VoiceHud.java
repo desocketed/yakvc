@@ -46,12 +46,15 @@ public final class VoiceHud implements HudElement {
 
 		int x = 4;
 		int y = 4;
+		Component mic = Icons.MIC;
 		int micColor;
 		if (problem != null) micColor = GREY;
-		else if ((flags & NativeBridge.INPUT_MUTED) != 0) micColor = RED;
-		else if (feeder.talking().contains(minecraft.player.getUUID())) micColor = GREEN;
+		else if ((flags & NativeBridge.INPUT_MUTED) != 0) {
+			mic = Icons.MIC_MUTED;
+			micColor = RED;
+		} else if (feeder.talking().contains(minecraft.player.getUUID())) micColor = GREEN;
 		else micColor = WHITE;
-		x = icon(graphics, font, Icons.MIC, x, y, micColor);
+		x = icon(graphics, font, mic, x, y, micColor);
 		if ((flags & NativeBridge.INPUT_DEAFENED) != 0) x = icon(graphics, font, Icons.HEADPHONES, x, y, RED);
 		// Only a connection that isn't working is worth the space.
 		if (feeder.rendezvous() != EngineEvent.RendezvousState.REGISTERED) {
