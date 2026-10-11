@@ -7,12 +7,13 @@
 //! opens its devices exactly as it does for players, instead of using the dev
 //! test audio. A 440 Hz tone plays into the test microphone. Needs Nix, which provides PipeWire, WirePlumber and D-Bus.
 
+use std::f32::consts::TAU;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use anyhow::{Context, Result, bail, ensure};
 
@@ -187,19 +188,28 @@ pub fn with_pipewire(command: &[String]) -> Result<i32> {
         .envs(env.iter().cloned())
         .status()
         .with_context(|| format!("running {program}"))?;
-    Ok(status.code().unwrap_or(1))
+    let code = status.code().unwrap_or(1);
+    if code == 0 {
+        // The logs are only worth keeping after a failure.
+        drop(daemons);
+        let _ = fs::remove_dir_all(&work);
+        let _ = fs::remove_dir_all(&runtime);
+    }
+    Ok(code)
 }
 
 /// Writes a 440 Hz sine at -10 dBFS, mono 16-bit 48 kHz, until the player
 /// goes away.
 fn play_tone(mut player: ChildStdin) {
-    let mut i = 0u64;
+    let step = TAU * 440.0 / 48_000.0;
+    let mut phase = 0f32;
     loop {
         let block: Vec<u8> = (0..4800)
             .flat_map(|_| {
-                i += 1;
-                let t = i as f32 / 48_000.0;
-                let sample = 0.3 * (2.0 * std::f32::consts::PI * 440.0 * t).sin();
+                // Accumulated and wrapped, so precision doesn't drift as the
+                // sample count grows.
+                phase = (phase + step) % TAU;
+                let sample = 0.3 * phase.sin();
                 ((sample * f32::from(i16::MAX)) as i16).to_le_bytes()
             })
             .collect();
@@ -230,10 +240,10 @@ fn nix_package(name: &str) -> Result<PathBuf> {
     Ok(PathBuf::from(path.trim()))
 }
 
+/// A new, empty directory of this process's own under the system temp dir.
 fn temp_dir(prefix: &str) -> Result<PathBuf> {
-    let out = Command::new("mktemp")
-        .args(["-d", &format!("/tmp/{prefix}.XXXXXX")])
-        .output()?;
-    ensure!(out.status.success(), "mktemp failed");
-    Ok(PathBuf::from(String::from_utf8(out.stdout)?.trim()))
+    let nanos = SystemTime::UNIX_EPOCH.elapsed()?.subsec_nanos();
+    let dir = std::env::temp_dir().join(format!("{prefix}.{}.{nanos}", std::process::id()));
+    fs::create_dir(&dir).with_context(|| format!("creating {}", dir.display()))?;
+    Ok(dir)
 }

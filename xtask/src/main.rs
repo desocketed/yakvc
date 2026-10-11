@@ -117,7 +117,7 @@ fn natives(target: &str, out: &Path) -> Result<()> {
                 let x86 = build_ffi(Some("x86_64-apple-darwin"))?;
                 let arm = build_ffi(Some("aarch64-apple-darwin"))?;
                 let dir = out.join("macos-universal");
-                fs::create_dir_all(&dir)?;
+                fresh_dir(&dir)?;
                 let universal = dir.join(x86.file_name().unwrap());
                 run(Command::new("lipo")
                     .arg("-create")
@@ -178,10 +178,20 @@ fn build_ffi(target: Option<&str>) -> Result<PathBuf> {
 }
 
 fn stage(lib: &Path, dir: &Path) -> Result<()> {
-    fs::create_dir_all(dir)?;
+    fresh_dir(dir)?;
     let to = dir.join(lib.file_name().unwrap());
     fs::copy(lib, &to).with_context(|| format!("copying {}", lib.display()))?;
     println!("staged {}", to.display());
+    Ok(())
+}
+
+/// An empty `dir`: a library from an earlier run with another name would
+/// otherwise be shipped and listed in the manifest beside the new one.
+fn fresh_dir(dir: &Path) -> Result<()> {
+    if dir.exists() {
+        fs::remove_dir_all(dir)?;
+    }
+    fs::create_dir_all(dir)?;
     Ok(())
 }
 
