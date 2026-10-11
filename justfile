@@ -12,9 +12,12 @@ dir := justfile_directory() / "mod/run/dev"
 rendezvous_port := "7843"
 server_port := "25565"
 
-# Libraries Minecraft loads from the host at runtime, as on NixOS, where
-# /run/opengl-driver holds the GPU driver.
+# Libraries Minecraft loads at runtime, from nixpkgs. On NixOS the GPU driver
+# is in /run/opengl-driver; anywhere else (Arch, Ubuntu, ...) the client runs
+# under nixGL, which finds the host's GPU (Mesa, or NVIDIA by its kernel
+# driver) and puts a matching driver from nixpkgs in front.
 export LD_LIBRARY_PATH := "/run/opengl-driver/lib:" + `nix build --inputs-from . --no-link --print-out-paths nixpkgs#libglvnd nixpkgs#vulkan-loader nixpkgs#wayland nixpkgs#libxkbcommon nixpkgs#libpulseaudio nixpkgs#alsa-lib nixpkgs#xorg.libX11 nixpkgs#xorg.libXcursor nixpkgs#xorg.libXrandr nixpkgs#xorg.libXi nixpkgs#xorg.libXext | sed 's|$|/lib|' | paste -sd:`
+gl := if path_exists("/etc/NIXOS") == "true" { "" } else { "nix run --impure github:nix-community/nixGL --" }
 
 # The rendezvous, the server and one client per name, all joining the server.
 dev +names="Alice Bob": build
@@ -66,4 +69,4 @@ client name:
     [[ -f options.txt ]] || printf '%s\n' onboardAccessibility:false skipMultiplayerWarning:true \
         joinedFirstServer:true > options.txt
     mapfile -t args < {{justfile_directory()}}/mod/build/devlaunch/client.args
-    exec java "${args[@]}" --gameDir . --username {{name}} --quickPlayMultiplayer 127.0.0.1:{{server_port}}
+    exec {{gl}} java "${args[@]}" --gameDir . --username {{name}} --quickPlayMultiplayer 127.0.0.1:{{server_port}}
