@@ -45,9 +45,10 @@ impl Muffle {
 }
 
 /// The one-pole coefficient for a muffle amount. The cutoff moves
-/// geometrically, so equal steps in amount sound like equal steps.
+/// geometrically, and fastest at first, so even a little muffle is heard:
+/// half muffled cuts above about 1.7 kHz.
 fn coefficient(amount: f32) -> f32 {
-    let cutoff = CLEAR_CUTOFF_HZ * (MUFFLED_CUTOFF_HZ / CLEAR_CUTOFF_HZ).powf(amount);
+    let cutoff = CLEAR_CUTOFF_HZ * (MUFFLED_CUTOFF_HZ / CLEAR_CUTOFF_HZ).powf(amount.sqrt());
     1.0 - (-std::f32::consts::TAU * cutoff / SAMPLE_RATE as f32).exp()
 }
 

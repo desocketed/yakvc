@@ -8,12 +8,14 @@ import java.util.Map;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.BlockGetter;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.phys.Vec3;
 import org.jspecify.annotations.Nullable;
 
 /**
  * How a voice reaches the listener: straight through whatever is in the way, or around it through an opening such as
- * a doorway, whichever loses less. Going around costs by how much longer the way is; the voice then seems to come from
+ * a doorway, whichever loses less. Going around always muffles some, and more the longer the way is; the voice then seems to come from
  * the opening, as far away as the way it took.
  *
  * <p>The way around is the shortest path through open blocks, searched breadth-first between face neighbours within a
@@ -23,8 +25,10 @@ import org.jspecify.annotations.Nullable;
 public record SoundPath(Vec3 heardFrom, float occlusion) {
 	/** Below this the direct path is clear enough that no way around can beat it. */
 	public static final float CLEAR = 0.1f;
-	/** A way round this many blocks longer than the straight line is as good as fully blocked. */
-	private static final double FULL_DETOUR = 24;
+	/** Bending round an edge muffles a voice this much however short the way: going round is never free. */
+	private static final double BEND = 0.4;
+	/** Each block the way round is longer than the straight line adds this much on top. */
+	private static final double PER_EXTRA_BLOCK = 1 / 24.0;
 	/** How far beyond the two players the search may wander. */
 	private static final int MARGIN = 8;
 	/** At most this many blocks are visited per search, about a 16-block cube. */
@@ -52,7 +56,7 @@ public record SoundPath(Vec3 heardFrom, float occlusion) {
 		}
 		// Right next to the listener the opening gives no direction, so the speaker's own is used.
 		Vec3 direction = (opening.distanceTo(listener) < 1 ? speaker : opening).subtract(listener).normalize();
-		float occlusion = (float) Math.min(1, (length - distance) / FULL_DETOUR);
+		float occlusion = (float) Math.min(1, BEND + (length - distance) * PER_EXTRA_BLOCK);
 		return new SoundPath(listener.add(direction.scale(length)), occlusion);
 	}
 
@@ -86,10 +90,14 @@ public record SoundPath(Vec3 heardFrom, float occlusion) {
 		return path.reversed();
 	}
 
-	/** Sound passes a block whose middle is free: air, but also an open door or a slab, unlike a fence post. */
+	/**
+	 * Sound passes a block whose middle is free: air, but also an open door or a slab, unlike a fence post. A closed
+	 * door also has its middle free, its panel being at the edge, so anything that opens must be open.
+	 */
 	private static boolean open(BlockGetter level, BlockPos pos) {
-		return level.getBlockState(pos).getCollisionShape(level, pos).toAabbs().stream()
-				.noneMatch(box -> box.contains(0.5, 0.5, 0.5));
+		BlockState state = level.getBlockState(pos);
+		if (!state.getValueOrElse(BlockStateProperties.OPEN, true)) return false;
+		return state.getCollisionShape(level, pos).toAabbs().stream().noneMatch(box -> box.contains(0.5, 0.5, 0.5));
 	}
 
 	private static boolean inside(BlockPos pos, BlockPos min, BlockPos max) {

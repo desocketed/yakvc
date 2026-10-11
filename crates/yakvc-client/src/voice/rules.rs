@@ -20,7 +20,7 @@ const MAX_SNAPSHOT_GAP: Duration = Duration::from_millis(250);
 /// Directly behind the listener a speaker is this much quieter.
 const BEHIND_ATTENUATION: f64 = 0.3;
 /// A fully occluded speaker is this much quieter, as well as muffled.
-const OCCLUDED_ATTENUATION: f32 = 0.6;
+const OCCLUDED_ATTENUATION: f32 = 0.75;
 const MAX_RECIPIENTS: usize = 32;
 /// Above this many recipients the encoder steps down to save upload.
 const STEP_DOWN_RECIPIENTS: usize = 16;
