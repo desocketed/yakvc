@@ -203,7 +203,7 @@ fn engine_lifecycle_through_the_c_abi() {
     let me = [1u8; 16];
     let other = [2u8; 16];
     let listener = [0.0, 64.0, 0.0, 90.0, 0.0];
-    let xyz = [3.0, 64.0, 4.0];
+    let players = [3.0, 64.0, 4.0, 0.0];
     // SAFETY: `engine` is live and every buffer is valid for its length.
     unsafe {
         assert_eq!(
@@ -212,7 +212,13 @@ fn engine_lifecycle_through_the_c_abi() {
         );
         assert_eq!(yakvc_set_tab_list(engine, other.as_ptr(), 1), YAKVC_OK);
         assert_eq!(
-            yakvc_push_world(engine, listener.as_ptr(), other.as_ptr(), xyz.as_ptr(), 1),
+            yakvc_push_world(
+                engine,
+                listener.as_ptr(),
+                other.as_ptr(),
+                players.as_ptr(),
+                1
+            ),
             YAKVC_OK
         );
         assert_eq!(

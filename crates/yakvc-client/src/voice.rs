@@ -19,8 +19,8 @@ use bytes::Bytes;
 use tokio::sync::watch;
 use yakvc_audio::{
     AudioError, DeviceChoice, Encoder, FRAME_SAMPLES, FrameSink, FrameSource, InputConfig,
-    InputProcessor, JitterConfig, Microphone, Mixer, MonoFrame, Packet, Pulled, ReceiveStream,
-    Speakers, StereoFrame, StreamStats, level_db,
+    InputProcessor, JitterConfig, Microphone, Mixer, MonoFrame, Muffle, Packet, Pulled,
+    ReceiveStream, Speakers, StereoFrame, StreamStats, level_db,
 };
 use yakvc_proto::peer::CloseCode;
 use yakvc_proto::voice::{VERSION, VoiceHeader, VoiceMsg};
@@ -659,6 +659,7 @@ struct Remote {
     /// The link `stream` is fed from.
     link_id: usize,
     stream: ReceiveStream,
+    muffle: Muffle,
     /// Its latest frame had the `group` flag: it is speaking to our group.
     group: bool,
     talking: bool,
@@ -893,6 +894,7 @@ impl AudioLoop {
         let remote = self.remotes.entry(frame.from).or_insert_with(|| Remote {
             link_id: frame.link_id,
             stream: ReceiveStream::new(JitterConfig::default()),
+            muffle: Muffle::new(),
             group: false,
             talking: false,
             silent_frames: TALKING_HANGOVER_FRAMES,
@@ -947,6 +949,7 @@ impl AudioLoop {
             };
             let talking_frame = spatial.is_some() && level_db(&frame) > TALKING_LEVEL_DB;
             if let Some(spatial) = spatial {
+                remote.muffle.apply(&mut frame, spatial.muffle);
                 voices.push((frame, spatial));
             }
             if talking_frame {

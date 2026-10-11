@@ -13,6 +13,7 @@ mod codec;
 mod device;
 mod input;
 mod mixer;
+mod muffle;
 mod receive;
 mod resample;
 mod test_io;
@@ -23,6 +24,7 @@ pub use crate::codec::{Encoder, MAX_PACKET};
 pub use crate::device::{DeviceChoice, DeviceInfo, Devices, Microphone, Speakers, devices};
 pub use crate::input::{InputActivity, InputConfig, InputProcessor, level_db};
 pub use crate::mixer::{Mixer, Spatial};
+pub use crate::muffle::Muffle;
 pub use crate::receive::{JitterConfig, Packet, Pulled, ReceiveStream, StreamStats};
 pub use crate::test_io::{NullSink, Recording, SilenceSource, ToneSource, WavSource};
 

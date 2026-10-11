@@ -46,7 +46,7 @@ class NativeBridgeTest {
 			bridge.setIdentity(engine, me, "alice");
 			bridge.setTabList(engine, Set.of(me, other));
 			bridge.pushWorld(engine, new double[] {0, 64, 0, 90, 0}, NativeBridge.uuidBytes(List.of(other)),
-					new double[] {3, 64, 0});
+					new double[] {3, 64, 0, 0});
 			bridge.setGameVolume(engine, 0.5f);
 			bridge.setGameDevice(engine, "");
 			bridge.setPeerVolume(engine, other, 1.5f, false);
@@ -119,14 +119,14 @@ class NativeBridgeTest {
 			// Only over-long arrays, so native code can't read past one even without the check.
 			double[] listener = {0, 64, 0, 90, 0};
 			byte[] one = NativeBridge.uuidBytes(List.of(UUID.randomUUID()));
-			double[] xyz = {3, 64, 0};
+			double[] players = {3, 64, 0, 0};
 			assertThrows(IllegalArgumentException.class,
-					() -> bridge.pushWorld(engine, new double[] {0, 64, 0, 90, 0, 0}, one, xyz));
+					() -> bridge.pushWorld(engine, new double[] {0, 64, 0, 90, 0, 0}, one, players));
 			assertThrows(IllegalArgumentException.class,
-					() -> bridge.pushWorld(engine, listener, Arrays.copyOf(one, 17), xyz));
+					() -> bridge.pushWorld(engine, listener, Arrays.copyOf(one, 17), players));
 			assertThrows(IllegalArgumentException.class,
-					() -> bridge.pushWorld(engine, listener, one, new double[] {3, 64, 0, 4, 64, 0}));
-			bridge.pushWorld(engine, listener, one, xyz);
+					() -> bridge.pushWorld(engine, listener, one, new double[] {3, 64, 0, 0, 4, 64, 0, 0}));
+			bridge.pushWorld(engine, listener, one, players);
 		} finally {
 			bridge.destroy(engine);
 		}

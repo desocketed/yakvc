@@ -48,6 +48,7 @@ fn tone_reaches_the_sink() {
                 Spatial {
                     gain: 1.0,
                     pan: 0.0,
+                    muffle: 0.0,
                 },
             ));
             mixer.mix(sources, &mut mixed);

@@ -19,6 +19,8 @@ const FULL_VOLUME_DISTANCE: f64 = 4.0;
 const MAX_SNAPSHOT_GAP: Duration = Duration::from_millis(250);
 /// Directly behind the listener a speaker is this much quieter.
 const BEHIND_ATTENUATION: f64 = 0.3;
+/// A fully occluded speaker is this much quieter, as well as muffled.
+const OCCLUDED_ATTENUATION: f32 = 0.6;
 const MAX_RECIPIENTS: usize = 32;
 /// Above this many recipients the encoder steps down to save upload.
 const STEP_DOWN_RECIPIENTS: usize = 16;
@@ -208,8 +210,9 @@ impl VoiceState {
         if self.ignore_world {
             return Some(CENTRED);
         }
-        let (_, pos) = world.players.iter().find(|(uuid, _)| *uuid == peer)?;
-        spatial(&world.listener, *pos, self.voice_range)
+        let player = world.players.iter().find(|p| p.uuid == peer)?;
+        let spatial = spatial(&world.listener, player.pos, self.voice_range)?;
+        Some(occluded(spatial, player.occlusion))
     }
 
     /// Whether to send this frame to `peer`, and how. Whether the peer
@@ -243,8 +246,8 @@ impl VoiceState {
     }
 
     fn position(&self, peer: Uuid) -> Option<Vec3> {
-        let (_, pos) = self.world.players.iter().find(|(uuid, _)| *uuid == peer)?;
-        Some(*pos)
+        let player = self.world.players.iter().find(|p| p.uuid == peer)?;
+        Some(player.pos)
     }
 
     pub(crate) fn muted(&self, peer: Uuid) -> bool {
@@ -261,6 +264,7 @@ impl VoiceState {
 const CENTRED: Spatial = Spatial {
     gain: 1.0,
     pan: 0.0,
+    muffle: 0.0,
 };
 
 /// Gain and pan for a source at `source`, heard by `listener` with voice
@@ -303,7 +307,19 @@ pub(crate) fn spatial(listener: &Pose, source: Vec3, range: f32) -> Option<Spati
     Some(Spatial {
         gain: gain as f32,
         pan: pan as f32,
+        muffle: 0.0,
     })
+}
+
+/// `spatial` heard through obstacles that block `occlusion` of the direct
+/// path (0 to 1): quieter and muffled.
+fn occluded(spatial: Spatial, occlusion: f32) -> Spatial {
+    let occlusion = occlusion.clamp(0.0, 1.0);
+    Spatial {
+        gain: spatial.gain * (1.0 - OCCLUDED_ATTENUATION * occlusion),
+        muffle: occlusion,
+        ..spatial
+    }
 }
 
 /// Picks recipients nearest first, steps the bitrate down for big crowds,
@@ -350,6 +366,7 @@ mod tests {
     use yakvc_proto::{GroupKey, GroupState};
 
     use super::*;
+    use crate::world::Player;
 
     fn uuid(n: u8) -> Uuid {
         Uuid::from_bytes([n; 16])
@@ -408,7 +425,10 @@ mod tests {
     #[test]
     fn playback_needs_a_tracked_entity_in_range() {
         let mut state = state();
-        state.world.players = vec![(uuid(1), at(10.0, 0.0)), (uuid(2), at(60.0, 0.0))];
+        state.world.players = vec![
+            Player::new(uuid(1), at(10.0, 0.0)),
+            Player::new(uuid(2), at(60.0, 0.0)),
+        ];
         assert!(nearby(&state, 1).is_some());
         assert_eq!(nearby(&state, 2), None, "beyond range");
         assert_eq!(nearby(&state, 3), None, "no tracked entity");
@@ -419,9 +439,9 @@ mod tests {
         // Alice's range is 20, Bob's 48, and they stand 25 apart.
         let mut alice = state();
         alice.voice_range = 20.0;
-        alice.world.players = vec![(uuid(2), at(25.0, 0.0))];
+        alice.world.players = vec![Player::new(uuid(2), at(25.0, 0.0))];
         let mut bob = state();
-        bob.world.players = vec![(uuid(1), at(25.0, 0.0))];
+        bob.world.players = vec![Player::new(uuid(1), at(25.0, 0.0))];
 
         // Alice doesn't send to Bob, nor play what Bob sends her.
         assert_eq!(alice.send_to(uuid(2), false).map(|c| c.distance), None);
@@ -434,7 +454,10 @@ mod tests {
     #[test]
     fn deafen_mute_and_spectator_silence_playback() {
         let mut state = state();
-        state.world.players = vec![(uuid(1), at(1.0, 0.0)), (uuid(2), at(1.0, 0.0))];
+        state.world.players = vec![
+            Player::new(uuid(1), at(1.0, 0.0)),
+            Player::new(uuid(2), at(1.0, 0.0)),
+        ];
         state.peer_audio.insert(
             uuid(1),
             PeerAudio {
@@ -458,7 +481,7 @@ mod tests {
     #[test]
     fn peer_volume_scales_gain() {
         let mut state = state();
-        state.world.players = vec![(uuid(1), at(1.0, 0.0))];
+        state.world.players = vec![Player::new(uuid(1), at(1.0, 0.0))];
         state.peer_audio.insert(
             uuid(1),
             PeerAudio {
@@ -472,7 +495,10 @@ mod tests {
     #[test]
     fn friends_only_limits_both_directions() {
         let mut state = state();
-        state.world.players = vec![(uuid(1), at(1.0, 0.0)), (uuid(2), at(1.0, 0.0))];
+        state.world.players = vec![
+            Player::new(uuid(1), at(1.0, 0.0)),
+            Player::new(uuid(2), at(1.0, 0.0)),
+        ];
         state.friends_only = Some(vec![uuid(1)]);
         assert!(nearby(&state, 1).is_some());
         assert_eq!(nearby(&state, 2), None);
@@ -502,7 +528,10 @@ mod tests {
     #[test]
     fn send_range_is_exactly_the_voice_range() {
         let mut state = state();
-        state.world.players = vec![(uuid(1), at(48.0, 0.0)), (uuid(2), at(48.5, 0.0))];
+        state.world.players = vec![
+            Player::new(uuid(1), at(48.0, 0.0)),
+            Player::new(uuid(2), at(48.5, 0.0)),
+        ];
         assert_eq!(
             state.send_to(uuid(1), false).map(|c| c.distance),
             Some(48.0)
@@ -516,18 +545,35 @@ mod tests {
     }
 
     #[test]
+    fn occluded_speakers_are_quieter_and_muffled() {
+        let mut state = state();
+        state.world.players = vec![
+            Player::new(uuid(1), at(10.0, 0.0)),
+            Player {
+                occlusion: 1.0,
+                ..Player::new(uuid(2), at(10.0, 0.0))
+            },
+        ];
+        let (open, walled) = (nearby(&state, 1).unwrap(), nearby(&state, 2).unwrap());
+        assert_eq!(open.muffle, 0.0);
+        assert_eq!(walled.muffle, 1.0);
+        assert!(walled.gain < open.gain);
+        assert_eq!(walled.pan, open.pan);
+    }
+
+    #[test]
     fn playback_glides_between_snapshots() {
         let mut state = state();
         let start = Instant::now();
         let tick = Duration::from_millis(50);
         let world = |x: f64| World {
             listener: listener(0.0),
-            players: vec![(uuid(1), at(x, 0.0))],
+            players: vec![Player::new(uuid(1), at(x, 0.0))],
         };
         state.set_world(world(10.0), start);
         state.set_world(world(20.0), start + tick);
 
-        let x_at = |t: Duration| state.world_at(start + t).players[0].1.x;
+        let x_at = |t: Duration| state.world_at(start + t).players[0].pos.x;
         assert_eq!(x_at(tick), 10.0, "one snapshot behind");
         assert_eq!(x_at(tick + tick / 2), 15.0);
         assert_eq!(x_at(tick * 2), 20.0);
@@ -537,7 +583,7 @@ mod tests {
         state.set_world(world(40.0), start + Duration::from_secs(5));
         assert_eq!(
             state.world_at(start + Duration::from_secs(5)).players[0]
-                .1
+                .pos
                 .x,
             40.0
         );
@@ -619,7 +665,7 @@ mod tests {
         let group = OwnGroup::new(GroupKey::random(), GroupState::new(uuid(9)));
         state.set_group(Some(group));
         state.group_mates.insert(uuid(1));
-        state.world.players = vec![(uuid(2), at(10.0, 0.0))];
+        state.world.players = vec![Player::new(uuid(2), at(10.0, 0.0))];
         state
     }
 

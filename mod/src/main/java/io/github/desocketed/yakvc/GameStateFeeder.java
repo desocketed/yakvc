@@ -414,23 +414,22 @@ public final class GameStateFeeder {
 		double[] listener = {eye.x, eye.y, eye.z, yaw, pitch};
 
 		List<UUID> uuids = new ArrayList<>();
-		List<Vec3> positions = new ArrayList<>();
+		List<double[]> players = new ArrayList<>();
 		for (AbstractClientPlayer other : minecraft.level.players()) {
 			PlayerInfo info = connection.getPlayerInfo(other.getUUID());
 			if (other == player || info != null && info.getGameMode() == GameType.SPECTATOR) continue;
 			if (blocked.contains(other.getUUID())) continue;
+			Vec3 pos = other.getEyePosition();
 			uuids.add(other.getUUID());
-			positions.add(other.getEyePosition());
+			players.add(new double[] {pos.x, pos.y, pos.z, Occlusion.between(minecraft.level, eye, pos)});
 		}
-		double[] xyz = new double[3 * positions.size()];
-		for (int i = 0; i < positions.size(); i++) {
-			xyz[3 * i] = positions.get(i).x;
-			xyz[3 * i + 1] = positions.get(i).y;
-			xyz[3 * i + 2] = positions.get(i).z;
+		double[] flat = new double[4 * players.size()];
+		for (int i = 0; i < players.size(); i++) {
+			System.arraycopy(players.get(i), 0, flat, 4 * i, 4);
 		}
 		tracked = uuids;
 		worldEmpty = false;
-		bridge.pushWorld(engine, listener, NativeBridge.uuidBytes(uuids), xyz);
+		bridge.pushWorld(engine, listener, NativeBridge.uuidBytes(uuids), flat);
 	}
 
 	/** Each player's saved volume and mute, with blocked players muted. One player's failure doesn't skip the rest. */

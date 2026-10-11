@@ -32,8 +32,8 @@ use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 
 use yakvc_client::{
-    Config, ConfigError, Engine, GroupError, GroupId, Input, JoinId, PeerAudio, Pose, StartError,
-    Uuid, Vec3, World,
+    Config, ConfigError, Engine, GroupError, GroupId, Input, JoinId, PeerAudio, Player, Pose,
+    StartError, Uuid, Vec3, World,
 };
 
 use crate::events::EventQueue;
@@ -50,7 +50,7 @@ use crate::guard::{
 /// shared group state and kick votes; group-only voice in a group.
 /// 6: kick votes removed (`yakvc_vote_kick`, the kick vote event and notice).
 /// 7: `yakvc_join_group` takes the id length.
-pub const YAKVC_ABI_VERSION: u32 = 7;
+pub const YAKVC_ABI_VERSION: u32 = 8;
 
 pub const YAKVC_OK: i32 = 0;
 /// A null pointer, bad UUID, invalid UTF-8 or out-of-range value.
@@ -255,17 +255,19 @@ pub unsafe extern "C" fn yakvc_set_tab_list(
 }
 
 /// Pushes one tick's world: `listener` is `x, y, z, yaw, pitch`; then `count`
-/// tracked players as UUIDs and `x, y, z` triples.
+/// tracked players as UUIDs and, per player, `x, y, z, occlusion`: the eye
+/// position, and how much of the direct path to the listener is blocked,
+/// from 0 (open air) to 1 (fully blocked).
 ///
 /// # Safety
 /// `engine` must be live; `listener` must point to 5 doubles, `uuids` to
-/// `16 * count` bytes and `xyz` to `3 * count` doubles.
+/// `16 * count` bytes and `players` to `4 * count` doubles.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn yakvc_push_world(
     engine: *mut YakVcEngine,
     listener: *const f64,
     uuids: *const u8,
-    xyz: *const f64,
+    players: *const f64,
     count: usize,
 ) -> i32 {
     // SAFETY: the caller guarantees `engine` is live.
@@ -275,19 +277,22 @@ pub unsafe extern "C" fn yakvc_push_world(
             let listener = slice_arg(listener, 5, "listener")?;
             // SAFETY: the caller guarantees `uuids` points to `16 * count` bytes.
             let uuids = uuids_arg(uuids, count, "uuids")?;
-            let xyz_len = count
-                .checked_mul(3)
+            let players_len = count
+                .checked_mul(4)
                 .ok_or_else(|| FfiError::invalid("count is too large"))?;
-            // SAFETY: the caller guarantees `xyz` points to `3 * count` doubles.
-            let xyz = slice_arg(xyz, xyz_len, "xyz")?;
-            if !listener.iter().chain(xyz).all(|v| v.is_finite()) {
+            // SAFETY: the caller guarantees `players` points to `4 * count` doubles.
+            let players = slice_arg(players, players_len, "players")?;
+            if !listener.iter().chain(players).all(|v| v.is_finite()) {
                 return Err(FfiError::invalid("world contains NaN or infinity"));
             }
 
             let players = uuids
                 .into_iter()
-                .zip(xyz.as_chunks::<3>().0)
-                .map(|(uuid, &[x, y, z])| (uuid, Vec3::new(x, y, z)))
+                .zip(players.as_chunks::<4>().0)
+                .map(|(uuid, &[x, y, z, occlusion])| Player {
+                    occlusion: occlusion as f32,
+                    ..Player::new(uuid, Vec3::new(x, y, z))
+                })
                 .collect();
             let listener = Pose {
                 pos: Vec3::new(listener[0], listener[1], listener[2]),

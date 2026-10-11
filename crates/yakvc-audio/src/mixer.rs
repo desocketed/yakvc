@@ -13,6 +13,12 @@ pub struct Spatial {
     pub gain: f32,
     /// `-1.0` fully left to `1.0` fully right; equal-power panning.
     pub pan: f32,
+    /// How muffled the source sounds, from 0 (clear) to 1 (behind thick
+    /// walls). The mixer ignores it: each source's own [`Muffle`] applies it
+    /// before mixing, because filtering needs state kept per source.
+    ///
+    /// [`Muffle`]: crate::Muffle
+    pub muffle: f32,
 }
 
 /// Mixes mono sources into one stereo frame, with master gain and a soft
@@ -107,6 +113,7 @@ mod tests {
                 Spatial {
                     gain: 1.0,
                     pan: 0.0,
+                    muffle: 0.0,
                 },
             )],
             1.0,
@@ -124,6 +131,7 @@ mod tests {
                 Spatial {
                     gain: 1.0,
                     pan: -1.0,
+                    muffle: 0.0,
                 },
             )],
             1.0,
@@ -136,6 +144,7 @@ mod tests {
                 Spatial {
                     gain: 1.0,
                     pan: 1.0,
+                    muffle: 0.0,
                 },
             )],
             1.0,
@@ -152,6 +161,7 @@ mod tests {
                 Spatial {
                     gain: 0.5,
                     pan: -1.0,
+                    muffle: 0.0,
                 },
             ),
             (
@@ -159,6 +169,7 @@ mod tests {
                 Spatial {
                     gain: 1.0,
                     pan: -1.0,
+                    muffle: 0.0,
                 },
             ),
         ];
@@ -175,6 +186,7 @@ mod tests {
             Spatial {
                 gain: 1.0,
                 pan: -1.0,
+                muffle: 0.0,
             },
         ); 8];
         let out = mix(&sources, 1.0);
@@ -186,6 +198,7 @@ mod tests {
                 Spatial {
                     gain: 1.0,
                     pan: 1.0,
+                    muffle: 0.0,
                 },
             )],
             1.0,
