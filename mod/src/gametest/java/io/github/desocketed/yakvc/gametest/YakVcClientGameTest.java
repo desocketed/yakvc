@@ -13,6 +13,7 @@ import io.github.desocketed.yakvc.natives.NativeBridge;
 import io.github.desocketed.yakvc.natives.VoiceGroup;
 import io.github.desocketed.yakvc.natives.VoiceStats;
 import io.github.desocketed.yakvc.ui.GroupsScreen;
+import io.github.desocketed.yakvc.ui.Icons;
 import io.github.desocketed.yakvc.ui.VoiceMenuScreen;
 import io.github.desocketed.yakvc.ui.VoiceSettingsScreen;
 import io.github.desocketed.yakvc.ui.VoiceToasts;
@@ -42,6 +43,7 @@ import net.minecraft.client.gui.components.AbstractButton;
 import net.minecraft.client.gui.components.events.ContainerEventHandler;
 import net.minecraft.client.gui.components.events.GuiEventListener;
 import net.minecraft.client.gui.components.toasts.SystemToast;
+import net.minecraft.client.gui.screens.PauseScreen;
 import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.client.gui.screens.options.SoundOptionsScreen;
 import net.minecraft.client.gui.screens.options.controls.KeyBindsScreen;
@@ -150,6 +152,7 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 			// form a group. It stops before the debug overlay, whose screenshot would change with its round trip time.
 			try (RemoteVoice remoteVoice = remoteVoice(me)) {
 				context.waitFor(mc -> feeder.peerState(REMOTE) == EngineEvent.PeerState.DIRECT, 30 * 20);
+				checkPauseMenuButton(context);
 				checkVoiceMenu(context, feeder);
 				checkGroups(context, feeder, remoteVoice, me);
 			}
@@ -245,6 +248,19 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		});
 		context.clickScreenButton("gui.done");
 		context.waitForScreen(TitleScreen.class);
+	}
+
+	/** The pause menu has a microphone button next to Back to Game that opens the voice menu, and Done returns to it. */
+	private static void checkPauseMenuButton(ClientGameTestContext context) {
+		context.setScreen(() -> new PauseScreen(true));
+		context.waitForScreen(PauseScreen.class);
+		screenshotScreen(context, "pause-menu");
+		pressNestedButton(context, "yakvc.pause.voice_chat", message -> message.equals(Icons.MIC.getString()));
+		context.waitForScreen(VoiceMenuScreen.class);
+		context.clickScreenButton("gui.done");
+		context.waitForScreen(PauseScreen.class);
+		context.clickScreenButton("menu.returnToGame");
+		context.waitForScreen(null);
 	}
 
 	/**
