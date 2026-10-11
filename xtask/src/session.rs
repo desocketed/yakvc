@@ -18,6 +18,27 @@ use crate::{dev, root, run};
 const RENDEZVOUS_PORT: u16 = 7843;
 const SERVER_PORT: u16 = 25565;
 
+/// A data pack that builds walls and rooms to listen through, in the flat
+/// dev world (`xtask/rooms`).
+const ROOMS: &[(&str, &str)] = &[
+    ("pack.mcmeta", include_str!("../rooms/pack.mcmeta")),
+    (
+        "data/minecraft/tags/function/load.json",
+        include_str!("../rooms/data/minecraft/tags/function/load.json"),
+    ),
+    (
+        "data/yakvc/function/rooms.mcfunction",
+        include_str!("../rooms/data/yakvc/function/rooms.mcfunction"),
+    ),
+    (
+        "data/yakvc/function/build.mcfunction",
+        include_str!("../rooms/data/yakvc/function/build.mcfunction"),
+    ),
+];
+
+/// Grass on dirt on bedrock, the ground's top at y -61, as the rooms expect.
+const FLAT_LAYERS: &str = r#"{"layers":[{"block":"minecraft:bedrock","height":1},{"block":"minecraft:dirt","height":2},{"block":"minecraft:grass_block","height":1}],"biome":"minecraft:plains"}"#;
+
 /// Libraries Minecraft loads at runtime, from the flake's nixpkgs.
 const LIBRARIES: &[&str] = &[
     "libglvnd",
@@ -89,9 +110,17 @@ fn server(dir: &Path, launch: &Path) -> Result<Child> {
         &dir.join("server.properties"),
         &format!(
             "online-mode=false\nenforce-secure-profile=false\nwhite-list=false\nenforce-whitelist=false\n\
-             server-ip=127.0.0.1\nserver-port={SERVER_PORT}\ndifficulty=peaceful\nspawn-protection=0\ngamemode=creative\nforce-gamemode=true\n"
+             server-ip=127.0.0.1\nserver-port={SERVER_PORT}\ndifficulty=peaceful\nspawn-protection=0\ngamemode=creative\nforce-gamemode=true\n\
+             level-name=rooms\nlevel-type=minecraft\\:flat\ngenerator-settings={FLAT_LAYERS}\n"
         ),
     )?;
+    // Written every time, so the rooms follow the repository.
+    let pack = dir.join("rooms/datapacks/yakvc-rooms");
+    for (path, text) in ROOMS {
+        let path = pack.join(path);
+        fs::create_dir_all(path.parent().unwrap())?;
+        fs::write(path, text)?;
+    }
     Command::new("java")
         .args(launch_args(&launch.join("server.args"))?)
         .arg("nogui")
