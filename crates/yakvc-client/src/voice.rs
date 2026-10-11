@@ -467,6 +467,16 @@ async fn serve_peer(shared: Arc<Shared>, link: PeerLink) {
         control_recv,
         wants_audio,
     ));
+    // The net layer aborts this task when the connection closes, which can
+    // come before the datagram channel ends, so the link is taken out of
+    // the table on drop rather than after the loop: a link left behind
+    // would stay the current one and keep the next link unheard.
+    let _unlink = Unlink {
+        shared: shared.clone(),
+        uuid,
+        link_id,
+        reader: reader.abort_handle(),
+    };
     let mut receive_policy = shared.receive_policy.subscribe();
     #[cfg(feature = "sim")]
     let mut impairer = shared.impairment.clone().map(crate::sim::Impairer::new);
@@ -503,22 +513,37 @@ async fn serve_peer(shared: Arc<Shared>, link: PeerLink) {
             }
         }
     }
+}
 
-    reader.abort();
-    let was_current = {
-        let mut peers = shared.peers.lock().unwrap();
-        let links = peers.entry(uuid).or_default();
-        let was_current = links.first().is_some_and(|p| p.peer.link_id() == link_id);
-        links.retain(|p| p.peer.link_id() != link_id);
-        if links.is_empty() {
-            peers.remove(&uuid);
+/// Takes a link out of the voice peer table when its [`serve_peer`] ends,
+/// however it ends.
+struct Unlink {
+    shared: Arc<Shared>,
+    uuid: Uuid,
+    link_id: usize,
+    reader: tokio::task::AbortHandle,
+}
+
+impl Drop for Unlink {
+    fn drop(&mut self) {
+        self.reader.abort();
+        let was_current = {
+            let mut peers = self.shared.peers.lock().unwrap();
+            let links = peers.entry(self.uuid).or_default();
+            let was_current = links
+                .first()
+                .is_some_and(|p| p.peer.link_id() == self.link_id);
+            links.retain(|p| p.peer.link_id() != self.link_id);
+            if links.is_empty() {
+                peers.remove(&self.uuid);
+            }
+            was_current
+        };
+        // The next newest link, if any, now speaks for the player. The audio
+        // thread notices the change, or the player being gone, by itself.
+        if was_current {
+            self.shared.refresh_group_mates();
         }
-        was_current
-    };
-    // The next newest link, if any, now speaks for the player. The audio
-    // thread notices the change, or the player being gone, by itself.
-    if was_current {
-        shared.refresh_group_mates();
     }
 }
 
@@ -1101,6 +1126,30 @@ mod tests {
                 label: label.into(),
             }),
         }
+    }
+
+    /// The net layer aborts a protocol's task when the connection closes,
+    /// so the link must leave the table on abort as well as on a clean end.
+    #[tokio::test]
+    async fn an_aborted_link_task_leaves_the_peer_table() {
+        let (_alice, link, _served) = linked_to_probe().await;
+        let (events, _rx) = crate::event::channel();
+        let (to_audio, _from_net) = std_mpsc::sync_channel(AUDIO_QUEUE);
+        let bob = Arc::new(Shared::new(
+            &Config::default(),
+            to_audio,
+            events,
+            #[cfg(feature = "sim")]
+            None,
+        ));
+        let serving = tokio::spawn(serve_peer(bob.clone(), link));
+        eventually("bob lists alice's link", || {
+            bob.peers.lock().unwrap().contains_key(&uuid(1))
+        })
+        .await;
+        serving.abort();
+        assert!(serving.await.unwrap_err().is_cancelled());
+        assert!(bob.peers.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
