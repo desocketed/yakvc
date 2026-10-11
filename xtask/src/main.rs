@@ -7,6 +7,7 @@ mod dev;
 mod pack;
 mod pipewire;
 mod relay;
+mod session;
 
 use anyhow::{Context, Result, bail, ensure};
 use clap::{Parser, Subcommand};
@@ -70,6 +71,17 @@ enum Cmd {
         #[arg(long)]
         write_client_config: bool,
     },
+    /// A dev session on your own machine: a local rendezvous, an offline dev
+    /// Minecraft server and one client window per name, joining it by
+    /// themselves. State lives in mod/run/dev/.
+    Session {
+        /// The players, one client each.
+        #[arg(default_values = ["Alice", "Bob"])]
+        names: Vec<String>,
+        /// Only start these clients, joining a session that is already running.
+        #[arg(long)]
+        join: bool,
+    },
     /// Run a command against real audio devices: a private PipeWire session
     /// with a test microphone (playing a tone) and test speakers, reached
     /// through ALSA. Linux only; needs Nix.
@@ -119,6 +131,7 @@ fn main() -> Result<()> {
             dir,
             write_client_config,
         } => dev::dev(port, dir, write_client_config),
+        Cmd::Session { names, join } => session::session(&names, join),
         Cmd::WithPipewire { command } => std::process::exit(pipewire::with_pipewire(&command)?),
         Cmd::DeployRelay {
             flake,

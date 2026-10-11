@@ -8,13 +8,44 @@ use anyhow::{Context, Result, ensure};
 
 use crate::{cargo, root};
 
+/// A dev rendezvous ready to start: its server binary, its config and the
+/// client config that points at it.
+pub(crate) struct DevServer {
+    pub(crate) server: PathBuf,
+    pub(crate) config: PathBuf,
+    pub(crate) client: String,
+}
+
 /// Builds yakvc-server, creates keys in `dir` (kept across runs, so the
 /// printed client config stays valid), writes `dir/client.toml` and runs the
 /// server in the foreground until Ctrl-C.
 pub fn dev(port: u16, dir: Option<PathBuf>, write_client_config: bool) -> Result<()> {
     let root = root();
     let dir = dir.unwrap_or_else(|| root.join("target/dev-server"));
-    fs::create_dir_all(&dir)?;
+    let DevServer {
+        server,
+        config,
+        client,
+    } = prepare(port, &dir)?;
+    if write_client_config {
+        let target = root.join("mod/run/config/yakvc/client.toml");
+        fs::create_dir_all(target.parent().unwrap())?;
+        fs::write(&target, &client)?;
+        println!("Wrote {}", target.display());
+    }
+    println!("Client config (config/yakvc/client.toml):\n\n{client}");
+    println!("Dev yakvc-server on 127.0.0.1:{port}, Ctrl-C to stop.");
+
+    run(Command::new(&server)
+        .arg("run")
+        .arg("--config")
+        .arg(&config))
+}
+
+/// Builds yakvc-server and writes the keys, its config and `dir/client.toml`.
+pub(crate) fn prepare(port: u16, dir: &Path) -> Result<DevServer> {
+    let root = root();
+    fs::create_dir_all(dir)?;
     let dir = dir.canonicalize()?;
 
     let status = cargo(&["build", "--quiet", "-p", "yakvc-server"]).status()?;
@@ -53,19 +84,11 @@ pub fn dev(port: u16, dir: Option<PathBuf>, write_client_config: bool) -> Result
          [rendezvous]\nendpoint_id = \"{endpoint_id}\"\naddrs = [\"127.0.0.1:{port}\"]\n"
     );
     fs::write(dir.join("client.toml"), &client)?;
-    if write_client_config {
-        let target = root.join("mod/run/config/yakvc/client.toml");
-        fs::create_dir_all(target.parent().unwrap())?;
-        fs::write(&target, &client)?;
-        println!("Wrote {}", target.display());
-    }
-    println!("Client config (config/yakvc/client.toml):\n\n{client}");
-    println!("Dev yakvc-server on 127.0.0.1:{port}, Ctrl-C to stop.");
-
-    run(Command::new(&server)
-        .arg("run")
-        .arg("--config")
-        .arg(&config))
+    Ok(DevServer {
+        server,
+        config,
+        client,
+    })
 }
 
 fn output(cmd: &mut Command) -> Result<String> {
