@@ -82,7 +82,7 @@ Press **Esc** and the microphone button next to **Back to Game**, or your **Open
 
 ![The microphone button in the pause menu](guide/pause-menu.png)
 
-The first time you open it, a card at the top asks two things: who may invite you to a [group](#groups) (**Everyone**, **Friends** or **Nobody**) and how you talk (**Push to Talk** or **Voice**). **OK** saves both, and the card doesn't come back; both are in the [settings](#settings) too.
+The first time you open it, a card at the top asks two things: who may invite you to a [group](#groups) (**Everyone**, **Friends** or **Nobody**) and how you talk (**Push to Talk** or **Voice**). **Got it** saves both, and the card doesn't come back; both are in the [settings](#settings) too.
 
 ![The voice menu with the first-run card](guide/voice-menu-setup.png)
 

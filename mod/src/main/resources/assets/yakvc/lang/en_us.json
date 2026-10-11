@@ -34,7 +34,8 @@
 	"yakvc.menu.peer.blocked": "Blocked: muted both ways",
 	"yakvc.menu.groups": "Groups…",
 	"yakvc.setup.prompt": "Who may invite you to a voice group, and how do you talk?",
-	"yakvc.setup.ok": "OK",
+	"yakvc.setup.ok": "Got it",
+	"yakvc.setup.later": "You can change these later in Settings.",
 
 	"yakvc.groups.title": "Voice Groups",
 	"yakvc.groups.status.none": "Not in a group. Look at a player and press %s to invite them.",
