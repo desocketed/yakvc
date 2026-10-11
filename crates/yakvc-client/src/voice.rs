@@ -92,7 +92,9 @@ pub(crate) struct AudioIo {
 }
 
 struct Shared {
-    state: Mutex<VoiceState>,
+    /// Replaced on change rather than changed in place: the audio thread
+    /// reads a snapshot per frame and never waits on a long edit.
+    state: Mutex<Arc<VoiceState>>,
     /// Each player's open voice links, newest first. Two endpoints of equal
     /// standing can claim one player, and voice is per player: only the
     /// newest link is heard, sent to and believed about its group, so their
@@ -177,36 +179,35 @@ impl Voice {
     }
 
     pub(crate) fn set_own_uuid(&self, uuid: Uuid) {
-        self.shared.state.lock().unwrap().own_uuid = Some(uuid);
+        self.shared.change(|state| state.own_uuid = Some(uuid));
     }
 
     pub(crate) fn set_world(&self, world: World) {
-        let mut state = self.shared.state.lock().unwrap();
-        state.set_world(world, Instant::now());
+        self.shared
+            .change(|state| state.set_world(world, Instant::now()));
     }
 
     /// The audio thread notices the change and reopens the speakers if
     /// they follow the game.
     pub(crate) fn set_game_device(&self, name: Option<&str>) {
-        self.shared.state.lock().unwrap().game_device = name.map(str::to_owned);
+        self.shared
+            .change(|state| state.game_device = name.map(str::to_owned));
     }
 
     pub(crate) fn set_input(&self, input: Input) {
-        self.shared.state.lock().unwrap().input = input;
+        self.shared.change(|state| state.input = input);
         self.shared.receive_policy.send_replace(());
     }
 
     pub(crate) fn set_game_volume(&self, volume: f32) {
-        self.shared.state.lock().unwrap().game_volume = volume.clamp(0.0, 1.0);
+        self.shared
+            .change(|state| state.game_volume = volume.clamp(0.0, 1.0));
     }
 
     pub(crate) fn set_peer_audio(&self, uuid: Uuid, audio: PeerAudio) {
-        self.shared
-            .state
-            .lock()
-            .unwrap()
-            .peer_audio
-            .insert(uuid, audio);
+        self.shared.change(|state| {
+            state.peer_audio.insert(uuid, audio);
+        });
         self.shared.receive_policy.send_replace(());
     }
 
@@ -256,18 +257,17 @@ impl Voice {
     }
 
     pub(crate) fn set_ignore_world(&self, ignore: bool) {
-        self.shared.state.lock().unwrap().ignore_world = ignore;
+        self.shared.change(|state| state.ignore_world = ignore);
     }
 
     /// The audio thread reopens devices whose configured name changed.
     pub(crate) fn update_config(&self, config: &Config) {
-        {
-            let mut state = self.shared.state.lock().unwrap();
+        self.shared.change(|state| {
             state.audio = config.audio.clone();
             state.voice_range = config.voice_range;
             state.friends_only = config.friends_only.clone();
             state.invites_from = config.invites;
-        }
+        });
         self.shared.receive_policy.send_replace(());
     }
 
@@ -319,7 +319,7 @@ impl Shared {
         );
         state.invites_from = config.invites;
         Shared {
-            state: Mutex::new(state),
+            state: Mutex::new(Arc::new(state)),
             peers: Mutex::new(HashMap::new()),
             to_audio: Mutex::new(to_audio),
             receive_policy: watch::Sender::new(()),
@@ -377,14 +377,13 @@ impl Shared {
         // can't deadlock.
         let announced = self.announced();
         let mut events = Vec::new();
-        let changed = {
-            let mut state = self.state.lock().unwrap();
+        let changed = self.change(|state| {
             let had_group = state.group.is_some();
             state.join_pending(&announced);
             let joined = !had_group && state.group.is_some();
             let mates = state.mates_among(&announced);
             state.update_mates(mates, &mut events) || joined
-        };
+        });
         for event in events {
             self.events.send(event);
         }
@@ -393,12 +392,25 @@ impl Shared {
         }
     }
 
+    /// The current state, to read without holding the lock.
+    fn snapshot(&self) -> Arc<VoiceState> {
+        self.state.lock().unwrap().clone()
+    }
+
+    /// Changes the state. A snapshot the audio thread still holds is left
+    /// as it was and the change goes into a copy, so nothing here waits on
+    /// the audio thread, and a frame sees one consistent state.
+    fn change<T>(&self, change: impl FnOnce(&mut VoiceState) -> T) -> T {
+        let mut state = self.state.lock().unwrap();
+        change(Arc::make_mut(&mut state))
+    }
+
     /// Changes the voice state, reports the events `change` adds, then
     /// works out the group mates again and has every peer task tell its
     /// peer what changed.
     fn update<T>(&self, change: impl FnOnce(&mut VoiceState, &mut Vec<Event>) -> T) -> T {
         let mut events = Vec::new();
-        let result = change(&mut self.state.lock().unwrap(), &mut events);
+        let result = self.change(|state| change(state, &mut events));
         for event in events {
             self.events.send(event);
         }
@@ -635,7 +647,7 @@ impl AudioLoop {
         io: AudioIo,
         stop: Arc<AtomicBool>,
     ) -> AudioLoop {
-        let state = shared.state.lock().unwrap().clone();
+        let state = shared.snapshot();
         let audio = &state.audio;
         let input_config = input_config(audio);
         AudioLoop {
@@ -728,7 +740,7 @@ impl AudioLoop {
     }
 
     fn capture(&mut self, frame: &mut MonoFrame) {
-        let state = self.shared.state.lock().unwrap().clone();
+        let state = self.shared.snapshot();
         let input_config = input_config(&state.audio);
         if input_config != self.input_config {
             self.input.set_config(input_config.clone());
@@ -754,7 +766,7 @@ impl AudioLoop {
     /// Ends the talk spurt when the microphone fails during it, since no
     /// frame will come to end it.
     fn end_spurt_without_microphone(&mut self) {
-        let state = self.shared.state.lock().unwrap().clone();
+        let state = self.shared.snapshot();
         self.send(&[0.0; FRAME_SAMPLES], &state, true);
         self.set_transmitting(false, &state);
         self.ts = self.ts.wrapping_add(FRAME_SAMPLES as u32);
@@ -897,15 +909,15 @@ impl AudioLoop {
 
     fn play(&mut self) {
         let now = Instant::now();
-        let mut state = self.shared.state.lock().unwrap().clone();
-        state.world = state.world_at(now);
+        let state = self.shared.snapshot();
+        let world = state.world_at(now);
         let mut voices: Vec<(MonoFrame, yakvc_audio::Spatial)> = Vec::new();
         let mut talking_changes = Vec::new();
         for (&uuid, remote) in &mut self.remotes {
             let mut frame: MonoFrame = [0.0; FRAME_SAMPLES];
             let pulled = remote.stream.pull(&mut frame, now);
             let spatial = match pulled {
-                Pulled::Voice => state.playback(uuid, remote.group),
+                Pulled::Voice => state.playback(&world, uuid, remote.group),
                 Pulled::Silence => None,
             };
             let talking_frame = spatial.is_some() && level_db(&frame) > TALKING_LEVEL_DB;
@@ -1072,7 +1084,7 @@ mod tests {
             #[cfg(feature = "sim")]
             None,
         ));
-        shared.state.lock().unwrap().own_uuid = Some(uuid(1));
+        shared.change(|state| state.own_uuid = Some(uuid(1)));
         let voice: Arc<dyn Protocol> = Arc::new(VoiceProtocol(shared.clone()));
         let (probe, mut links) = probe(ProtocolId::VOICE.0, VERSION);
         let served = serve_protocols(voice, probe).await;
