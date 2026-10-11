@@ -1453,3 +1453,17 @@ async fn wildcard_ipv6_binds_serve_both_families() {
         .await
         .expect("relay listens on IPv6");
 }
+
+#[tokio::test]
+async fn the_probe_signs_in_through_the_relay_without_mojang() {
+    // No fake Mojang: an offline player's decline needs none.
+    let server = builder()
+        .session_server(SessionServer::new("http://127.0.0.1:9"))
+        .relay(relay_options())
+        .spawn()
+        .await
+        .unwrap();
+    crate::probe(server.endpoint_id(), server.relay_url().unwrap())
+        .await
+        .unwrap();
+}
