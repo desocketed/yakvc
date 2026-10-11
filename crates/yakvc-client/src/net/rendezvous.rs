@@ -59,7 +59,11 @@ impl From<wire::WireError> for Ended {
     }
 }
 
-pub(super) async fn run(inner: Arc<Inner>, config: RendezvousConfig, ticket_cache: PathBuf) {
+pub(super) async fn run(
+    inner: Arc<Inner>,
+    config: RendezvousConfig,
+    ticket_cache: Option<PathBuf>,
+) {
     // Network trouble retries quickly; rate limits and auth failures back off
     // as DESIGN.md "Limits" asks: 10 s doubling to 10 min.
     let mut network_backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(60));
@@ -76,7 +80,7 @@ pub(super) async fn run(inner: Arc<Inner>, config: RendezvousConfig, ticket_cach
         let mut session = Session {
             inner: &inner,
             config: &config,
-            ticket_cache: &ticket_cache,
+            ticket_cache: ticket_cache.as_deref(),
             identity: current,
             registered: false,
         };
@@ -125,7 +129,8 @@ fn report(inner: &Inner, state: RendezvousState) {
 struct Session<'a> {
     inner: &'a Arc<Inner>,
     config: &'a RendezvousConfig,
-    ticket_cache: &'a Path,
+    /// `None` for an ephemeral engine, which never caches its ticket.
+    ticket_cache: Option<&'a Path>,
     identity: Identity,
     /// Got a ticket on this connection.
     registered: bool,
@@ -336,7 +341,9 @@ impl Session<'_> {
     fn accept_ticket(&mut self, signed: SignedTicket) -> Result<Ticket, Ended> {
         let ticket = self.verify_own(&signed).map_err(Ended::AuthFailed)?;
         // Losing the cache only costs a fresh Mojang check next start.
-        let _ = std::fs::write(self.ticket_cache, signed.to_bytes());
+        if let Some(cache) = self.ticket_cache {
+            let _ = std::fs::write(cache, signed.to_bytes());
+        }
         self.inner.own_ticket.send_replace(Some(signed));
         self.registered = true;
         let expires_at = SystemTime::UNIX_EPOCH + Duration::from_secs(ticket.expires_at);
@@ -353,7 +360,7 @@ impl Session<'_> {
     /// Our cached ticket, if it still names us and has enough time left for
     /// the rendezvous to accept it.
     fn cached_ticket(&self) -> Option<SignedTicket> {
-        let bytes = std::fs::read(self.ticket_cache).ok()?;
+        let bytes = std::fs::read(self.ticket_cache?).ok()?;
         let signed = SignedTicket::from_bytes(&bytes).ok()?;
         let ticket = self.verify_own(&signed).ok()?;
         (ticket.remaining(SystemTime::now()) > RENEW_WINDOW).then_some(signed)
