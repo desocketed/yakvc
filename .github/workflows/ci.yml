@@ -294,7 +294,7 @@ jobs:
           done
 
   # On a version tag: the GitHub release (jar, yakvc-cli, static
-  # yakvc-server), the image on GHCR, and the jar on Modrinth and
+  # yakvc-server, SHA256SUMS), the image on GHCR, and the jar on Modrinth and
   # CurseForge. Each mod site is skipped until its secret and project
   # variable exist.
   release:
@@ -333,8 +333,11 @@ jobs:
           # A version like 0.2.0-beta.1 makes a prerelease.
           flags=(--generate-notes)
           if [[ $VERSION == *-* ]]; then flags+=(--prerelease); fi
-          gh release create "$GITHUB_REF_NAME" "${flags[@]}" \
-            "dist/yakvc-$VERSION.jar" release/* server/yakvc-server-linux-x86_64
+          cp "dist/yakvc-$VERSION.jar" server/yakvc-server-linux-x86_64 release/
+          # Checksums let a download by version (the NixOS server's, for one)
+          # pin and check the file's hash.
+          (cd release && sha256sum -- * > SHA256SUMS)
+          gh release create "$GITHUB_REF_NAME" "${flags[@]}" release/*
       - name: Server image to GHCR
         run: |
           image=ghcr.io/${GITHUB_REPOSITORY_OWNER}/yakvc-server
