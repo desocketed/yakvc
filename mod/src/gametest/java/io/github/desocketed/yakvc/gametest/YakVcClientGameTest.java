@@ -5,6 +5,7 @@ import com.terraformersmc.modmenu.gui.ModsScreen;
 import com.terraformersmc.modmenu.gui.widget.ModListWidget;
 import com.terraformersmc.modmenu.gui.widget.entries.ModListEntry;
 import io.github.desocketed.yakvc.GameStateFeeder;
+import io.github.desocketed.yakvc.Occlusion;
 import io.github.desocketed.yakvc.YakVcClient;
 import io.github.desocketed.yakvc.config.ClientConfig;
 import io.github.desocketed.yakvc.config.PlayerVolumes;
@@ -55,6 +56,7 @@ import net.minecraft.client.player.RemotePlayer;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket.Action;
 import net.minecraft.world.level.GameType;
+import net.minecraft.world.phys.Vec3;
 
 /**
  * Starts the real client with the native engine, dev test audio and a dev rendezvous ({@link DevRendezvous}), opens a
@@ -178,12 +180,38 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 			singleplayer.getServer().runCommand("gamemode creative @a");
 			context.waitFor(mc -> (feeder.inputFlags() & NativeBridge.INPUT_SPECTATOR) == 0);
 
+			checkOcclusion(context, singleplayer);
+
 			if (context.computeOnClient(mc -> feeder.errorEvents() != 0 || feeder.closed())) {
 				throw new AssertionError("engine reported errors; see the log");
 			}
 			// After the check above, since these errors are made up.
 			checkEngineErrorToasts(context, feeder);
 		}
+	}
+
+	/** Blocks between two points muffle by what they are made of; the ray must actually cross a block's shape. */
+	private static void checkOcclusion(ClientGameTestContext context, TestSingleplayerContext singleplayer) {
+		Vec3 from = new Vec3(12.5, -58.5, 3.5);
+		Vec3 to = new Vec3(12.5, -58.5, 7.5);
+		String[][] cases = {
+				{"air", "0"},
+				{"stone", "0.5"},
+				{"white_wool", "0.85"},
+				{"glass", "0.3"},
+				{"oak_fence_gate[facing=north,open=true]", "0"},
+				{"oak_fence_gate[facing=north,open=false]", "0.5"},
+		};
+		for (String[] blockAndExpected : cases) {
+			singleplayer.getServer().runCommand("setblock 12 -59 5 " + blockAndExpected[0]);
+			context.waitTicks(3);
+			float occlusion = context.computeOnClient(mc -> Occlusion.between(mc.level, from, to));
+			if (Math.abs(occlusion - Float.parseFloat(blockAndExpected[1])) > 0.001f) {
+				throw new AssertionError(blockAndExpected[0] + " occludes " + occlusion + ", expected "
+						+ blockAndExpected[1]);
+			}
+		}
+		singleplayer.getServer().runCommand("setblock 12 -59 5 air");
 	}
 
 	/** Two engine errors in a row both show, one after the other, rather than the second replacing the first. */
