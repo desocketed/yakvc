@@ -504,7 +504,7 @@ While the repository is private, Actions minutes are limited, so CI runs on vers
 1. `rust`: `cargo fmt --check`, `cargo clippy --workspace --all-targets -D warnings`, the same for `yakvc-client`, `yakvc-ffi` and `yakvc-cli` alone (in a workspace build `yakvc-testkit` turns on their `sim` feature, so this checks them as they ship), `cargo xtask header --check`, `cargo deny check` (every release target, the musl server build included), `cargo test --workspace` (includes `yakvc-testkit` integration tests with dev auth and null audio).
 2. `natives` (matrix: ubuntu, windows, macos): `cargo xtask natives --target <list>`, upload artifacts.
 3. `mod`: download natives, `cargo xtask dist --from artifacts/`, run Fabric client gametests (load mod, create engine, destroy). Loom runs them under Xvfb on Linux when `CI` is set.
-4. `release` (on a `v<version>` tag): a GitHub release (prerelease when the version has a `-`) with the jar, the `yakvc-cli` binaries (for `net report` in bug reports, built in the `natives` jobs), the static server binary and a `SHA256SUMS` file covering them; the server image to GHCR; the jar to Modrinth and CurseForge with `mc-publish`, each skipped until its token secret and project ID variable exist.
+4. `release` (on a `v<version>` tag): a GitHub release (prerelease when the version has a `-`) with the jar, the `yakvc-cli` binaries (for `net report` in bug reports, built in the `natives` jobs), the static server binary and a `SHA256SUMS` file covering them; the server image to GHCR; the jar to Modrinth and CurseForge with `mc-publish`, each skipped until its token secret and project ID variable exist. An alpha (`v0.1.0-alpha.0`) is a playtest build: only the GitHub prerelease, with no server image and nothing on Modrinth or CurseForge.
 
 Third-party actions (anything not under `actions/`) are pinned to full commit SHAs, with the release named in a comment, so a moved tag can't change what runs with the release secrets.
 
@@ -518,7 +518,7 @@ Third-party actions (anything not under `actions/`) are pinned to full commit SH
 
 - Connection protocols (`rdv/1`, `peer/1`) are versioned in the ALPN; incompatible changes bump the ALPN, and the server serves old and new side by side during rollouts. Application protocols on a peer connection (`voice` v1) are versioned in `PeerHello`, and peers use the highest version both support.
 - `ABI_VERSION` ties the Java and native halves of one mod build together; a mismatch fails at `yakvc_abi_version()` before the engine starts.
-- Mod version and Rust workspace version stay in lockstep: one release = one version number. Beta releases are `0.1.0-beta.1`, `0.1.0-beta.2`, … and `0.1.0` ends the beta (maintainer decision, 2026-10-04); a version with a `-` is published as a prerelease.
+- Mod version and Rust workspace version stay in lockstep: one release = one version number. Playtest builds before the beta are alphas, `0.1.0-alpha.0`, `0.1.0-alpha.1`, … (maintainer, 2026-10-11); beta releases are `0.1.0-beta.1`, `0.1.0-beta.2`, … and `0.1.0` ends the beta (maintainer decision, 2026-10-04); a version with a `-` is published as a prerelease.
 
 ## Security, privacy and abuse
 
