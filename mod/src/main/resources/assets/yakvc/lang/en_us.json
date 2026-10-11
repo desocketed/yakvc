@@ -61,6 +61,7 @@
 	"yakvc.group.notice.label_changed": "%s changed the group label",
 
 	"yakvc.sound_options.voice_chat": "Voice Chat…",
+	"yakvc.pause.voice_chat": "Voice Chat",
 	"yakvc.settings.title": "Voice Settings",
 	"yakvc.settings.activation": "Activation",
 	"yakvc.settings.activation.push_to_talk": "Push to Talk",

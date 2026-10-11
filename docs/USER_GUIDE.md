@@ -34,7 +34,7 @@ The keys are in Options → Controls → Key Binds, under **Yak VC**.
 | Group | B | Look at a player and press it to invite them to a [group](#groups), or to accept their invite. |
 | Toggle Mute | not bound | Turns your microphone off and on. |
 | Toggle Deafen | not bound | Stops you hearing anyone. Your microphone still works unless you mute it too. |
-| Open Voice Menu | not bound | Opens the [voice menu](#the-voice-menu), and from there the settings. |
+| Open Voice Menu | not bound | Opens the [voice menu](#the-voice-menu), and from there the settings. The pause menu has a button for it too. |
 | Toggle Debug Overlay | not bound | Shows or hides the [debug overlay](#the-debug-overlay). |
 
 Mute, deafen, the voice menu and the debug overlay are unbound so they don't clash with other mods. The settings are always reachable without a key, from **Voice Chat…** in the game's Music & Sounds options (see [Settings](#settings)).
@@ -69,7 +69,9 @@ A green speaker floats over the head of every player who is talking, above their
 
 ## The voice menu
 
-Press your **Open Voice Menu** key. The top line says whether voice is connected. Below it is every other player on the server, players with voice first.
+Press **Esc** and the microphone button next to **Back to Game**, or your **Open Voice Menu** key. The top line says whether voice is connected. Below it is every other player on the server, players with voice first.
+
+![The microphone button in the pause menu](guide/pause-menu.png)
 
 The first time you open it, a card at the top asks two things: who may invite you to a [group](#groups) (**Everyone**, **Friends** or **Nobody**) and how you talk (**Push to Talk** or **Voice**). **OK** saves both, and the card doesn't come back; both are in the [settings](#settings) too.
 
