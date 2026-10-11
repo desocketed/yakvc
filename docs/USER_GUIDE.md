@@ -6,6 +6,15 @@ The screenshots below are taken by the mod's automated test and refreshed whenev
 
 ## Installing
 
+The easiest way is a launcher that installs everything for you. Get the [Modrinth App](https://modrinth.com/app) or [Prism Launcher](https://prismlauncher.org/), then download one file from the [latest release](https://github.com/desocketed/yakvc/releases):
+
+- **Modrinth App:** download `yakvc-<version>.mrpack` and open it (or drag it onto the app). It makes a new profile with Minecraft, Fabric and Yak VC; press Play.
+- **Prism Launcher:** download `yakvc-<version>-prism.zip`, then **Add Instance → Import** and pick the file. The instance already has the Java setting below.
+
+To update, import the newer file the same way; your voice settings live in the instance's `config/yakvc` folder, so copy it across if you want to keep them.
+
+### By hand, or with the official launcher
+
 1. Install [Fabric Loader](https://fabricmc.net/use/) for Minecraft 26.3, and put [Fabric API](https://modrinth.com/mod/fabric-api) in your `mods` folder.
 2. Put the Yak VC jar in the same `mods` folder.
 3. Add this to your launcher's JVM arguments (in the official launcher: Installations → Edit → More Options → JVM Arguments):
