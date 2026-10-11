@@ -27,6 +27,8 @@ pub(crate) struct Matcher {
     /// sessions share a UUID.
     holders: HashMap<PairToken, HashMap<Uuid, Vec<EndpointId>>>,
     matches: usize,
+    /// Hashes computed so far; see [`hashes`](Self::hashes).
+    hashes: u64,
 }
 
 #[derive(Debug)]
@@ -35,7 +37,9 @@ struct Session {
     ticket: SignedTicket,
     addr: EndpointAddr,
     tokens: HashSet<PairToken>,
-    matched: HashSet<EndpointId>,
+    /// Current matches, by the token that made each one, so dropping a
+    /// token ends its match without hashing.
+    matched: HashMap<PairToken, Vec<EndpointId>>,
 }
 
 impl Matcher {
@@ -46,6 +50,15 @@ impl Matcher {
     /// Pairs currently matched.
     pub fn matches(&self) -> usize {
         self.matches
+    }
+
+    /// Hashes computed since the matcher was created. Adding a token costs
+    /// one hash per other UUID already holding it: one for a real pair,
+    /// but as many as an attacker likes when they hold one token under
+    /// many UUIDs, so the caller charges each session for the work its
+    /// updates cause.
+    pub fn hashes(&self) -> u64 {
+        self.hashes
     }
 
     #[cfg(test)]
@@ -80,7 +93,7 @@ impl Matcher {
             ticket,
             addr,
             tokens: HashSet::new(),
-            matched: HashSet::new(),
+            matched: HashMap::new(),
         };
         self.sessions.insert(id, session);
         notices
@@ -140,7 +153,8 @@ impl Matcher {
         let session = &self.sessions[&id];
         session
             .matched
-            .iter()
+            .values()
+            .flatten()
             .map(|&peer| Notice {
                 to: peer,
                 msg: peer_available(session),
@@ -163,15 +177,17 @@ impl Matcher {
         }
         let uuid = session.uuid;
         let holders = self.holders.entry(token).or_default();
+        let others = holders.len() - usize::from(holders.contains_key(&uuid));
         let matching: Vec<EndpointId> = holders
             .iter()
             .filter(|&(&other, _)| other != uuid && PairToken::new(uuid, other) == token)
             .flat_map(|(_, ids)| ids.iter().copied())
             .collect();
         holders.entry(uuid).or_default().push(id);
+        self.hashes += others as u64;
 
         for other in matching {
-            self.link(id, other, notices);
+            self.link(id, other, token, notices);
         }
     }
 
@@ -183,7 +199,7 @@ impl Matcher {
             return;
         }
         let uuid = session.uuid;
-        let matched: Vec<EndpointId> = session.matched.iter().copied().collect();
+        let matched = session.matched.remove(&token).unwrap_or_default();
 
         let holders = self.holders.get_mut(&token).expect("token was held");
         let ids = holders.get_mut(&uuid).expect("token was held");
@@ -196,17 +212,17 @@ impl Matcher {
         }
 
         for peer in matched {
-            if PairToken::new(uuid, self.sessions[&peer].uuid) == token {
-                self.unlink(id, peer, notices);
-            }
+            self.unlink(id, peer, token, notices);
         }
     }
 
-    fn link(&mut self, a: EndpointId, b: EndpointId, notices: &mut Vec<Notice>) {
-        if !self.sessions.get_mut(&a).unwrap().matched.insert(b) {
-            return;
+    /// Starts the match `token` makes between `a` and `b`. A pair has one
+    /// token and each side adds it once, so no match is made twice.
+    fn link(&mut self, a: EndpointId, b: EndpointId, token: PairToken, notices: &mut Vec<Notice>) {
+        for (from, to) in [(a, b), (b, a)] {
+            let matched = &mut self.sessions.get_mut(&from).unwrap().matched;
+            matched.entry(token).or_default().push(to);
         }
-        self.sessions.get_mut(&b).unwrap().matched.insert(a);
         self.matches += 1;
         notices.push(Notice {
             to: a,
@@ -218,11 +234,21 @@ impl Matcher {
         });
     }
 
-    fn unlink(&mut self, a: EndpointId, b: EndpointId, notices: &mut Vec<Notice>) {
-        if !self.sessions.get_mut(&a).unwrap().matched.remove(&b) {
-            return;
+    /// Ends the match `token` made between `a` and `b`. The caller has
+    /// already forgotten it on `a`'s side.
+    fn unlink(
+        &mut self,
+        a: EndpointId,
+        b: EndpointId,
+        token: PairToken,
+        notices: &mut Vec<Notice>,
+    ) {
+        let matched = &mut self.sessions.get_mut(&b).unwrap().matched;
+        let peers = matched.get_mut(&token).expect("matches are symmetric");
+        peers.retain(|&peer| peer != a);
+        if peers.is_empty() {
+            matched.remove(&token);
         }
-        self.sessions.get_mut(&b).unwrap().matched.remove(&a);
         self.matches -= 1;
         notices.push(Notice {
             to: a,
@@ -494,6 +520,39 @@ mod tests {
         assert!(
             matches!(&notices[0].msg, ServerMsg::PeerAvailable { addr, .. } if *addr == new_addr)
         );
+    }
+
+    #[test]
+    fn hashes_are_counted_per_other_holder_and_never_on_removal() {
+        let (a, b) = (player(1), player(2));
+        let puppets: Vec<Player> = (10..20).map(player).collect();
+        let mut m = Matcher::default();
+        for p in [&a, &b].into_iter().chain(&puppets) {
+            join(&mut m, p);
+        }
+        let ab = PairToken::new(a.uuid, b.uuid);
+        // The first holder of a token finds nobody to check against.
+        m.add_pairs(puppets[0].id, vec![ab]);
+        assert_eq!(m.hashes(), 0);
+        for (n, p) in puppets.iter().enumerate().skip(1) {
+            m.add_pairs(p.id, vec![ab]);
+            assert_eq!(m.hashes(), (n * (n + 1) / 2) as u64);
+        }
+        let so_far = m.hashes();
+        m.add_pairs(a.id, vec![ab]);
+        assert_eq!(m.hashes(), so_far + 10, "one per puppet UUID");
+        m.add_pairs(b.id, vec![ab]);
+        assert_eq!(m.hashes(), so_far + 21);
+        assert_eq!(m.matches(), 1);
+
+        let hashed = m.hashes();
+        let notices = m.set_pairs(a.id, vec![]);
+        assert_eq!(summary(&notices), pair("gone", &a, &b));
+        for p in &puppets {
+            m.unregister(p.id);
+        }
+        assert_eq!(m.hashes(), hashed, "dropping tokens costs no hashes");
+        assert_eq!(m.matches(), 0);
     }
 
     #[test]

@@ -699,6 +699,46 @@ async fn pair_updates_are_rate_limited() {
     assert_eq!(client.close_code().await, code(CloseCode::RateLimited));
 }
 
+/// Holding one token under many UUIDs makes every later add of it cost a
+/// hash per UUID; the session that overdraws its budget is closed, and
+/// real pairs still match.
+#[tokio::test]
+async fn matcher_work_is_rate_limited_per_session() {
+    let limits = Limits {
+        max_pairs: 2, // a burst of 4 hashes
+        pair_hashes_per_sec: 1,
+        ..Limits::default()
+    };
+    let server = builder()
+        .insecure_dev_auth()
+        .limits(limits)
+        .spawn()
+        .await
+        .unwrap();
+    let token = PairToken::new(Uuid::from_u128(1), Uuid::from_u128(2));
+    let mut puppets = Vec::new();
+    for n in 0..6 {
+        let mut puppet = Client::connect(&server, &format!("puppet{n}")).await;
+        puppet.register().await;
+        puppet.send(ClientMsg::AddPairs(vec![token])).await;
+        puppets.push(puppet);
+    }
+    // The sixth add checks against five UUIDs, one over its budget.
+    let sixth = puppets.last_mut().unwrap();
+    assert_eq!(sixth.close_code().await, code(CloseCode::RateLimited));
+
+    let mut alice = Client::connect(&server, "alice").await;
+    let mut bob = Client::connect(&server, "bob").await;
+    alice.register().await;
+    bob.register().await;
+    alice
+        .send(ClientMsg::AddPairs(vec![alice.token_for(&bob)]))
+        .await;
+    bob.send(ClientMsg::AddPairs(vec![bob.token_for(&alice)]))
+        .await;
+    alice.expect_peer_available(&bob).await;
+}
+
 #[tokio::test]
 async fn mojang_challenge_issues_a_real_ticket() {
     let mojang = FakeMojang::start().await;

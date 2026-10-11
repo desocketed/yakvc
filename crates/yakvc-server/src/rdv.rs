@@ -94,6 +94,7 @@ pub(crate) async fn serve(shared: Arc<Shared>, incoming: Incoming) {
         hello: None,
         challenge: None,
         pair_updates: None,
+        pair_hashes: None,
         unregistered: Some((unregistered, unregistered_ip)),
         session_slot: None,
     };
@@ -152,6 +153,9 @@ struct Client {
     challenge: Option<Nonce>,
     /// Present once registered.
     pair_updates: Option<TokenBucket>,
+    /// The matcher work this session's updates may cost
+    /// (`Limits::pair_hashes_per_sec`), once registered.
+    pair_hashes: Option<TokenBucket>,
     /// Held until registered, against `Limits::max_unregistered` and (with
     /// a known IP) `max_unregistered_per_ip`.
     unregistered: Option<(Slot, Option<IpSlot>)>,
@@ -216,8 +220,8 @@ impl Client {
                 if distinct.len() > self.shared.limits.max_pairs {
                     return Err(CloseCode::LimitExceeded);
                 }
-                self.shared.sessions.set_pairs(self.id, tokens);
-                Ok(())
+                let hashes = self.shared.sessions.set_pairs(self.id, tokens);
+                self.charge_hashes(hashes)
             }
             ClientMsg::AddPairs(tokens) => {
                 self.check_update()?;
@@ -228,8 +232,8 @@ impl Client {
                 if total > self.shared.limits.max_pairs {
                     return Err(CloseCode::LimitExceeded);
                 }
-                self.shared.sessions.add_pairs(self.id, tokens);
-                Ok(())
+                let hashes = self.shared.sessions.add_pairs(self.id, tokens);
+                self.charge_hashes(hashes)
             }
             ClientMsg::RemovePairs(tokens) => {
                 self.check_update()?;
@@ -429,6 +433,12 @@ impl Client {
             Duration::from_secs(1),
             Instant::now(),
         ));
+        let burst = 2 * limits.max_pairs as u32;
+        self.pair_hashes = Some(TokenBucket::new(
+            burst,
+            Duration::from_secs_f64(f64::from(burst) / f64::from(limits.pair_hashes_per_sec)),
+            Instant::now(),
+        ));
         self.unregistered = None;
         self.send(ServerMsg::Registered(ticket.signed().clone()));
         true
@@ -448,6 +458,18 @@ impl Client {
     fn check_update(&mut self) -> Result<(), CloseCode> {
         let bucket = self.pair_updates.as_mut().ok_or(CloseCode::ProtocolError)?;
         if bucket.take(Instant::now()) {
+            Ok(())
+        } else {
+            Err(CloseCode::RateLimited)
+        }
+    }
+
+    /// Charges the matcher work an update cost, after the fact: the cost
+    /// is only known once the tokens are indexed, and a session that
+    /// overdraws is closed, which discards them again.
+    fn charge_hashes(&mut self, hashes: u64) -> Result<(), CloseCode> {
+        let bucket = self.pair_hashes.as_mut().ok_or(CloseCode::ProtocolError)?;
+        if bucket.take_many(hashes, Instant::now()) {
             Ok(())
         } else {
             Err(CloseCode::RateLimited)
