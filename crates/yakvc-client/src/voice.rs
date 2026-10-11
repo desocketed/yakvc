@@ -559,6 +559,14 @@ struct AudioLoop {
     frames_since_level: u32,
 }
 
+/// What [`AudioLoop::send`] needs to know about one connected peer, read
+/// under the peers lock and used after it.
+struct Sendable {
+    peer: Peer,
+    wants_audio: bool,
+    relayed: bool,
+}
+
 /// One remote speaker's receive state.
 struct Remote {
     /// The link `stream` is fed from.
@@ -724,14 +732,27 @@ impl AudioLoop {
         let Some(encoder) = &mut self.encoder else {
             return;
         };
-        let peers = self.shared.peers.lock().unwrap();
-        let candidates: Vec<_> = current(&peers)
-            .filter(|p| p.wants_audio.load(Ordering::Relaxed))
-            .filter_map(|p| state.send_to(p.peer.uuid(), p.peer.is_relayed()))
+        // Every received datagram takes the peers lock on a tokio worker, so
+        // only this snapshot is taken under it; planning, encoding and
+        // sending run on the handles.
+        let peers: Vec<Sendable> = {
+            let peers = self.shared.peers.lock().unwrap();
+            current(&peers)
+                .map(|p| Sendable {
+                    peer: p.peer.clone(),
+                    wants_audio: p.wants_audio.load(Ordering::Relaxed),
+                    relayed: p.peer.is_relayed(),
+                })
+                .collect()
+        };
+        let candidates: Vec<_> = peers
+            .iter()
+            .filter(|p| p.wants_audio)
+            .filter_map(|p| state.send_to(p.peer.uuid(), p.relayed))
             .collect();
         let groups: HashMap<Uuid, bool> = candidates.iter().map(|c| (c.uuid, c.group)).collect();
         let plan = plan_send(candidates, state.audio.bitrate);
-        for p in current(&peers).filter(|p| p.peer.is_relayed()) {
+        for p in peers.iter().filter(|p| p.relayed) {
             p.peer
                 .set_relay_full(plan.relay_full.contains(&p.peer.uuid()));
         }
@@ -755,6 +776,7 @@ impl AudioLoop {
                 return;
             }
         };
+        let mut datagram = Vec::with_capacity(VoiceHeader::LEN + payload.len());
         for uuid in &plan.recipients {
             let header = VoiceHeader {
                 seq: self.seq,
@@ -762,11 +784,13 @@ impl AudioLoop {
                 end_of_talk,
                 group: groups[uuid],
             };
-            let mut datagram = Vec::with_capacity(VoiceHeader::LEN + payload.len());
+            datagram.clear();
             datagram.extend_from_slice(&header.to_bytes());
             datagram.extend_from_slice(payload);
             // A peer that just closed simply misses the frame.
-            let _ = peers[uuid][0].peer.send_datagram(&datagram);
+            if let Some(p) = peers.iter().find(|p| p.peer.uuid() == *uuid) {
+                let _ = p.peer.send_datagram(&datagram);
+            }
         }
         self.seq = self.seq.wrapping_add(1);
         if end_of_talk {
