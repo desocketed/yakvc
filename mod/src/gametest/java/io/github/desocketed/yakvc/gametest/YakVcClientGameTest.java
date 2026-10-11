@@ -234,6 +234,12 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		context.waitFor(mc -> feeder.micLevelDb() > GameStateFeeder.SILENCE_DB);
 		context.clickScreenButton("gui.done");
 		context.waitForScreen(SoundOptionsScreen.class);
+		// Coming back re-initialises the sound options; the button must not be added again.
+		context.runOnClient(mc -> {
+			String label = Component.translatable("yakvc.sound_options.voice_chat").getString();
+			int count = countButtons(mc.gui.screen().children(), message -> message.equals(label));
+			if (count != 1) throw new AssertionError(count + " Voice Chat buttons in the sound options");
+		});
 		context.clickScreenButton("gui.done");
 		context.waitForScreen(TitleScreen.class);
 	}
@@ -482,6 +488,15 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 			if (button == null) throw new AssertionError("no button " + name + " in " + mc.gui.screen());
 			button.onPress(new KeyEvent(InputConstants.KEY_RETURN, 0, 0));
 		});
+	}
+
+	private static int countButtons(List<? extends GuiEventListener> widgets, Predicate<String> label) {
+		int count = 0;
+		for (GuiEventListener widget : widgets) {
+			if (widget instanceof AbstractButton button && label.test(button.getMessage().getString())) count++;
+			if (widget instanceof ContainerEventHandler container) count += countButtons(container.children(), label);
+		}
+		return count;
 	}
 
 	private static @Nullable AbstractButton findButton(List<? extends GuiEventListener> widgets,
