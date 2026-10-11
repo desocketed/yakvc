@@ -180,7 +180,9 @@ impl VoiceState {
 
     /// How to play a frame from `peer`, with or without the `group` flag,
     /// or `None` to discard it.
-    pub(crate) fn playback(&self, peer: Uuid, group: bool) -> Option<Spatial> {
+    /// `world` is the one playback should hear, usually [`Self::world_at`]
+    /// for now, which lags the latest snapshot a little.
+    pub(crate) fn playback(&self, world: &World, peer: Uuid, group: bool) -> Option<Spatial> {
         if !self.wants_audio_from(peer) {
             return None;
         }
@@ -189,7 +191,7 @@ impl VoiceState {
             // matter: it plays centred, and only from a group mate.
             self.is_group_mate(peer).then_some(CENTRED)?
         } else {
-            self.nearby_playback(peer)?
+            self.nearby_playback(world, peer)?
         };
         let volume = self.peer_audio.get(&peer).map_or(1.0, |audio| audio.volume);
         Some(Spatial {
@@ -199,14 +201,15 @@ impl VoiceState {
     }
 
     /// Where a positional frame from `peer` plays. In a group, nowhere.
-    fn nearby_playback(&self, peer: Uuid) -> Option<Spatial> {
+    fn nearby_playback(&self, world: &World, peer: Uuid) -> Option<Spatial> {
         if self.input.spectator || self.group.is_some() {
             return None;
         }
         if self.ignore_world {
             return Some(CENTRED);
         }
-        spatial(&self.world.listener, self.position(peer)?, self.voice_range)
+        let (_, pos) = world.players.iter().find(|(uuid, _)| *uuid == peer)?;
+        spatial(&world.listener, *pos, self.voice_range)
     }
 
     /// Whether to send this frame to `peer`, and how. Whether the peer
@@ -371,7 +374,7 @@ mod tests {
     }
 
     fn nearby(state: &VoiceState, peer: u8) -> Option<Spatial> {
-        state.playback(uuid(peer), false)
+        state.playback(&state.world, uuid(peer), false)
     }
 
     #[test]
@@ -624,7 +627,7 @@ mod tests {
     fn group_mates_are_heard_anywhere_and_unpositioned() {
         let mut state = in_group();
         // uuid(1) has no tracked entity, so only the group reaches it.
-        assert_eq!(state.playback(uuid(1), true), Some(CENTRED));
+        assert_eq!(state.playback(&state.world, uuid(1), true), Some(CENTRED));
         assert_eq!(nearby(&state, 1), None);
         let mate = state.send_to(uuid(1), false).unwrap();
         assert!(mate.group);
@@ -633,7 +636,7 @@ mod tests {
         state.input.spectator = true;
         state.input.push_to_talk = true;
         assert!(state.transmitting(false));
-        assert_eq!(state.playback(uuid(1), true), Some(CENTRED));
+        assert_eq!(state.playback(&state.world, uuid(1), true), Some(CENTRED));
         // Mute still applies.
         state.peer_audio.insert(
             uuid(1),
@@ -642,14 +645,14 @@ mod tests {
                 muted: true,
             },
         );
-        assert_eq!(state.playback(uuid(1), true), None);
+        assert_eq!(state.playback(&state.world, uuid(1), true), None);
     }
 
     #[test]
     fn a_group_cuts_nearby_players_off_both_ways() {
         let state = in_group();
         assert_eq!(nearby(&state, 2), None);
-        assert_eq!(state.playback(uuid(2), true), None);
+        assert_eq!(state.playback(&state.world, uuid(2), true), None);
         assert_eq!(state.send_to(uuid(2), false), None);
         assert!(!state.wants_audio_from(uuid(2)));
         assert!(state.wants_audio_from(uuid(1)));
