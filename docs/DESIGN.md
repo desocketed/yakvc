@@ -328,7 +328,7 @@ Players in a group hear each other at any distance, and only each other: a membe
 
 | Module | Role |
 | --- | --- |
-| `main.rs` | `clap` CLI: `run --config <path>`, `keygen [--issuer]`, `endpoint-id`, `issuer-id`. Wiring only. |
+| `main.rs` | `clap` CLI: `run --config <path>`, `keygen [--issuer]`, `endpoint-id`, `issuer-id`, and `probe`, a health check that signs in through the relay as an offline player (no Mojang call). Wiring only. |
 | `lib.rs` | `Server::builder(config).spawn()` so `yakvc-testkit` can run it in-process |
 | `config` | TOML config: endpoint and issuer key paths, bind addresses, relay hostname + TLS (ACME or files), ticket lifetime, limits, metrics bind |
 | `rdv` | Per-connection protocol handler for `yakvc/rdv/1` (state machine: Hello → Challenge → Joined → Registered) |

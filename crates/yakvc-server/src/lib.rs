@@ -10,6 +10,7 @@ mod limits;
 mod matcher;
 mod metrics;
 mod mojang;
+mod probe;
 mod rdv;
 mod relay;
 mod server;
@@ -19,4 +20,5 @@ mod tests;
 
 pub use crate::config::{Config, ConfigError};
 pub use crate::mojang::{MojangError, Profile, SessionServer};
+pub use crate::probe::probe;
 pub use crate::server::{Limits, RelayOptions, RelayTls, Server, ServerBuilder, SpawnError, Stats};
