@@ -22,7 +22,18 @@ pub struct Pose {
 pub struct World {
     pub listener: Pose,
     /// Players with a tracked entity, spectators already removed.
-    pub players: Vec<(Uuid, Vec3)>,
+    pub players: Vec<Player>,
+}
+
+/// Another player as the listener hears them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Player {
+    pub uuid: Uuid,
+    /// Eye position.
+    pub pos: Vec3,
+    /// How much of the direct path from them to the listener is blocked,
+    /// from 0 (open air) to 1 (fully blocked), as the game estimates it.
+    pub occlusion: f32,
 }
 
 /// Local input state.
@@ -33,6 +44,17 @@ pub struct Input {
     pub deafened: bool,
     /// The local player is a spectator: send and play nothing.
     pub spectator: bool,
+}
+
+impl Player {
+    /// A player in open air.
+    pub const fn new(uuid: Uuid, pos: Vec3) -> Self {
+        Player {
+            uuid,
+            pos,
+            occlusion: 0.0,
+        }
+    }
 }
 
 impl Vec3 {
@@ -62,13 +84,16 @@ pub(crate) fn interpolate(from: &World, to: &World, t: f64) -> World {
     let players = to
         .players
         .iter()
-        .map(|&(uuid, pos)| {
-            let before = from.players.iter().find(|(other, _)| *other == uuid);
-            (
-                uuid,
-                before.map_or(pos, |&(_, before)| lerp_pos(before, pos)),
-            )
-        })
+        .map(
+            |&to| match from.players.iter().find(|p| p.uuid == to.uuid) {
+                Some(before) => Player {
+                    pos: lerp_pos(before.pos, to.pos),
+                    occlusion: lerp(f64::from(before.occlusion), f64::from(to.occlusion)) as f32,
+                    ..to
+                },
+                None => to,
+            },
+        )
         .collect();
     World { listener, players }
 }
@@ -84,7 +109,10 @@ mod tests {
                 yaw,
                 pitch: 0.0,
             },
-            players: vec![(Uuid::from_u128(1), Vec3::new(player_x, 64.0, 0.0))],
+            players: vec![Player::new(
+                Uuid::from_u128(1),
+                Vec3::new(player_x, 64.0, 0.0),
+            )],
         }
     }
 
@@ -95,7 +123,7 @@ mod tests {
         let half = interpolate(&from, &to, 0.5);
         assert_eq!(half.listener.pos, Vec3::new(2.0, 64.0, 0.0));
         assert_eq!(half.listener.yaw, 45.0);
-        assert_eq!(half.players[0].1, Vec3::new(15.0, 64.0, 0.0));
+        assert_eq!(half.players[0].pos, Vec3::new(15.0, 64.0, 0.0));
         assert_eq!(interpolate(&from, &to, 1.0), to);
     }
 

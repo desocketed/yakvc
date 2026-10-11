@@ -201,7 +201,7 @@ impl Engine {
         let mut distances: HashMap<Uuid, f64> = world
             .players
             .iter()
-            .map(|&(uuid, pos)| (uuid, distance(world.listener.pos, pos)))
+            .map(|p| (p.uuid, distance(world.listener.pos, p.pos)))
             .collect();
         // Group mates rank as if next to us, so the peer cap keeps them.
         for mate in self.voice.group_mates() {
@@ -796,7 +796,10 @@ mod tests {
                     pos: Vec3::new(me, 64.0, 0.0),
                     ..Pose::default()
                 },
-                players: vec![(uuid(other), Vec3::new(them, 64.0, 0.0))],
+                players: vec![crate::world::Player::new(
+                    uuid(other),
+                    Vec3::new(them, 64.0, 0.0),
+                )],
             });
         }
 

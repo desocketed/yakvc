@@ -286,7 +286,7 @@ fn push_worlds(players: &Mutex<Vec<Player>>) {
                     && !other.spectator
                     && distance(me.pos, other.pos) <= TRACKING_RANGE
             })
-            .map(|other| (other.uuid, other.pos))
+            .map(|other| yakvc_client::Player::new(other.uuid, other.pos))
             .collect();
         engine.set_world(World {
             // Yaw 0: facing +Z, so +X is on the listener's left.

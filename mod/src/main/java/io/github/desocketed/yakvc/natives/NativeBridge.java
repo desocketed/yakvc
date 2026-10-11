@@ -34,7 +34,7 @@ import java.util.UUID;
  */
 public final class NativeBridge {
 	/** Must equal {@code YAKVC_ABI_VERSION} in {@code yakvc.h}. */
-	public static final int ABI_VERSION = 7;
+	public static final int ABI_VERSION = 8;
 
 	public static final int INPUT_PUSH_TO_TALK = 1;
 	public static final int INPUT_MUTED = 1 << 1;
@@ -162,17 +162,17 @@ public final class NativeBridge {
 	 *
 	 * @param listener x, y, z, yaw, pitch
 	 * @param uuids    16 bytes per tracked player, from {@link #uuidBytes}
-	 * @param xyz      x, y, z per tracked player
+	 * @param players  x, y, z, occlusion (0 open air to 1 fully blocked) per tracked player
 	 * @throws IllegalArgumentException if the lengths don't match, because native code trusts them
 	 */
-	public void pushWorld(MemorySegment engine, double[] listener, byte[] uuids, double[] xyz) {
+	public void pushWorld(MemorySegment engine, double[] listener, byte[] uuids, double[] players) {
 		long count = uuids.length / 16;
-		if (listener.length != 5 || uuids.length % 16 != 0 || xyz.length != 3 * count) {
+		if (listener.length != 5 || uuids.length % 16 != 0 || players.length != 4 * count) {
 			throw new IllegalArgumentException("pushWorld: listener " + listener.length + ", uuids " + uuids.length
-					+ " bytes, xyz " + xyz.length);
+					+ " bytes, players " + players.length);
 		}
 		check((int) invoke(pushWorld, engine, MemorySegment.ofArray(listener), MemorySegment.ofArray(uuids),
-				MemorySegment.ofArray(xyz), count));
+				MemorySegment.ofArray(players), count));
 	}
 
 	/** {@code flags} is a combination of {@code INPUT_*}. */
