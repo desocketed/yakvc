@@ -56,6 +56,7 @@ class ClientConfigTest {
 		assertEquals("Mic \"USB\" # 2", config.inputDevice());
 		assertEquals("C:\\Speakers", config.outputDevice());
 		assertEquals(256, config.voiceRange(), "the engine's default when unset");
+		assertEquals(1, config.inputGain(), "the engine's default when unset");
 	}
 
 	@Test
@@ -64,10 +65,12 @@ class ClientConfigTest {
 				.with("", "voice_range", "32.0")
 				.with("", "relay_only", "true")
 				.with("audio", "activation", ClientConfig.quote("voice"))
+				.with("audio", "input_gain", "2.5")
 				.with("audio", "input_device", ClientConfig.quote("Mic \"2\""));
 		assertEquals(32, config.voiceRange());
 		assertTrue(config.relayOnly());
 		assertTrue(config.voiceActivation());
+		assertEquals(2.5, config.inputGain());
 		assertEquals("Mic \"2\"", config.inputDevice());
 		assertTrue(config.toml().contains("# Voice range in blocks"));
 		assertTrue(config.toml().contains("# output_device = \"...\""), "untouched commented keys stay");
@@ -102,10 +105,13 @@ class ClientConfigTest {
 					.with("", "voice_range", "100.0")
 					.with("", "mute_blocked_players", "false")
 					.with("audio", "bitrate", "64000")
+					.with("audio", "input_gain", "4.0")
 					.with("audio", "output_device", ClientConfig.quote("Speakers"));
 			bridge.updateConfig(engine, edited.toml());
 			assertThrows(YakVcException.class,
 					() -> bridge.updateConfig(engine, edited.with("", "voice_range", "1000.0").toml()));
+			assertThrows(YakVcException.class,
+					() -> bridge.updateConfig(engine, edited.with("audio", "input_gain", "20.0").toml()));
 			// Java keeps per-player volume; the engine only checks it is a usable gain.
 			bridge.setPeerVolume(engine, UUID.randomUUID(), 2f, true);
 		} finally {
