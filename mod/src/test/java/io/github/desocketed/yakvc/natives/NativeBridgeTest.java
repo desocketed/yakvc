@@ -58,7 +58,7 @@ class NativeBridgeTest {
 			UUID other = UUID.randomUUID();
 			bridge.setIdentity(engine, me, "alice");
 			bridge.setTabList(engine, Set.of(me, other));
-			bridge.pushWorld(engine, new double[] {0, 64, 0, 90, 0, 0, 1, 0, 0}, NativeBridge.uuidBytes(List.of(other)),
+			bridge.pushWorld(engine, new double[] {0, 64, 0, 90, 0, 0, 1, 1, 0, 0}, NativeBridge.uuidBytes(List.of(other)),
 					new double[] {3, 64, 0, 0, 3, 64, 0});
 			bridge.setGameVolume(engine, 0.5f);
 			bridge.setGameDevice(engine, "");
@@ -130,11 +130,11 @@ class NativeBridgeTest {
 		MemorySegment engine = bridge.create(configDir.toString(), DEV_CONFIG);
 		try {
 			// Only over-long arrays, so native code can't read past one even without the check.
-			double[] listener = {0, 64, 0, 90, 0, 0, 1, 0, 0};
+			double[] listener = {0, 64, 0, 90, 0, 0, 1, 1, 0, 0};
 			byte[] one = NativeBridge.uuidBytes(List.of(UUID.randomUUID()));
 			double[] players = {3, 64, 0, 0, 3, 64, 0};
 			assertThrows(IllegalArgumentException.class,
-					() -> bridge.pushWorld(engine, new double[] {0, 64, 0, 90, 0, 0, 1, 0, 0, 0}, one, players));
+					() -> bridge.pushWorld(engine, new double[] {0, 64, 0, 90, 0, 0, 1, 1, 0, 0, 0}, one, players));
 			assertThrows(IllegalArgumentException.class,
 					() -> bridge.pushWorld(engine, listener, Arrays.copyOf(one, 17), players));
 			assertThrows(IllegalArgumentException.class,

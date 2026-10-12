@@ -10,7 +10,7 @@ use yakvc_proto::{GroupId, Uuid};
 use super::group::{Invite, OwnGroup, PendingGroup, SentInvite};
 use crate::config::{AcousticsConfig, Activation, AudioConfig, InvitesFrom};
 use crate::engine::PeerAudio;
-use crate::world::{Input, Player, Pose, Vec3, World, distance, interpolate};
+use crate::world::{Input, Player, Pose, Room, Vec3, World, distance, interpolate};
 
 /// Snapshots further apart than this are not interpolated: the game paused
 /// or lagged, so gliding would only move voices late.
@@ -253,8 +253,9 @@ impl VoiceState {
                     self.voice_range,
                     &self.acoustics,
                 )?;
+                let heard = distance(world.listener.pos, player.heard_from);
                 Spatial {
-                    reverb: world.room.reverb,
+                    reverb: reverb_send(world.room, heard),
                     ..occluded(spatial, player.occlusion, &self.acoustics)
                 }
             }
@@ -367,6 +368,18 @@ pub(crate) fn spatial(
         muffle: 0.0,
         reverb: 0.0,
     })
+}
+
+/// How much of a voice `distance` metres away goes to the reverb. A room's
+/// reverberant sound is about as loud everywhere in it, while the direct
+/// sound fades with distance; the two are equal at the critical distance.
+/// So the reverb's share of what reaches the listener, in energy, is
+/// `d² / (d² + r_c²)`: a nearby talker is mostly dry, a far one mostly room.
+/// The send is its square root, an amplitude.
+fn reverb_send(room: Room, distance: f64) -> f32 {
+    let critical = f64::from(room.critical_distance).max(0.1);
+    let share = distance / distance.hypot(critical);
+    room.reverb * share as f32
 }
 
 /// `spatial` heard through obstacles that block `occlusion` of the direct
@@ -630,6 +643,30 @@ mod tests {
             None,
             "untracked"
         );
+    }
+
+    #[test]
+    fn far_voices_send_more_to_the_reverb() {
+        let mut state = state();
+        state.world.room = Room {
+            reverb: 0.8,
+            critical_distance: 2.0,
+            ..Room::default()
+        };
+        state.world.players = vec![
+            Player::new(uuid(1), at(1.0, 0.0)),
+            Player::new(uuid(2), at(2.0, 0.0)),
+            Player::new(uuid(3), at(20.0, 0.0)),
+        ];
+        let send = |state: &VoiceState, peer| nearby(state, peer).unwrap().reverb;
+        assert!(send(&state, 1) < 0.4, "{}", send(&state, 1));
+        // At the critical distance reverb and voice are equally loud.
+        let equal = 0.8 * std::f32::consts::FRAC_1_SQRT_2;
+        assert!((send(&state, 2) - equal).abs() < 1e-3);
+        assert!(send(&state, 3) > 0.79, "{}", send(&state, 3));
+
+        state.world.room.reverb = 0.0;
+        assert_eq!(send(&state, 3), 0.0);
     }
 
     #[test]
