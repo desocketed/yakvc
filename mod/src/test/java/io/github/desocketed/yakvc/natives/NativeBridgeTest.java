@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.desocketed.yakvc.GameStateFeeder;
 import java.lang.foreign.Arena;
 import java.lang.foreign.FunctionDescriptor;
 import java.lang.foreign.Linker;
@@ -182,8 +183,11 @@ class NativeBridgeTest {
 			bridge.setVoiceSink(engine, MemorySegment.NULL);
 			awaitExternalOutput(bridge, engine, false);
 
-			// Versions 1 and 2 (which also wants the player's own voice) are taken; a newer one isn't.
-			sink.set(JAVA_INT, 0, 3);
+			// The version yakvc publishes for renderers is the newest the engine takes; a newer one isn't.
+			sink.set(JAVA_INT, 0, GameStateFeeder.VOICE_SINK_VERSION);
+			bridge.setVoiceSink(engine, sink);
+			bridge.setVoiceSink(engine, MemorySegment.NULL);
+			sink.set(JAVA_INT, 0, GameStateFeeder.VOICE_SINK_VERSION + 1);
 			YakVcException wrongVersion = assertThrows(YakVcException.class, () -> bridge.setVoiceSink(engine, sink));
 			assertEquals(-1, wrongVersion.code());
 			assertTrue(wrongVersion.getMessage().contains("version"), wrongVersion.getMessage());
