@@ -82,7 +82,7 @@ Press **Esc** and the microphone button next to **Back to Game**, or your **Open
 
 ![The microphone button in the pause menu](guide/pause-menu.png)
 
-The first time you open it, a card at the top asks two things: who may invite you to a [group](#groups) (**Everyone**, **Friends** or **Nobody**) and how you talk (**Push to Talk** or **Voice**). **Got it** saves both, and the card doesn't come back; both are in the [settings](#settings) too.
+The first time you open it, a card at the top asks two things: who may invite you to a [group](#groups) (**Everyone**, **Friends** or **Nobody**) and how you talk (**Push to Talk** or **Voice**). Each choice applies and is saved as soon as you pick it, and **Got it** hides the card for good; both are in the [settings](#settings) too.
 
 ![The voice menu with the first-run card](guide/voice-menu-setup.png)
 
@@ -130,7 +130,7 @@ The game's own Voice/Speech slider (Options → Music & Sounds) sets the volume 
 
 ## Settings
 
-Open the settings from **Options → Music & Sounds → Voice Chat…**, at the end of the sound options, which works on the title screen as well as in game. **Settings…** in the voice menu opens them too, and so does [Mod Menu](https://modrinth.com/mod/modmenu) if you have it installed: in its **Mods** list, select Yak VC and press the small settings button at the right of its name. **Done** goes back to where you came from. Changes apply and are saved when you leave the screen.
+Open the settings from **Options → Music & Sounds → Voice Chat…**, at the end of the sound options, which works on the title screen as well as in game. **Settings…** in the voice menu opens them too, and so does [Mod Menu](https://modrinth.com/mod/modmenu) if you have it installed: in its **Mods** list, select Yak VC and press the small settings button at the right of its name. **Done** goes back to where you came from. Like the game's own options, a change applies and is saved as soon as you make it, so you can hear it right away; if Yak VC can't use a value, a toast says why and the setting goes back to what was in effect.
 
 ![Voice Chat… in the Music & Sounds options](guide/sound-options.png)
 
@@ -150,7 +150,7 @@ Open the settings from **Options → Music & Sounds → Voice Chat…**, at the 
 
 ![The privacy settings](guide/voice-settings-privacy.png)
 
-- **Relay Only**: sends all voice through the Yak VC relay, so other players don't learn your IP address (see [privacy](#privacy)). Off by default. It takes effect after you restart the game.
+- **Relay Only**: sends all voice through the Yak VC relay, so other players don't learn your IP address (see [privacy](#privacy)). Off by default. It takes effect after you restart the game, and until then the button says **On after restart** or **Off after restart**.
 - **Obey Chat Limits**: turns voice off while your Microsoft account or launcher disables chat. On by default.
 - **Mute Blocked**: players you block in Social Interactions can't hear you, and you don't hear them. On by default.
 - **Group Invites**: who may invite you to a [group](#groups): *Everyone* (the default) or *Nobody*. Setting `invites = "friends"` in the [config file](#the-config-file) allows only the players in `friends_only`, which is edited there too. Invites from anyone else are ignored.
