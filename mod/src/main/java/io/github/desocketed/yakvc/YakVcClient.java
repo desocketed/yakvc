@@ -84,9 +84,6 @@ public final class YakVcClient implements ClientModInitializer {
 		if (config.value("dev", "tone_hz") != null) {
 			LOGGER.warn("[dev] tone_hz is set in client.toml: a test tone replaces the microphone");
 		}
-		if (config.value("dev", "wav") != null) {
-			LOGGER.warn("[dev] wav is set in client.toml: a looping WAV file replaces the microphone");
-		}
 		if ("true".equals(config.value("dev", "null_output"))) {
 			LOGGER.warn("[dev] null_output is set in client.toml: nothing is played");
 		}

@@ -30,10 +30,7 @@ pub use crate::mixer::{Acoustics, Mixer, Spatial};
 pub use crate::muffle::Muffle;
 pub use crate::receive::{JitterConfig, Packet, Pulled, ReceiveStream, StreamStats};
 pub use crate::reverb::Reverb;
-pub use crate::test_io::{
-    NullSink, Recording, SilenceSource, TEST_INPUTS, TestSignal, TestSource, ToneSource, WavSource,
-    open_test_input,
-};
+pub use crate::test_io::{NullSink, Recording, SilenceSource, ToneSource, WavSource};
 
 /// Sample rate used throughout the pipeline.
 pub const SAMPLE_RATE: u32 = 48_000;
