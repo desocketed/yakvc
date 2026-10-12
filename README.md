@@ -26,7 +26,7 @@ The mod's voice engine is written in Rust and loaded by the Fabric mod through J
 
 ## Development
 
-`nix develop` provides the pinned Rust toolchain, JDK 25 and the other build tools. Without Nix you need rustup (which reads `rust-toolchain.toml`), JDK 25, `cargo-deny` and `cmake`.
+`nix develop` provides the pinned Rust toolchain, JDK 25 and the other build tools. Without Nix you need rustup (which reads `rust-toolchain.toml`), JDK 25, `cargo-deny`, `cargo-about` (for `cargo xtask dist`) and `cmake`, plus on Linux the ALSA headers (`libasound2-dev` or `alsa-lib-devel`) and `pkg-config`.
 
 ```sh
 cargo test --workspace          # Rust crates
