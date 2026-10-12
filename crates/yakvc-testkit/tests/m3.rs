@@ -140,13 +140,13 @@ async fn gain_and_pan_follow_moves() {
         "ahead: {near_l} vs {near_r}"
     );
 
-    // At 30 blocks the gain is about 1 - 26/44 = 0.41.
+    // At 30 blocks the gain is about (226/252)^3 = 0.72.
     alice.move_to(at(0.0, 30.0));
     sleep(SETTLE).await;
     let (far_l, _) = levels(&listen(&bob, Duration::from_secs(1)).await);
     assert!(far_l > 0.0, "still audible at 30 blocks");
     assert!(
-        (0.25..0.6).contains(&(far_l / near_l)),
+        (0.55..0.9).contains(&(far_l / near_l)),
         "gain at 30 blocks: {}",
         far_l / near_l
     );
@@ -282,7 +282,7 @@ async fn the_shorter_voice_range_wins() {
         .config(|c| c.voice_range = 20.0)
         .start()
         .await;
-    // bob keeps the default 48-block range.
+    // bob keeps the default 256-block range.
     let mut bob = net.client().name("bob").tone(660.0).start().await;
     alice.move_to(at(0.0, 0.0));
     bob.move_to(at(18.0, 0.0));
@@ -373,7 +373,7 @@ async fn voice_stops_at_range_and_without_a_tracked_entity() {
     connect(&mut alice, &mut bob, PeerState::Direct).await;
     alice.talk(true);
 
-    // Inside the default 48-block range, quiet but audible.
+    // Inside the default 256-block range, quiet but audible.
     sleep(SETTLE).await;
     assert!(!is_silent(&listen(&bob, Duration::from_secs(1)).await));
 

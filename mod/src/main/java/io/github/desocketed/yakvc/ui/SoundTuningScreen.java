@@ -42,7 +42,7 @@ public final class SoundTuningScreen extends OptionsSubScreen {
 		SoundTuning mod = SoundTuning.DEFAULT;
 		// The engine's keys fall back to its own defaults (AcousticsConfig); the mod's to SoundTuning's.
 		slider("full_volume_distance", 0, 32, 1, 4, SoundTuningScreen::blocks);
-		slider("distance_rolloff", 10, 300, 0.01, 0.6, value -> label("times", "%.2f", value));
+		slider("distance_rolloff", 10, 400, 0.01, 3, value -> label("times", "%.2f", value));
 		slider("occlusion_attenuation", 0, 100, 0.01, 0.75, SoundTuningScreen::percent);
 		slider("muffled_cutoff_hz", 2, 80, 50, 600, value -> label("hertz", "%.0f", value));
 		slider("path_bend", 0, 100, 0.01, mod.pathBend(), SoundTuningScreen::percent);
