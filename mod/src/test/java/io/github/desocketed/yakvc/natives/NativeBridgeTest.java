@@ -21,8 +21,11 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.CleanupMode;
 import org.junit.jupiter.api.io.TempDir;
 
+// The loaded library is never unloaded, and Windows cannot delete a file that
+// is still mapped, so these temp dirs are left for the OS to clean up.
 class NativeBridgeTest {
 	/** No rendezvous, and test audio instead of devices. */
 	private static final String DEV_CONFIG = """
@@ -33,20 +36,20 @@ class NativeBridgeTest {
 			""";
 
 	@Test
-	void loadsHostLibraryAndMatchesAbi(@TempDir Path configDir) throws Exception {
+	void loadsHostLibraryAndMatchesAbi(@TempDir(cleanup = CleanupMode.NEVER) Path configDir) throws Exception {
 		NativeBridge bridge = new NativeBridge(NativeLoader.load(configDir));
 		assertEquals(NativeBridge.ABI_VERSION, bridge.abiVersion());
 	}
 
 	@Test
-	void reusesExtractedLibrary(@TempDir Path configDir) throws Exception {
+	void reusesExtractedLibrary(@TempDir(cleanup = CleanupMode.NEVER) Path configDir) throws Exception {
 		NativeLoader.load(configDir);
 		NativeBridge bridge = new NativeBridge(NativeLoader.load(configDir));
 		assertEquals(NativeBridge.ABI_VERSION, bridge.abiVersion());
 	}
 
 	@Test
-	void engineRunsAndReportsOwnTalking(@TempDir Path configDir) throws Exception {
+	void engineRunsAndReportsOwnTalking(@TempDir(cleanup = CleanupMode.NEVER) Path configDir) throws Exception {
 		NativeBridge bridge = new NativeBridge(NativeLoader.load(configDir));
 		MemorySegment engine = bridge.create(configDir.toString(), DEV_CONFIG);
 		try {
@@ -75,7 +78,7 @@ class NativeBridgeTest {
 	}
 
 	@Test
-	void groupCallsOutsideAGroup(@TempDir Path configDir) throws Exception {
+	void groupCallsOutsideAGroup(@TempDir(cleanup = CleanupMode.NEVER) Path configDir) throws Exception {
 		NativeBridge bridge = new NativeBridge(NativeLoader.load(configDir));
 		MemorySegment engine = bridge.create(configDir.toString(), DEV_CONFIG);
 		try {
@@ -105,7 +108,7 @@ class NativeBridgeTest {
 	}
 
 	@Test
-	void errorsCarryTheNativeMessage(@TempDir Path configDir) throws Exception {
+	void errorsCarryTheNativeMessage(@TempDir(cleanup = CleanupMode.NEVER) Path configDir) throws Exception {
 		NativeBridge bridge = new NativeBridge(NativeLoader.load(configDir));
 		YakVcException bad = assertThrows(YakVcException.class, () -> bridge.create(configDir.toString(), "voice_range = 0"));
 		assertTrue(bad.getMessage().contains("voice_range"), bad.getMessage());
@@ -121,7 +124,7 @@ class NativeBridgeTest {
 	}
 
 	@Test
-	void pushWorldRejectsMismatchedLengths(@TempDir Path configDir) throws Exception {
+	void pushWorldRejectsMismatchedLengths(@TempDir(cleanup = CleanupMode.NEVER) Path configDir) throws Exception {
 		NativeBridge bridge = new NativeBridge(NativeLoader.load(configDir));
 		MemorySegment engine = bridge.create(configDir.toString(), DEV_CONFIG);
 		try {
@@ -152,7 +155,7 @@ class NativeBridgeTest {
 	private static void ignore(MemorySegment user, MemorySegment arg) {}
 
 	@Test
-	void voiceSinkIsCheckedAskedAndCleared(@TempDir Path configDir) throws Exception {
+	void voiceSinkIsCheckedAskedAndCleared(@TempDir(cleanup = CleanupMode.NEVER) Path configDir) throws Exception {
 		NativeBridge bridge = new NativeBridge(NativeLoader.load(configDir));
 		MemorySegment engine = bridge.create(configDir.toString(), DEV_CONFIG);
 		try {

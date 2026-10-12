@@ -15,6 +15,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.CleanupMode;
 import org.junit.jupiter.api.io.TempDir;
 
 class ClientConfigTest {
@@ -91,7 +92,8 @@ class ClientConfigTest {
 	}
 
 	@Test
-	void theEngineAcceptsTheDefaultAndEditsAndRejectsBadValues(@TempDir Path dir) throws Exception {
+	// Never cleaned up: Windows cannot delete the still loaded library.
+	void theEngineAcceptsTheDefaultAndEditsAndRejectsBadValues(@TempDir(cleanup = CleanupMode.NEVER) Path dir) throws Exception {
 		NativeBridge bridge = new NativeBridge(NativeLoader.load(dir));
 		// Starts with real audio devices; on a machine without any that is only an engine Error event.
 		MemorySegment engine = bridge.create(dir.toString(), ClientConfig.DEFAULT);
