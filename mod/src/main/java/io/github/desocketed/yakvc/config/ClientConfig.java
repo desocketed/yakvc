@@ -62,7 +62,7 @@ public record ClientConfig(String toml) {
 
 	/** Blocks; the engine's default when unset. */
 	public double voiceRange() {
-		return number(value("", "voice_range"), 48);
+		return number(value("", "voice_range"), 256);
 	}
 
 	/** A number from the {@code [acoustics]} section, or {@code fallback} when unset. */
@@ -240,7 +240,7 @@ public record ClientConfig(String toml) {
 			# [rendezvous] table apply on the next game start, everything else at once.
 
 			# Voice range in blocks (1 to 256). Between two players the shorter range applies.
-			voice_range = 48.0
+			voice_range = 256.0
 
 			# Never use direct connections: all voice goes through the relay, so peers don't learn your IP address.
 			relay_only = false

@@ -108,7 +108,7 @@ impl Default for AcousticsConfig {
     fn default() -> Self {
         AcousticsConfig {
             full_volume_distance: 4.0,
-            distance_rolloff: 0.6,
+            distance_rolloff: 3.0,
             occlusion_attenuation: 0.75,
             muffled_cutoff_hz: 600.0,
             reverb_level: 0.85,
@@ -264,7 +264,7 @@ impl Default for Config {
             dev_mode: false,
             verified_only: false,
             relay_only: false,
-            voice_range: 48.0,
+            voice_range: 256.0,
             friends_only: None,
             invites: InvitesFrom::Everyone,
             audio: AudioConfig::default(),

@@ -158,7 +158,7 @@ async fn a_sink_gets_nearby_voice_instead_of_the_speakers() {
     let got = voice_from(&recorder, alice.uuid()).await;
     assert_eq!(got.samples, 960);
     assert!(got.positioned && !got.group, "{got:?}");
-    assert_eq!(got.range, 48.0);
+    assert_eq!(got.range, 256.0);
     assert_eq!(got.volume, 1.0);
     // Nothing in the way: heard from where alice stands, as the speakers would,
     // once bob's world has her there (her first frames can beat her move).
