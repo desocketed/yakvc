@@ -18,7 +18,9 @@ pub mod sim;
 mod voice;
 mod world;
 
-pub use yakvc_audio::{DeviceChoice, DeviceInfo, Devices, FrameSink, FrameSource, StreamStats};
+pub use yakvc_audio::{
+    DeviceChoice, DeviceInfo, Devices, FrameSink, FrameSource, MonoFrame, StreamStats,
+};
 pub use yakvc_proto::{EndpointAddr, GroupId, Uuid};
 
 pub use crate::config::{

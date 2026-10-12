@@ -33,8 +33,8 @@ use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 
 use yakvc_client::{
-    Config, ConfigError, Engine, GroupError, GroupId, Input, JoinId, PeerAudio, Player, Pose, Room,
-    StartError, Uuid, Vec3, VoiceFrame, VoiceSink, World,
+    Config, ConfigError, Engine, GroupError, GroupId, Input, JoinId, MonoFrame, PeerAudio, Player,
+    Pose, Room, StartError, Uuid, Vec3, VoiceFrame, VoiceSink, World,
 };
 
 use crate::events::EventQueue;
@@ -118,13 +118,21 @@ pub const YAKVC_PEER_RELAY_FULL: u8 = 3;
 pub const YAKVC_PEER_FAILED: u8 = 4;
 pub const YAKVC_PEER_GONE: u8 = 5;
 
-/// The `YakVcVoiceSink` layout this library takes.
-pub const YAKVC_VOICE_SINK_VERSION: u32 = 1;
+/// The newest `YakVcVoiceSink` version this library takes. Version 1 sinks
+/// get other players' voices; version 2 sinks also get the player's own, as
+/// `YAKVC_VOICE_SELF` frames. The struct is the same.
+pub const YAKVC_VOICE_SINK_VERSION: u32 = 2;
 /// A `YakVcVoiceFrame` of group voice.
 pub const YAKVC_VOICE_GROUP: u32 = 1 << 0;
 /// A `YakVcVoiceFrame` that plays centred rather than from the speaker's
 /// place in the world: group voice and direct calls.
 pub const YAKVC_VOICE_UNPOSITIONED: u32 = 1 << 1;
+/// A `YakVcVoiceFrame` of the player's own voice, as it goes out while they
+/// transmit (after input processing; never while deafened). Only version 2
+/// sinks get these, for letting the room around the player answer them: they
+/// must not play it dry. Also `YAKVC_VOICE_UNPOSITIONED`, with volume 1 and
+/// the player's UUID. Paced by the microphone, not `wants_frame`.
+pub const YAKVC_VOICE_SELF: u32 = 1 << 2;
 
 /// Opaque engine handle.
 #[derive(Debug)]
@@ -145,7 +153,8 @@ pub struct YakVcVoiceFrame {
     /// `samples` floats of 48 kHz mono, as decoded.
     pub pcm: *const f32,
     pub samples: usize,
-    /// Counts play ticks: the frames played together share it.
+    /// Counts play ticks: the frames played together share it. For
+    /// `YAKVC_VOICE_SELF` frames, counts those instead.
     pub tick: u64,
     /// The player's volume setting, 0 to 2.
     pub volume: f32,
@@ -166,7 +175,8 @@ pub struct YakVcVoiceFrame {
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct YakVcVoiceSink {
-    /// [`YAKVC_VOICE_SINK_VERSION`].
+    /// 1, or 2 for a sink that also wants the player's own voice
+    /// (`YAKVC_VOICE_SELF` frames).
     pub version: u32,
     /// Passed back to every callback.
     pub user: *mut c_void,
@@ -520,6 +530,10 @@ pub unsafe extern "C" fn yakvc_set_voice_sink(
 /// A [`YakVcVoiceSink`] as the engine's [`VoiceSink`].
 #[derive(Debug)]
 struct ForeignSink {
+    /// A version 2 sink, which wants the player's own voice.
+    own_voice: bool,
+    /// Counts own-voice frames, for their `tick`.
+    own_frames: u64,
     user: *mut c_void,
     wants_frame: unsafe extern "C" fn(*mut c_void) -> bool,
     frame: unsafe extern "C" fn(*mut c_void, *const YakVcVoiceFrame),
@@ -532,9 +546,9 @@ unsafe impl Send for ForeignSink {}
 
 impl ForeignSink {
     fn new(sink: &YakVcVoiceSink) -> Result<ForeignSink, FfiError> {
-        if sink.version != YAKVC_VOICE_SINK_VERSION {
+        if !(1..=YAKVC_VOICE_SINK_VERSION).contains(&sink.version) {
             return Err(FfiError::invalid(format!(
-                "voice sink version {} is not {YAKVC_VOICE_SINK_VERSION}",
+                "voice sink version {} is not 1 to {YAKVC_VOICE_SINK_VERSION}",
                 sink.version
             )));
         }
@@ -544,6 +558,8 @@ impl ForeignSink {
             return Err(FfiError::invalid("a voice sink callback is null"));
         };
         Ok(ForeignSink {
+            own_voice: sink.version >= 2,
+            own_frames: 0,
             user: sink.user,
             wants_frame,
             frame,
@@ -586,6 +602,28 @@ impl VoiceSink for ForeignSink {
         // SAFETY: `yakvc_set_voice_sink`'s contract; the 16 bytes outlive the
         // call.
         unsafe { (self.stream_end)(self.user, uuid.as_bytes().as_ptr()) }
+    }
+
+    fn wants_own_voice(&self) -> bool {
+        self.own_voice
+    }
+
+    fn own_voice(&mut self, uuid: Uuid, pcm: &MonoFrame) {
+        self.own_frames += 1;
+        let frame = YakVcVoiceFrame {
+            uuid: *uuid.as_bytes(),
+            pcm: pcm.as_ptr(),
+            samples: pcm.len(),
+            tick: self.own_frames,
+            volume: 1.0,
+            range: 0.0,
+            flags: YAKVC_VOICE_SELF | YAKVC_VOICE_UNPOSITIONED,
+            heard_from: [0.0; 3],
+            occlusion: 0.0,
+        };
+        // SAFETY: `yakvc_set_voice_sink`'s contract; `frame` and the samples
+        // it points to outlive the call.
+        unsafe { (self.frame)(self.user, &frame) }
     }
 }
 

@@ -843,6 +843,13 @@ impl AudioLoop {
         if transmitting || self.transmitting {
             self.send(frame, &state, !transmitting);
         }
+        if transmitting
+            && !state.input.deafened
+            && let Some(sink) = &mut self.voice_sink
+            && sink.wants_own_voice()
+        {
+            sink.own_voice(state.own_uuid.unwrap_or_default(), frame);
+        }
         self.set_transmitting(transmitting, &state);
         self.ts = self.ts.wrapping_add(FRAME_SAMPLES as u32);
     }
@@ -1442,6 +1449,116 @@ mod tests {
             assert!(Instant::now() < deadline, "the output never switched");
             std::thread::sleep(Duration::from_millis(10));
         }
+    }
+
+    /// Counts the audible frames of the player's own voice it gets, asking
+    /// for them or not.
+    #[derive(Clone, Default)]
+    struct OwnVoiceSink {
+        wants: bool,
+        frames: Arc<Mutex<u32>>,
+    }
+
+    impl VoiceSink for OwnVoiceSink {
+        fn wants_frame(&mut self) -> bool {
+            false
+        }
+
+        fn frame(&mut self, _frame: &VoiceFrame<'_>) {}
+
+        fn stream_end(&mut self, _uuid: Uuid) {}
+
+        fn wants_own_voice(&self) -> bool {
+            self.wants
+        }
+
+        fn own_voice(&mut self, _uuid: Uuid, pcm: &MonoFrame) {
+            if pcm.iter().any(|s| s.abs() > 0.001) {
+                *self.frames.lock().unwrap() += 1;
+            }
+        }
+    }
+
+    /// A voice on a 440 Hz tone, with `sink` in place of the speakers.
+    fn talking_into(sink: OwnVoiceSink) -> Voice {
+        let (events, _rx) = crate::event::channel();
+        let io = AudioIo {
+            source: Some(Box::new(yakvc_audio::ToneSource::new(440.0))),
+            sink: Some(Box::new(yakvc_audio::NullSink::new().0)),
+            #[cfg(feature = "sim")]
+            impairment: None,
+        };
+        let voice = Voice::start(&Config::default(), io, events);
+        voice.set_voice_sink(Some(Box::new(sink)));
+        wait_for_output(&voice, true);
+        voice
+    }
+
+    /// The count once it has stopped changing for 200 ms.
+    fn settled(frames: &Mutex<u32>) -> u32 {
+        loop {
+            let before = *frames.lock().unwrap();
+            std::thread::sleep(Duration::from_millis(200));
+            if *frames.lock().unwrap() == before {
+                return before;
+            }
+        }
+    }
+
+    #[test]
+    fn a_sink_that_asks_hears_the_own_voice_only_while_it_goes_out() {
+        let sink = OwnVoiceSink {
+            wants: true,
+            ..OwnVoiceSink::default()
+        };
+        let mut voice = talking_into(sink.clone());
+        // Push to talk, not pressed: nothing.
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(*sink.frames.lock().unwrap(), 0, "own voice while quiet");
+
+        voice.set_input(Input {
+            push_to_talk: true,
+            ..Input::default()
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while *sink.frames.lock().unwrap() < 5 {
+            assert!(Instant::now() < deadline, "no own voice while transmitting");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        // Deafened, or the key let go: it stops.
+        for input in [
+            Input {
+                push_to_talk: true,
+                deafened: true,
+                ..Input::default()
+            },
+            Input::default(),
+        ] {
+            voice.set_input(input);
+            let count = settled(&sink.frames);
+            std::thread::sleep(Duration::from_millis(200));
+            assert_eq!(
+                *sink.frames.lock().unwrap(),
+                count,
+                "own voice with {input:?}"
+            );
+        }
+        voice.stop();
+    }
+
+    #[test]
+    fn a_sink_hears_no_own_voice_unless_it_asks() {
+        let sink = OwnVoiceSink::default();
+        let mut voice = talking_into(sink.clone());
+        voice.set_input(Input {
+            push_to_talk: true,
+            ..Input::default()
+        });
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(voice.audio_stats().transmitting);
+        assert_eq!(*sink.frames.lock().unwrap(), 0);
+        voice.stop();
     }
 
     /// Always wants another frame, as a buggy sink might.

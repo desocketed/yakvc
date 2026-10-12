@@ -25,6 +25,20 @@ pub trait VoiceSink: Send {
     /// `uuid`'s voice link is gone: no more frames from it until it comes
     /// back.
     fn stream_end(&mut self, uuid: Uuid);
+
+    /// Whether the sink wants the player's own voice too, for
+    /// [`own_voice`](Self::own_voice). No by default: a sink that played it
+    /// as it plays other voices would make the player hear themselves.
+    fn wants_own_voice(&self) -> bool {
+        false
+    }
+
+    /// The player's own voice, `uuid` being the player: each 20 ms frame
+    /// that goes out while they transmit, after input processing, as their
+    /// listeners get it. Not while deafened. For a renderer that lets the
+    /// room around the player answer them (its reverb, never the dry voice).
+    /// Paced by the microphone, not by [`wants_frame`](Self::wants_frame).
+    fn own_voice(&mut self, _uuid: Uuid, _pcm: &MonoFrame) {}
 }
 
 /// One speaker's frame for a [`VoiceSink`].

@@ -143,9 +143,11 @@
 #define YAKVC_PEER_GONE 5
 
 /**
- * The `YakVcVoiceSink` layout this library takes.
+ * The newest `YakVcVoiceSink` version this library takes. Version 1 sinks
+ * get other players' voices; version 2 sinks also get the player's own, as
+ * `YAKVC_VOICE_SELF` frames. The struct is the same.
  */
-#define YAKVC_VOICE_SINK_VERSION 1
+#define YAKVC_VOICE_SINK_VERSION 2
 
 /**
  * A `YakVcVoiceFrame` of group voice.
@@ -157,6 +159,15 @@
  * place in the world: group voice and direct calls.
  */
 #define YAKVC_VOICE_UNPOSITIONED (1 << 1)
+
+/**
+ * A `YakVcVoiceFrame` of the player's own voice, as it goes out while they
+ * transmit (after input processing; never while deafened). Only version 2
+ * sinks get these, for letting the room around the player answer them: they
+ * must not play it dry. Also `YAKVC_VOICE_UNPOSITIONED`, with volume 1 and
+ * the player's UUID. Paced by the microphone, not `wants_frame`.
+ */
+#define YAKVC_VOICE_SELF (1 << 2)
 
 /**
  * Opaque engine handle.
@@ -178,7 +189,8 @@ typedef struct YakVcVoiceFrame {
   const float *pcm;
   size_t samples;
   /**
-   * Counts play ticks: the frames played together share it.
+   * Counts play ticks: the frames played together share it. For
+   * `YAKVC_VOICE_SELF` frames, counts those instead.
    */
   uint64_t tick;
   /**
@@ -211,7 +223,8 @@ typedef struct YakVcVoiceFrame {
  */
 typedef struct YakVcVoiceSink {
   /**
-   * [`YAKVC_VOICE_SINK_VERSION`].
+   * 1, or 2 for a sink that also wants the player's own voice
+   * (`YAKVC_VOICE_SELF` frames).
    */
   uint32_t version;
   /**

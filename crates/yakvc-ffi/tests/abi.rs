@@ -461,7 +461,11 @@ fn voice_sinks_are_checked_asked_and_cleared() {
         stream_end: Some(stream_end),
     };
     let mut wrong_version = sink;
-    wrong_version.version += 1;
+    wrong_version.version = YAKVC_VOICE_SINK_VERSION + 1;
+    let mut no_version = sink;
+    no_version.version = 0;
+    let mut version_1 = sink;
+    version_1.version = 1;
     let mut no_frame = sink;
     no_frame.frame = None;
     // SAFETY: `engine` is live, every sink is readable, and the callbacks are
@@ -469,13 +473,17 @@ fn voice_sinks_are_checked_asked_and_cleared() {
     let codes = unsafe {
         [
             yakvc_set_voice_sink(engine, &wrong_version),
+            yakvc_set_voice_sink(engine, &no_version),
             yakvc_set_voice_sink(engine, &no_frame),
+            yakvc_set_voice_sink(engine, &version_1),
             yakvc_set_voice_sink(engine, &sink),
         ]
     };
-    assert_eq!(codes[0], YAKVC_ERR_INVALID_ARGUMENT, "wrong version");
-    assert_eq!(codes[1], YAKVC_ERR_INVALID_ARGUMENT, "null callback");
-    assert_eq!(codes[2], YAKVC_OK);
+    assert_eq!(codes[0], YAKVC_ERR_INVALID_ARGUMENT, "newer version");
+    assert_eq!(codes[1], YAKVC_ERR_INVALID_ARGUMENT, "version 0");
+    assert_eq!(codes[2], YAKVC_ERR_INVALID_ARGUMENT, "null callback");
+    assert_eq!(codes[3], YAKVC_OK, "version 1 still works");
+    assert_eq!(codes[4], YAKVC_OK);
 
     // The audio thread now asks the sink, not the speakers, for frames.
     let deadline = Instant::now() + Duration::from_secs(5);
