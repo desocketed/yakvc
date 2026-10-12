@@ -374,13 +374,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - env:
-          RESULTS: ${{ join(needs.*.result, ' ') }}
-        run: |
-          echo "$RESULTS"
-          for result in $RESULTS; do
-            [ "$result" = success ] || [ "$result" = skipped ] || exit 1
-          done
+      - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
 
   # On a version tag: the GitHub release (jar, launcher packs, yakvc-cli,
   # static yakvc-server, SHA256SUMS) and the image on GHCR. Nothing goes to
