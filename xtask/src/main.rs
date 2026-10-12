@@ -36,6 +36,15 @@ enum Cmd {
         #[arg(long)]
         out: Option<PathBuf>,
     },
+    /// Build yakvc-cli for release and copy it into a directory under its
+    /// release name; Linux builds link against glibc 2.17.
+    Cli {
+        /// A Rust target triple.
+        #[arg(long)]
+        target: String,
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Regenerate crates/yakvc-ffi/include/yakvc.h with cbindgen.
     Header {
         /// Fail instead of writing if the checked-in header is stale.
@@ -178,6 +187,7 @@ fn main() -> Result<()> {
             &target,
             &out.unwrap_or_else(|| root().join("mod/build/natives")),
         ),
+        Cmd::Cli { target, out } => cli(&target, &out),
         Cmd::Header { check } => header(check),
         Cmd::Dist { from } => dist(from.as_deref()),
         Cmd::ServerImage => server_image(),
@@ -294,6 +304,32 @@ fn natives(target: &str, out: &Path) -> Result<()> {
         }
     }
     write_manifest(out)
+}
+
+/// Builds yakvc-cli for release on `triple` and copies it into `out` under
+/// its release name, `yakvc-cli-<os>-<arch>`.
+fn cli(triple: &str, out: &Path) -> Result<()> {
+    let (os, arch) = parse_triple(triple)?;
+    let mut cmd = if os == "linux" {
+        // The runner's libasound.so needs a newer glibc than 2.17. Skip
+        // checking it: at run time the user's libasound matches their glibc.
+        let mut cmd = cargo(&["zigbuild", "--release", "--package", "yakvc-cli"]);
+        cmd.arg(format!("--target={triple}.{GLIBC}"))
+            .env("RUSTFLAGS", "-C link-arg=-Wl,--allow-shlib-undefined");
+        cmd
+    } else {
+        let mut cmd = cargo(&["build", "--release", "--package", "yakvc-cli"]);
+        cmd.arg(format!("--target={triple}"));
+        cmd
+    };
+    run(&mut cmd)?;
+    let exe = if os == "windows" { ".exe" } else { "" };
+    let built = root().join(format!("target/{triple}/release/yakvc-cli{exe}"));
+    let staged = out.join(format!("yakvc-cli-{os}-{arch}{exe}"));
+    fs::create_dir_all(out)?;
+    fs::copy(&built, &staged).with_context(|| format!("copying {}", built.display()))?;
+    println!("staged {}", staged.display());
+    Ok(())
 }
 
 /// Builds yakvc-ffi with the size-focused `dist` profile for `target` (or

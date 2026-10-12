@@ -128,14 +128,7 @@ jobs:
         with:
           name: natives-Linux
           path: natives/
-      # The runner's libasound.so needs a newer glibc than 2.17. Skip checking
-      # it: at run time the user's libasound matches their glibc.
-      - name: Build yakvc-cli
-        run: |
-          mkdir cli
-          RUSTFLAGS="-C link-arg=-Wl,--allow-shlib-undefined" \
-            cargo zigbuild --release --locked -p yakvc-cli --target x86_64-unknown-linux-gnu.2.17
-          cp target/x86_64-unknown-linux-gnu/release/yakvc-cli cli/yakvc-cli-linux-x86_64
+      - run: cargo xtask cli --target x86_64-unknown-linux-gnu --out cli
       - uses: actions/upload-artifact@v7
         with:
           name: cli-Linux
@@ -153,9 +146,9 @@ jobs:
         include:
           # `test` runs the engine and JUnit tests where the runner can run
           # the target: macos-latest is arm, so not on the x86_64 half.
-          - { os: windows-latest, target: all, name: Windows, test: true }
-          - { os: macos-latest, target: x86_64-apple-darwin, name: macos-x86_64, test: false }
-          - { os: macos-latest, target: aarch64-apple-darwin, name: macos-aarch64, test: true }
+          - { os: windows-latest, target: all, cli: x86_64-pc-windows-msvc, name: Windows, test: true }
+          - { os: macos-latest, target: x86_64-apple-darwin, cli: x86_64-apple-darwin, name: macos-x86_64, test: false }
+          - { os: macos-latest, target: aarch64-apple-darwin, cli: aarch64-apple-darwin, name: macos-aarch64, test: true }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
@@ -185,17 +178,7 @@ jobs:
         working-directory: mod
         shell: bash
         run: ./gradlew test -Pyakvc.prebuiltNatives="$GITHUB_WORKSPACE/natives"
-      - name: Build yakvc-cli
-        shell: bash
-        run: |
-          mkdir cli
-          if [ "$RUNNER_OS" = Windows ]; then
-            cargo build --release --locked -p yakvc-cli --target x86_64-pc-windows-msvc
-            cp target/x86_64-pc-windows-msvc/release/yakvc-cli.exe cli/yakvc-cli-windows-x86_64.exe
-          else
-            cargo build --release --locked -p yakvc-cli --target ${{ matrix.target }}
-            cp target/${{ matrix.target }}/release/yakvc-cli cli/yakvc-cli-${{ matrix.name }}
-          fi
+      - run: cargo xtask cli --target ${{ matrix.cli }} --out cli
       # A Mac's half of the CLI isn't a release file: `jar` merges the two.
       - uses: actions/upload-artifact@v7
         with:

@@ -95,13 +95,7 @@ pub(crate) fn ci(fast: bool) -> Result<()> {
     step("natives: Linux release targets");
     crate::natives("all", &root.join("target/ci-natives"))?;
     step("cli: Linux release, for glibc 2.17");
-    // As CI builds it: the build machine's libasound needs a newer glibc,
-    // and at run time the user's matches theirs, so it isn't checked here.
-    run(Command::new("cargo")
-        .args(["zigbuild", "--release", "--locked", "-p", "yakvc-cli"])
-        .args(["--target", "x86_64-unknown-linux-gnu.2.17"])
-        .env("RUSTFLAGS", "-C link-arg=-Wl,--allow-shlib-undefined")
-        .current_dir(&root))?;
+    crate::cli("x86_64-unknown-linux-gnu", &root.join("target/ci-cli"))?;
     if has_docker() {
         step("server: image, and its first start");
         crate::server_image()?;
