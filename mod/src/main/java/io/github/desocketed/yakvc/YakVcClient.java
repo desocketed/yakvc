@@ -113,6 +113,9 @@ public final class YakVcClient implements ClientModInitializer {
 		GameStateFeeder feeder = new GameStateFeeder(bridge, engine, config, VoiceKeys.register(), joiner,
 				PlayerVolumes.load(configDir));
 		YakVcClient.feeder = feeder;
+		// The engine is up, so another mod's voice sink can be taken: say which versions.
+		FabricLoader.getInstance().getObjectShare().put(GameStateFeeder.VOICE_SINK_VERSION_KEY,
+				GameStateFeeder.VOICE_SINK_VERSION);
 		ClientLifecycleEvents.CLIENT_STOPPING.register(minecraft -> feeder.close());
 		ClientPlayConnectionEvents.JOIN.register((connection, sender, minecraft) -> feeder.join(connection, minecraft));
 		ClientPlayConnectionEvents.DISCONNECT.register((connection, minecraft) -> feeder.leave());

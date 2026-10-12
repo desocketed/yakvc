@@ -70,6 +70,15 @@ public final class GameStateFeeder {
 	 * usually write the callbacks natively and put only the struct's address here.
 	 */
 	public static final String VOICE_SINK_KEY = "yakvc:voice_sink";
+	/**
+	 * Where yakvc publishes, in Fabric Loader's object share, the newest {@code YakVcVoiceSink} version it takes, as an
+	 * {@link Integer}, once its engine has started: a renderer reads it to offer the newest sink both understand, rather
+	 * than offering one and finding out from silence that it was refused. Missing when voice is off, or from a yakvc
+	 * before it, which takes version 1 if it takes a sink at all.
+	 */
+	public static final String VOICE_SINK_VERSION_KEY = "yakvc:voice_sink_version";
+	/** The newest {@code YakVcVoiceSink} version the engine takes: {@code YAKVC_VOICE_SINK_VERSION} in {@code yakvc.h}. */
+	public static final int VOICE_SINK_VERSION = 2;
 
 	private final NativeBridge bridge;
 	private final MemorySegment engine;
