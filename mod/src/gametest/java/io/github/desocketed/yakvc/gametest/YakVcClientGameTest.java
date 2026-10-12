@@ -396,7 +396,8 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 
 	/**
 	 * Opens the voice menu, mutes the remote player there, and goes to the settings screen and back. The mute is saved
-	 * by UUID; closing the settings unchanged leaves {@code client.toml} alone.
+	 * by UUID; a setting applies as soon as it changes, and closing the settings writes nothing more to
+	 * {@code client.toml}.
 	 */
 	private static void checkVoiceMenu(ClientGameTestContext context, GameStateFeeder feeder) {
 		Path configFile = YakVcClient.configDir().resolve(ClientConfig.FILE_NAME);
@@ -418,6 +419,14 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		// The device pickers fill once their worker thread has listed the devices.
 		context.waitFor(mc -> ((VoiceSettingsScreen) mc.gui.screen()).devicesListed());
 		screenshotScreen(context, "voice-settings");
+		// A change applies while the screen is still open, without waiting for it to close.
+		boolean voiceActivation = context.computeOnClient(mc -> feeder.config().voiceActivation());
+		pressOptionButton(context, "yakvc.settings.activation");
+		context.waitFor(mc -> feeder.config().voiceActivation() != voiceActivation);
+		pressOptionButton(context, "yakvc.settings.activation");
+		context.waitFor(mc -> feeder.config().voiceActivation() == voiceActivation);
+		// The toggle wrote the activation line, so the file to compare with is the one it left.
+		configBefore = read(configFile);
 		pressOptionButton(context, "yakvc.settings.input_device");
 		screenshotScreen(context, "voice-settings-microphone");
 		pressOptionButton(context, "yakvc.settings.input_device");
@@ -435,7 +444,7 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 			throw new AssertionError("the mute was not saved");
 		}
 		if (!read(configFile).equals(configBefore)) {
-			throw new AssertionError("closing the settings unchanged rewrote client.toml");
+			throw new AssertionError("closing the settings rewrote client.toml");
 		}
 		// The run directory is reused, so leave no mute behind for the next run.
 		context.runOnClient(mc -> {
