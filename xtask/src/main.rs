@@ -227,7 +227,7 @@ fn main() -> Result<()> {
         Cmd::CheckJar { jar } => ci::check_jar(&jar),
         Cmd::ServerSmoke => ci::server_smoke(),
         Cmd::Pack { jar, out } => pack::pack(
-            &jar.unwrap_or_else(|| root().join(format!("dist/yakvc-{VERSION}.jar"))),
+            &jar.unwrap_or_else(|| root().join(format!("dist/yakvc-{}.jar", version()))),
             &out.unwrap_or_else(|| root().join("dist")),
         ),
         Cmd::Dev {
@@ -280,8 +280,30 @@ fn root() -> PathBuf {
         .to_path_buf()
 }
 
-/// The workspace version, which the mod shares.
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The version this build carries, which the mod shares: the workspace
+/// version, or for a dev build (CI sets `YAKVC_DEV_BUILD` to its run number)
+/// that version plus `dev.<n>`, so dev builds sort after the version they
+/// start from and before the next one: 0.1.0-alpha.3.dev.7 lies between
+/// alpha.3 and alpha.4. Cargo builds and Gradle get it as `YAKVC_VERSION`
+/// (see `pass_version`), so nothing has to be committed for it.
+fn version() -> String {
+    let base = env!("CARGO_PKG_VERSION");
+    match env::var("YAKVC_DEV_BUILD") {
+        Ok(n) if !n.is_empty() => {
+            let separator = if base.contains('-') { '.' } else { '-' };
+            format!("{base}{separator}dev.{n}")
+        }
+        _ => base.to_owned(),
+    }
+}
+
+/// Gives a dev build's version to `cmd` as `YAKVC_VERSION`. Only then, since
+/// a changed value rebuilds the engine crate that reads it.
+fn pass_version(cmd: &mut Command) {
+    if env::var_os("YAKVC_DEV_BUILD").is_some_and(|n| !n.is_empty()) {
+        cmd.env("YAKVC_VERSION", version());
+    }
+}
 
 /// The oldest glibc the Linux natives run on.
 const GLIBC: &str = "2.17";
@@ -495,6 +517,7 @@ fn parse_triple(triple: &str) -> Result<(&'static str, &'static str)> {
 fn cargo(args: &[&str]) -> Command {
     let mut cmd = Command::new(env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
     cmd.current_dir(root()).args(args).arg("--locked");
+    pass_version(&mut cmd);
     cmd
 }
 
@@ -589,13 +612,15 @@ fn dist(from: Option<&Path>) -> Result<()> {
     } else {
         "gradlew"
     };
-    run(Command::new(root().join("mod").join(gradlew))
+    let mut gradle = Command::new(root().join("mod").join(gradlew));
+    pass_version(&mut gradle);
+    run(gradle
         .current_dir(root().join("mod"))
         .arg("build")
         .arg(format!("-Pyakvc.prebuiltNatives={}", natives_dir.display()))
         .arg(format!("-Pyakvc.thirdPartyLicenses={}", licenses.display())))?;
 
-    let jar = format!("yakvc-{VERSION}.jar");
+    let jar = format!("yakvc-{}.jar", version());
     let dist = root().join("dist");
     fs::create_dir_all(&dist)?;
     fs::copy(root().join("mod/build/libs").join(&jar), dist.join(&jar))?;
@@ -625,7 +650,7 @@ fn server_image() -> Result<()> {
     fs::copy(root().join("deploy/Dockerfile"), context.join("Dockerfile"))?;
     third_party_licenses("yakvc-server", &context.join("THIRD_PARTY_LICENSES"))?;
 
-    let tag = format!("yakvc-server:{VERSION}");
+    let tag = format!("yakvc-server:{}", version());
     run(Command::new("docker")
         // `--pull` checks the pinned base against the registry, so a stale
         // local copy under the same tag can't slip into a release.

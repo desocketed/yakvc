@@ -165,7 +165,11 @@ impl Session<'_> {
         // Trimmed, since the rendezvous rejects oversize addresses.
         let addr = yakvc_proto::rdv::fit_addr(&self.inner.endpoint.addr());
         let hello = Hello {
-            mod_version: env!("CARGO_PKG_VERSION").to_owned(),
+            // A dev build's version, set by `cargo xtask` (see `version` there).
+            mod_version: option_env!("YAKVC_VERSION")
+                .filter(|v| !v.is_empty())
+                .unwrap_or(env!("CARGO_PKG_VERSION"))
+                .to_owned(),
             uuid: self.identity.uuid,
             name: self.identity.name.clone(),
             addr: addr.clone(),
