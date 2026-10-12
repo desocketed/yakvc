@@ -67,15 +67,9 @@ pub(crate) fn session(
         .args(["writeDevLaunchArgs", "--quiet"]))?;
     let launch = root.join("mod/build/devlaunch");
     let library_path = library_path(&root)?;
-    let clip = match talk_file {
-        Some(file) => fs::canonicalize(file).with_context(|| format!("{}", file.display()))?,
-        None => {
-            let beeps = dir.join("beeps.wav");
-            fs::create_dir_all(&dir)?;
-            fs::write(&beeps, beeps_wav())?;
-            beeps
-        }
-    };
+    let talk_file = talk_file
+        .map(|file| fs::canonicalize(file).with_context(|| file.display().to_string()))
+        .transpose()?;
 
     let mut parts: Vec<(String, Child)> = Vec::new();
     let result = (|| {
@@ -96,14 +90,18 @@ pub(crate) fn session(
             .context("no rendezvous yet: start a session without --join first")?;
         for name in names {
             let game_dir = dir.join(name);
-            let talks = talkers.contains(name).then_some(clip.as_path());
+            let talk = match (talkers.contains(name), &talk_file) {
+                (false, _) => Talk::No,
+                (true, None) => Talk::Beeps,
+                (true, Some(file)) => Talk::File(file),
+            };
             parts.push((
                 name.clone(),
                 client(
                     &game_dir,
                     name,
                     &client_config,
-                    talks,
+                    talk,
                     &launch,
                     &library_path,
                 )?,
@@ -156,14 +154,14 @@ fn client(
     dir: &Path,
     name: &str,
     client_config: &str,
-    talks: Option<&Path>,
+    talk: Talk,
     launch: &Path,
     library_path: &str,
 ) -> Result<Child> {
     // Written once, so each client's own settings survive between sessions.
     let config = dir.join("config/yakvc/client.toml");
     write_once(&config, client_config)?;
-    set_talking(&config, talks)?;
+    set_talking(&config, talk)?;
     write_once(
         &dir.join("options.txt"),
         "onboardAccessibility:false\nskipMultiplayerWarning:true\njoinedFirstServer:true\n",
@@ -252,12 +250,33 @@ fn exited(parts: &mut [(String, Child)]) -> Result<Option<String>> {
     Ok(None)
 }
 
-/// Makes the client talk on its own with `clip`, or not with `None`: the
-/// `[dev]` table is rewritten every session, and a talker uses voice
-/// activation so nobody has to hold push-to-talk for it.
-fn set_talking(config: &Path, clip: Option<&Path>) -> Result<()> {
-    const VOICE: &str = "activation = \"voice\"";
+/// Whether a client talks on its own, and with what.
+#[derive(Clone, Copy)]
+enum Talk<'a> {
+    No,
+    /// The engine's built-in test input: beeps with quiet between them.
+    Beeps,
+    /// A WAV file, looping.
+    File(&'a Path),
+}
+
+/// The engine's built-in beeps, as a microphone id (`TEST_INPUTS` in yakvc-audio).
+const BEEPS: &str = "yakvc:test-beeps";
+
+/// Makes the client talk on its own, or stop: a talker picks the beeps as its
+/// microphone (or plays the file from `[dev]`) by voice activation, so nobody
+/// has to hold push-to-talk for it. Rewritten every session; the rest of the
+/// file is left as the player set it.
+fn set_talking(config: &Path, talk: Talk) -> Result<()> {
     let text = fs::read_to_string(config)?;
+    let talking = !matches!(talk, Talk::No);
+    let mut audio = Vec::new();
+    if talking {
+        audio.push("activation = \"voice\"".to_owned());
+    }
+    if let Talk::Beeps = talk {
+        audio.push(format!("input_device = \"{BEEPS}\""));
+    }
     let mut lines = Vec::new();
     let mut table = String::new();
     let mut has_audio = false;
@@ -266,69 +285,32 @@ fn set_talking(config: &Path, clip: Option<&Path>) -> Result<()> {
         if code.starts_with('[') {
             table = code.to_owned();
         }
-        if table == "[dev]"
-            || clip.is_some() && table == "[audio]" && code.starts_with("activation")
-        {
+        let ours = table == "[audio]"
+            && (talking && code.starts_with("activation")
+                || code.starts_with("input_device") && (talking || code.contains(BEEPS)));
+        if table == "[dev]" || ours {
             continue;
         }
         lines.push(line.to_owned());
-        if clip.is_some() && code == "[audio]" {
+        if code == "[audio]" {
             has_audio = true;
-            lines.push(VOICE.to_owned());
+            lines.extend(audio.iter().cloned());
         }
     }
     // The blank line before a dropped [dev] would otherwise pile up.
     while lines.last().is_some_and(|line| line.trim().is_empty()) {
         lines.pop();
     }
-    if let Some(clip) = clip {
-        if !has_audio {
-            lines.push(format!("\n[audio]\n{VOICE}"));
-        }
+    if !has_audio && !audio.is_empty() {
+        lines.push(format!("\n[audio]\n{}", audio.join("\n")));
+    }
+    if let Talk::File(file) = talk {
         // TOML strings escape backslashes, as in Windows paths.
-        let path = clip.display().to_string().replace('\\', "\\\\");
+        let path = file.display().to_string().replace('\\', "\\\\");
         lines.push(format!("\n[dev]\nwav = \"{path}\""));
     }
     fs::write(config, lines.join("\n") + "\n")?;
     Ok(())
-}
-
-/// Four short beeps a second apart, rising in pitch, as a 48 kHz 16-bit mono
-/// WAV: the quiet between them lets echoes and reverb be heard.
-fn beeps_wav() -> Vec<u8> {
-    const RATE: u32 = 48_000;
-    let mut samples = vec![0i16; RATE as usize * 4];
-    for (beep, hz) in [330.0, 440.0, 550.0, 660.0].into_iter().enumerate() {
-        let start = beep * RATE as usize;
-        let length = RATE as usize * 15 / 100;
-        for i in 0..length {
-            let t = i as f64 / f64::from(RATE);
-            // Faded in and out over 10 ms, so the beeps don't click.
-            let fade = (t / 0.01)
-                .min((length - i) as f64 / f64::from(RATE) / 0.01)
-                .min(1.0);
-            let value = (t * hz * std::f64::consts::TAU).sin() * fade * 0.5;
-            samples[start + i] = (value * f64::from(i16::MAX)) as i16;
-        }
-    }
-    let data_len = samples.len() as u32 * 2;
-    let mut wav = Vec::with_capacity(44 + data_len as usize);
-    wav.extend_from_slice(b"RIFF");
-    wav.extend_from_slice(&(36 + data_len).to_le_bytes());
-    wav.extend_from_slice(b"WAVEfmt ");
-    wav.extend_from_slice(&16u32.to_le_bytes());
-    wav.extend_from_slice(&1u16.to_le_bytes()); // PCM
-    wav.extend_from_slice(&1u16.to_le_bytes()); // mono
-    wav.extend_from_slice(&RATE.to_le_bytes());
-    wav.extend_from_slice(&(RATE * 2).to_le_bytes());
-    wav.extend_from_slice(&2u16.to_le_bytes());
-    wav.extend_from_slice(&16u16.to_le_bytes());
-    wav.extend_from_slice(b"data");
-    wav.extend_from_slice(&data_len.to_le_bytes());
-    for sample in samples {
-        wav.extend_from_slice(&sample.to_le_bytes());
-    }
-    wav
 }
 
 fn write_once(path: &Path, text: &str) -> Result<()> {
@@ -343,51 +325,50 @@ fn write_once(path: &Path, text: &str) -> Result<()> {
 mod tests {
     use super::*;
 
-    fn talking(before: &str, clip: Option<&Path>) -> String {
+    fn talking(before: &str, talk: Talk) -> String {
         let dir = std::env::temp_dir().join(format!("yakvc-talk-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let config = dir.join(format!("client-{}.toml", before.len()));
         fs::write(&config, before).unwrap();
-        set_talking(&config, clip).unwrap();
+        set_talking(&config, talk).unwrap();
         fs::read_to_string(&config).unwrap()
     }
 
     #[test]
-    fn a_talker_gets_voice_activation_and_the_clip() {
+    fn a_talker_gets_voice_activation_and_the_beeps() {
         let after = talking(
-            "dev_mode = true\n\n[audio]\nactivation = \"push_to_talk\"\nbitrate = 24000\n",
-            Some(Path::new("/run/beeps.wav")),
+            "dev_mode = true\n\n[audio]\nactivation = \"push_to_talk\"\ninput_device = \"hw:1\"\nbitrate = 24000\n",
+            Talk::Beeps,
         );
         assert_eq!(
             after,
-            "dev_mode = true\n\n[audio]\nactivation = \"voice\"\nbitrate = 24000\n\n[dev]\nwav = \"/run/beeps.wav\"\n"
+            "dev_mode = true\n\n[audio]\nactivation = \"voice\"\ninput_device = \"yakvc:test-beeps\"\nbitrate = 24000\n"
         );
-        // Talking again replaces the clip rather than adding another.
-        assert_eq!(talking(&after, Some(Path::new("/run/beeps.wav"))), after);
+        // Talking again changes nothing.
+        assert_eq!(talking(&after, Talk::Beeps), after);
+        // Not talking puts the default microphone back, and keeps the activation.
+        assert_eq!(
+            talking(&after, Talk::No),
+            "dev_mode = true\n\n[audio]\nactivation = \"voice\"\nbitrate = 24000\n"
+        );
     }
 
     #[test]
-    fn a_config_without_audio_gets_the_table() {
-        let after = talking("dev_mode = true\n", Some(Path::new("/b.wav")));
+    fn a_talker_with_a_file_plays_it_from_dev() {
+        let after = talking("dev_mode = true\n", Talk::File(Path::new("/b.wav")));
         assert_eq!(
             after,
             "dev_mode = true\n\n[audio]\nactivation = \"voice\"\n\n[dev]\nwav = \"/b.wav\"\n"
         );
-    }
-
-    #[test]
-    fn not_talking_drops_the_clip_and_keeps_the_rest() {
-        let after = talking(
-            "[audio]\nactivation = \"voice\"\n\n[dev]\nwav = \"/b.wav\"\n",
-            None,
+        assert_eq!(
+            talking(&after, Talk::No),
+            "dev_mode = true\n\n[audio]\nactivation = \"voice\"\n"
         );
-        assert_eq!(after, "[audio]\nactivation = \"voice\"\n");
     }
 
     #[test]
-    fn beeps_are_a_valid_four_second_wav() {
-        let wav = beeps_wav();
-        assert_eq!(&wav[..4], b"RIFF");
-        assert_eq!(wav.len(), 44 + 48_000 * 4 * 2);
+    fn a_player_s_own_microphone_is_kept_when_not_talking() {
+        let before = "[audio]\ninput_device = \"hw:1\"\n";
+        assert_eq!(talking(before, Talk::No), before);
     }
 }

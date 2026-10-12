@@ -85,8 +85,8 @@ enum Cmd {
         /// looping clip, by voice activation. Repeat for more than one.
         #[arg(long, value_name = "NAME")]
         talk: Vec<String>,
-        /// What they say: a WAV file. Without it, beeps with gaps between,
-        /// so echoes and reverb can be heard.
+        /// What they say: a WAV file. Without it, the engine's built-in
+        /// test beeps, with gaps between so echoes and reverb can be heard.
         #[arg(long, value_name = "WAV")]
         talk_file: Option<PathBuf>,
     },
