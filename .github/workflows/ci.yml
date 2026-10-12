@@ -84,16 +84,14 @@ jobs:
       - name: Server has no audio dependencies
         run: cargo xtask check-server-deps
 
-  # yakvc-ffi for every platform, plus yakvc-cli for the release. Each OS
-  # builds its own targets; the mod job merges them into one jar.
-  natives:
+  # yakvc-ffi for every platform, plus yakvc-cli for the release. Linux has
+  # a job of its own, so a pull request's jar and gametest wait for it alone;
+  # Windows and the two Macs build in parallel beside it, and the `jar` job
+  # merges everything into the release jar.
+  natives-linux:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
@@ -101,18 +99,15 @@ jobs:
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Install zig
-        if: runner.os == 'Linux'
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.16.0
-      - if: runner.os == 'Linux'
-        uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
         with:
           tool: cargo-zigbuild
       # The aarch64 build links ARM's libasound, from Ubuntu's ports archive
       # through multiarch. The runner's own sources serve amd64 only.
       - name: Install ALSA for x86_64 and aarch64
-        if: runner.os == 'Linux'
         run: |
           codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
           sudo dpkg --add-architecture arm64
@@ -131,39 +126,69 @@ jobs:
       - run: cargo xtask natives --target all --out natives
       - uses: actions/upload-artifact@v7
         with:
-          name: natives-${{ runner.os }}
+          name: natives-Linux
+          path: natives/
+      # The runner's libasound.so needs a newer glibc than 2.17. Skip checking
+      # it: at run time the user's libasound matches their glibc.
+      - name: Build yakvc-cli
+        run: |
+          mkdir cli
+          RUSTFLAGS="-C link-arg=-Wl,--allow-shlib-undefined" \
+            cargo zigbuild --release --locked -p yakvc-cli --target x86_64-unknown-linux-gnu.2.17
+          cp target/x86_64-unknown-linux-gnu/release/yakvc-cli cli/yakvc-cli-linux-x86_64
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cli-Linux
+          path: cli/
+
+  # Each Mac architecture on its own runner, in parallel: one after the
+  # other they were the slowest job. The `jar` job merges them.
+  natives:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, target: all, name: Windows }
+          - { os: macos-latest, target: x86_64-apple-darwin, name: macos-x86_64 }
+          - { os: macos-latest, target: aarch64-apple-darwin, name: macos-aarch64 }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: ${{ matrix.name }}
+      - run: cargo xtask natives --target ${{ matrix.target }} --out natives
+      - uses: actions/upload-artifact@v7
+        with:
+          name: natives-${{ matrix.name }}
           path: natives/
       - name: Build yakvc-cli
         shell: bash
         run: |
           mkdir cli
-          case "$RUNNER_OS" in
-            Linux)
-              # The runner's libasound.so needs a newer glibc than 2.17. Skip
-              # checking it: at run time the user's libasound matches their glibc.
-              RUSTFLAGS="-C link-arg=-Wl,--allow-shlib-undefined" \
-                cargo zigbuild --release --locked -p yakvc-cli --target x86_64-unknown-linux-gnu.2.17
-              cp target/x86_64-unknown-linux-gnu/release/yakvc-cli cli/yakvc-cli-linux-x86_64
-              ;;
-            macOS)
-              cargo build --release --locked -p yakvc-cli --target x86_64-apple-darwin
-              cargo build --release --locked -p yakvc-cli --target aarch64-apple-darwin
-              lipo -create target/x86_64-apple-darwin/release/yakvc-cli \
-                target/aarch64-apple-darwin/release/yakvc-cli -output cli/yakvc-cli-macos-universal
-              ;;
-            Windows)
-              cargo build --release --locked -p yakvc-cli --target x86_64-pc-windows-msvc
-              cp target/x86_64-pc-windows-msvc/release/yakvc-cli.exe cli/yakvc-cli-windows-x86_64.exe
-              ;;
-          esac
+          if [ "$RUNNER_OS" = Windows ]; then
+            cargo build --release --locked -p yakvc-cli --target x86_64-pc-windows-msvc
+            cp target/x86_64-pc-windows-msvc/release/yakvc-cli.exe cli/yakvc-cli-windows-x86_64.exe
+          else
+            cargo build --release --locked -p yakvc-cli --target ${{ matrix.target }}
+            cp target/${{ matrix.target }}/release/yakvc-cli cli/yakvc-cli-${{ matrix.name }}
+          fi
+      # A Mac's half of the CLI isn't a release file: `jar` merges the two.
       - uses: actions/upload-artifact@v7
         with:
-          name: cli-${{ runner.os }}
+          name: ${{ runner.os == 'Windows' && 'cli-Windows' || format('maccli-{0}', matrix.name) }}
           path: cli/
 
+  # The jar with this machine's natives and the gametest, on every run. It
+  # waits for Linux alone; the release jar with every platform is `jar`'s.
   mod:
     # The server job's yakvc-server is the gametest's dev rendezvous.
-    needs: [natives, server]
+    needs: [natives-linux, server]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -184,22 +209,10 @@ jobs:
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
       - uses: actions/download-artifact@v8
         with:
-          pattern: natives-*
+          name: natives-Linux
           path: natives
-          merge-multiple: true
       - name: Build the jar
         run: cargo xtask dist --from natives
-      - name: Build the launcher packs
-        run: cargo xtask pack
-      - name: Check the jar
-        run: cargo xtask check-jar dist/yakvc-*.jar
-      - uses: actions/upload-artifact@v7
-        with:
-          name: yakvc-mod
-          path: |
-            dist/*.jar
-            dist/*.mrpack
-            dist/*-prism.zip
       - uses: actions/download-artifact@v8
         with:
           name: server
@@ -217,6 +230,65 @@ jobs:
         with:
           name: gametest-screenshots
           path: mod/build/run/clientGameTest/screenshots/
+
+  # The release jar with every platform's natives, the launcher packs and
+  # the Mac CLI, merged from both architectures. Not for pull requests,
+  # whose `mod` job builds and tests a Linux-only jar without waiting for
+  # the other platforms.
+  jar:
+    needs: [natives-linux, natives]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      # ALSA for the JUnit tests' native load; LLVM for llvm-lipo.
+      - name: Install system libraries
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev llvm
+      - name: Install toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        with:
+          tool: cargo-about
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 25
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: natives-*
+          path: natives
+          merge-multiple: true
+      - run: cargo xtask merge-macos natives
+      - name: Build the jar
+        run: cargo xtask dist --from natives
+      - name: Build the launcher packs
+        run: cargo xtask pack
+      - name: Check the jar
+        run: cargo xtask check-jar dist/yakvc-*.jar
+      - uses: actions/upload-artifact@v7
+        with:
+          name: yakvc-mod
+          path: |
+            dist/*.jar
+            dist/*.mrpack
+            dist/*-prism.zip
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: maccli-*
+          path: maccli
+          merge-multiple: true
+      - name: Merge the Mac CLI
+        run: |
+          mkdir cli
+          llvm-lipo -create maccli/yakvc-cli-macos-x86_64 maccli/yakvc-cli-macos-aarch64 \
+            -output cli/yakvc-cli-macos-universal
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cli-macOS
+          path: cli/
 
   server:
     needs: changes
@@ -266,10 +338,11 @@ jobs:
       - run: nix develop --command cargo deny --all-features --locked check
 
   # The one check branch protection requires: green when every job passed,
-  # or was skipped because a pull request only touches docs.
+  # or was skipped (a pull request that only touches docs, or `jar` on a
+  # pull request).
   ci-ok:
     if: always()
-    needs: [changes, rust, natives, mod, server, nix]
+    needs: [changes, rust, natives-linux, natives, mod, jar, server, nix]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -286,7 +359,7 @@ jobs:
   # Modrinth or CurseForge (maintainer, 2026-10-11): releases live on GitHub.
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [rust, mod, server, nix]
+    needs: [rust, mod, jar, server, nix]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
