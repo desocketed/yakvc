@@ -286,7 +286,7 @@ Voice is 48 kHz mono Opus in 20 ms frames, sent as unreliable QUIC datagrams on 
      Frames played together share a tick number.
    - The sink gets the frame before panning, distance gain, occlusion, the muffle, the room's reverb, the game's Voice and Master volume and the limiter. It applies its own.
    - Who is heard stays yakvc's: mute, deafen, friends only, groups, spectators, blocked players and range all decide what reaches it, through the same `VoiceState::heard` the speakers use.
-   - The sink's `wants_frame` paces playback in place of the speakers' clock, at most 10 frames a tick, so a sink that never says no can't pin the audio thread. Speakers the engine opened itself close while a sink is set and reopen when it goes, and the sink hears `stream_end` when a speaker's link closes.
+   - The sink's `wants_frame` paces playback in place of the speakers' clock, at most 10 frames a tick, so a sink that never says no can't pin the audio thread. Speakers the engine opened itself close while a sink is set and reopen when it goes, and the sink hears `stream_end` when a speaker's link closes, and for every stream when it is replaced or cleared (the next output starts each voice afresh).
    - A version 2 sink also gets the player's **own voice**: each frame that goes out while they transmit, after input processing, flagged `YAKVC_VOICE_SELF` (and unpositioned), with their UUID and volume 1. Never while deafened, and paced by the microphone rather than `wants_frame`. It is for a renderer that lets the room answer the player, its reverb only: a sink must never play it dry. Version 1 sinks never get it.
    - Nothing on the wire changes, so players with and without a sink hear each other as usual.
 

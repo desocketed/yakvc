@@ -23,7 +23,8 @@ pub trait VoiceSink: Send {
     fn frame(&mut self, frame: &VoiceFrame<'_>);
 
     /// `uuid`'s voice link is gone: no more frames from it until it comes
-    /// back.
+    /// back. Also sent for every stream when the sink is replaced or
+    /// cleared.
     fn stream_end(&mut self, uuid: Uuid);
 
     /// Whether the sink wants the player's own voice too, for

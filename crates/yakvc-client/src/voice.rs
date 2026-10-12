@@ -783,6 +783,16 @@ impl AudioLoop {
             self.sink.io = None;
             self.sink.retry_at = Instant::now();
         }
+        // The old output hears its streams end, and the new one starts
+        // fresh, from each voice's next frames rather than mid-stream.
+        for (uuid, remote) in std::mem::take(&mut self.remotes) {
+            if let Some(old) = &mut self.voice_sink {
+                old.stream_end(uuid);
+            }
+            if remote.talking {
+                self.talking(uuid, false);
+            }
+        }
         self.voice_sink = sink;
     }
 
@@ -1591,6 +1601,68 @@ mod tests {
         let start = Instant::now();
         voice.stop();
         assert!(start.elapsed() < STOP_TIMEOUT, "the audio thread was stuck");
+    }
+
+    /// Records the streams it is told ended.
+    #[derive(Clone, Default)]
+    struct EndsSink(Arc<Mutex<Vec<Uuid>>>);
+
+    impl VoiceSink for EndsSink {
+        fn wants_frame(&mut self) -> bool {
+            false
+        }
+
+        fn frame(&mut self, _frame: &VoiceFrame<'_>) {}
+
+        fn stream_end(&mut self, uuid: Uuid) {
+            self.0.lock().unwrap().push(uuid);
+        }
+    }
+
+    /// An audio loop with no devices, not running, and a remote speaker
+    /// `uuid(2)` mid-stream.
+    fn loop_with_a_remote() -> AudioLoop {
+        let (events, _rx) = crate::event::channel();
+        let (to_audio, from_net) = std_mpsc::sync_channel(AUDIO_QUEUE);
+        let shared = Arc::new(Shared::new(
+            &Config::default(),
+            to_audio,
+            events,
+            #[cfg(feature = "sim")]
+            None,
+        ));
+        let io = AudioIo {
+            source: None,
+            sink: None,
+            #[cfg(feature = "sim")]
+            impairment: None,
+        };
+        let mut audio = AudioLoop::new(shared, from_net, io, Arc::new(AtomicBool::new(false)));
+        audio.remotes.insert(
+            uuid(2),
+            Remote {
+                link_id: 0,
+                stream: ReceiveStream::new(JitterConfig::default()),
+                muffle: Muffle::new(),
+                group: false,
+                talking: true,
+                silent_frames: 0,
+            },
+        );
+        audio
+    }
+
+    #[test]
+    fn a_replaced_sink_hears_its_streams_end_and_the_next_starts_fresh() {
+        for next in [Some(Box::new(EndsSink::default()) as Box<dyn VoiceSink>), None] {
+            let mut audio = loop_with_a_remote();
+            let old = EndsSink::default();
+            audio.voice_sink = Some(Box::new(old.clone()));
+            *audio.shared.voice_sink.lock().unwrap() = Some(next);
+            audio.switch_output();
+            assert_eq!(*old.0.lock().unwrap(), [uuid(2)]);
+            assert!(audio.remotes.is_empty(), "the stream carried over");
+        }
     }
 
     #[test]

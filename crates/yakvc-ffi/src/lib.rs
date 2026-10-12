@@ -186,7 +186,8 @@ pub struct YakVcVoiceSink {
     /// One playable frame from one speaker.
     pub frame: Option<unsafe extern "C" fn(user: *mut c_void, frame: *const YakVcVoiceFrame)>,
     /// The speaker `uuid` (16 bytes) is gone: no more frames from it until
-    /// it comes back.
+    /// it comes back. Also sent for every stream when the sink is replaced
+    /// or cleared.
     pub stream_end: Option<unsafe extern "C" fn(user: *mut c_void, uuid: *const u8)>,
 }
 
