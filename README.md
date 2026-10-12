@@ -36,7 +36,7 @@ cd mod && ./gradlew runClient   # builds the native library for this machine and
 cargo xtask dist                # the mod jar in dist/, with this machine's native library only
 ```
 
-Release jars hold the native library for every platform; CI builds each on its own runner and packages them with `cargo xtask dist --from <dir>`. Pushing a `v<version>` tag publishes a release. To run your own `yakvc-server`, see [deploy/README.md](deploy/README.md).
+Release jars hold the native library for every platform; CI builds each on its own runner and packages them with `cargo xtask dist --from <dir>`. Pushing a `v<version>` tag publishes a release; running the CI workflow by hand with "Publish a dev build" ticked publishes a dev prerelease of any branch. To run your own `yakvc-server`, see [deploy/README.md](deploy/README.md).
 
 ## Running the mod
 

@@ -54,6 +54,25 @@ class UpdateCheckTest {
 		assertEquals("0.0.9", UpdateCheck.newerRelease(RELEASES, "0.0.8").version());
 	}
 
+	private static final String WITH_DEV_BUILDS = """
+			[
+			  {"tag_name": "v0.1.0-alpha.3.dev.12", "draft": false, "prerelease": true, "html_url": "https://example.com/d12"},
+			  {"tag_name": "v0.1.0-alpha.3", "draft": false, "prerelease": true, "html_url": "https://example.com/a3"},
+			  {"tag_name": "v0.1.0-alpha.2.dev.5", "draft": false, "prerelease": true, "html_url": "https://example.com/d5"}
+			]
+			""";
+
+	@Test
+	void offersDevBuildsOnlyToDevBuilds() {
+		assertNull(UpdateCheck.newerRelease(WITH_DEV_BUILDS, "0.1.0-alpha.3"));
+		assertEquals("0.1.0-alpha.3", UpdateCheck.newerRelease(WITH_DEV_BUILDS, "0.1.0-alpha.2").version());
+		assertEquals("0.1.0-alpha.3.dev.12", UpdateCheck.newerRelease(WITH_DEV_BUILDS, "0.1.0-alpha.3.dev.4").version());
+		assertEquals("0.1.0-alpha.3.dev.12", UpdateCheck.newerRelease(WITH_DEV_BUILDS, "0.1.0-alpha.2.dev.5").version());
+		// A real release newer than the dev build is offered too.
+		String withoutNewDev = WITH_DEV_BUILDS.replace("v0.1.0-alpha.3.dev.12", "x");
+		assertEquals("0.1.0-alpha.3", UpdateCheck.newerRelease(withoutNewDev, "0.1.0-alpha.2.dev.5").version());
+	}
+
 	@Test
 	void findsNothingWhenUpToDateOrUnparsable() {
 		assertNull(UpdateCheck.newerRelease(RELEASES, "0.1.0-alpha.10"));

@@ -51,7 +51,7 @@ pub fn dev(
         ensure!(status.success(), "building the mod failed");
         println!(
             "Mod jar: {}",
-            root.join(format!("mod/build/libs/yakvc-{}.jar", crate::VERSION))
+            root.join(format!("mod/build/libs/yakvc-{}.jar", crate::version()))
                 .display()
         );
         println!("Server counters: curl -s http://{METRICS}/metrics | grep -E 'auth|mojang'\n");
