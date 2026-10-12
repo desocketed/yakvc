@@ -285,7 +285,7 @@ async fn the_shorter_voice_range_wins() {
     // bob keeps the default 256-block range.
     let mut bob = net.client().name("bob").tone(660.0).start().await;
     alice.move_to(at(0.0, 0.0));
-    bob.move_to(at(18.0, 0.0));
+    bob.move_to(at(10.0, 0.0));
     connect(&mut alice, &mut bob, PeerState::Direct).await;
     alice.talk(true);
     bob.talk(true);
