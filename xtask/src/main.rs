@@ -1,10 +1,11 @@
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::{env, fs};
 
 mod ci;
 mod dev;
+mod github;
 mod headless;
 mod pack;
 mod pipewire;
@@ -35,6 +36,15 @@ enum Cmd {
         #[arg(long)]
         out: Option<PathBuf>,
     },
+    /// Build yakvc-cli for release and copy it into a directory under its
+    /// release name; Linux builds link against glibc 2.17.
+    Cli {
+        /// A Rust target triple.
+        #[arg(long)]
+        target: String,
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Regenerate crates/yakvc-ffi/include/yakvc.h with cbindgen.
     Header {
         /// Fail instead of writing if the checked-in header is stale.
@@ -60,7 +70,12 @@ enum Cmd {
         out: Option<PathBuf>,
     },
     /// Build the yakvc-server Docker image.
-    ServerImage,
+    ServerImage {
+        /// Also save the image (`yakvc-server-image.tar.gz`) and the static
+        /// binary (`yakvc-server-linux-x86_64`) into this directory.
+        #[arg(long)]
+        save: Option<PathBuf>,
+    },
     /// Everything CI checks on Linux, locally and in order, stopping at the
     /// first failure. Also refreshes the user guide's screenshots.
     Ci {
@@ -78,7 +93,13 @@ enum Cmd {
     /// Merge the macOS natives built per architecture (`macos-x86_64` and
     /// `macos-aarch64` in a natives directory) into one universal library
     /// in `macos-universal`, with `lipo`, or `llvm-lipo` off macOS.
-    MergeMacos { natives: PathBuf },
+    MergeMacos {
+        natives: PathBuf,
+        /// Also merge `yakvc-cli-macos-x86_64` and `yakvc-cli-macos-aarch64`
+        /// in this directory into `yakvc-cli-macos-universal`.
+        #[arg(long)]
+        cli: Option<PathBuf>,
+    },
     /// The end-to-end check: a dev rendezvous, a local Minecraft server and
     /// two headless clients that must hear each other, and not while one is
     /// a spectator. About a minute.
@@ -92,6 +113,12 @@ enum Cmd {
         #[arg(long)]
         pipewire: bool,
     },
+    /// For CI's `release` job on a version tag: the GitHub release and
+    /// the server image on GHCR, from the run's downloaded artifacts.
+    Release,
+    /// For CI's `changes` job: whether this run builds anything, written to
+    /// `$GITHUB_OUTPUT` as `code=true` or `code=false`.
+    Changes,
     /// Fail if yakvc-server depends on an audio crate.
     CheckServerDeps,
     /// Fail if a release jar lacks a platform's native, the checksums, the
@@ -174,11 +201,18 @@ fn main() -> Result<()> {
             &target,
             &out.unwrap_or_else(|| root().join("mod/build/natives")),
         ),
+        Cmd::Cli { target, out } => cli(&target, &out),
         Cmd::Header { check } => header(check),
         Cmd::Dist { from } => dist(from.as_deref()),
-        Cmd::ServerImage => server_image(),
+        Cmd::ServerImage { save } => {
+            server_image()?;
+            match save {
+                Some(dir) => save_server(&dir),
+                None => Ok(()),
+            }
+        }
         Cmd::Ci { fast } => ci::ci(fast),
-        Cmd::MergeMacos { natives } => merge_macos(&natives),
+        Cmd::MergeMacos { natives, cli } => merge_macos(&natives, cli.as_deref()),
         Cmd::Gametest { gradle_args } => headless::gametest(&gradle_args),
         Cmd::TwoClients {
             accept_eula,
@@ -187,6 +221,8 @@ fn main() -> Result<()> {
             accept_eula || std::env::var("YAKVC_ACCEPT_MINECRAFT_EULA").as_deref() == Ok("1"),
             pipewire,
         ),
+        Cmd::Changes => github::changes(),
+        Cmd::Release => github::release(),
         Cmd::CheckServerDeps => ci::check_server_deps(),
         Cmd::CheckJar { jar } => ci::check_jar(&jar),
         Cmd::ServerSmoke => ci::server_smoke(),
@@ -291,6 +327,32 @@ fn natives(target: &str, out: &Path) -> Result<()> {
     write_manifest(out)
 }
 
+/// Builds yakvc-cli for release on `triple` and copies it into `out` under
+/// its release name, `yakvc-cli-<os>-<arch>`.
+fn cli(triple: &str, out: &Path) -> Result<()> {
+    let (os, arch) = parse_triple(triple)?;
+    let mut cmd = if os == "linux" {
+        // The runner's libasound.so needs a newer glibc than 2.17. Skip
+        // checking it: at run time the user's libasound matches their glibc.
+        let mut cmd = cargo(&["zigbuild", "--release", "--package", "yakvc-cli"]);
+        cmd.arg(format!("--target={triple}.{GLIBC}"))
+            .env("RUSTFLAGS", "-C link-arg=-Wl,--allow-shlib-undefined");
+        cmd
+    } else {
+        let mut cmd = cargo(&["build", "--release", "--package", "yakvc-cli"]);
+        cmd.arg(format!("--target={triple}"));
+        cmd
+    };
+    run(&mut cmd)?;
+    let exe = if os == "windows" { ".exe" } else { "" };
+    let built = root().join(format!("target/{triple}/release/yakvc-cli{exe}"));
+    let staged = out.join(format!("yakvc-cli-{os}-{arch}{exe}"));
+    fs::create_dir_all(out)?;
+    fs::copy(&built, &staged).with_context(|| format!("copying {}", built.display()))?;
+    println!("staged {}", staged.display());
+    Ok(())
+}
+
 /// Builds yakvc-ffi with the size-focused `dist` profile for `target` (or
 /// the host) and returns the library's path. Linux targets are built with
 /// cargo-zigbuild, so the library runs on any glibc since 2.17.
@@ -348,18 +410,13 @@ fn fresh_dir(dir: &Path) -> Result<()> {
 /// Replaces `macos-x86_64` and `macos-aarch64` in `natives` with their
 /// universal merge in `macos-universal`, as `natives --target all` makes on
 /// a Mac. CI builds the two architectures in parallel and merges them here.
-fn merge_macos(natives: &Path) -> Result<()> {
+fn merge_macos(natives: &Path, cli: Option<&Path>) -> Result<()> {
     let lib = "libyakvc_ffi.dylib";
     let (x86, arm) = (natives.join("macos-x86_64"), natives.join("macos-aarch64"));
     let dir = natives.join("macos-universal");
     fresh_dir(&dir)?;
-    // Apple's lipo on a Mac; LLVM's, which reads and writes the same files, elsewhere.
-    let lipo = if Command::new("lipo").arg("-info").output().is_ok() {
-        "lipo"
-    } else {
-        "llvm-lipo"
-    };
-    run(Command::new(lipo)
+    let lipo = lipo()?;
+    run(Command::new(&lipo)
         .arg("-create")
         .arg(x86.join(lib))
         .arg(arm.join(lib))
@@ -368,7 +425,50 @@ fn merge_macos(natives: &Path) -> Result<()> {
     fs::remove_dir_all(&x86)?;
     fs::remove_dir_all(&arm)?;
     println!("staged {}", dir.join(lib).display());
-    write_manifest(natives)
+    write_manifest(natives)?;
+
+    // A Mac's half of the CLI isn't a release file, only their merge is.
+    if let Some(cli) = cli {
+        let (x86, arm) = (
+            cli.join("yakvc-cli-macos-x86_64"),
+            cli.join("yakvc-cli-macos-aarch64"),
+        );
+        let universal = cli.join("yakvc-cli-macos-universal");
+        run(Command::new(&lipo)
+            .arg("-create")
+            .arg(&x86)
+            .arg(&arm)
+            .arg("-output")
+            .arg(&universal))?;
+        fs::remove_file(&x86)?;
+        fs::remove_file(&arm)?;
+        println!("staged {}", universal.display());
+    }
+    Ok(())
+}
+
+/// Apple's lipo on a Mac; LLVM's, which reads and writes the same files,
+/// elsewhere. Ubuntu puts LLVM's tools on PATH only with a version suffix
+/// (llvm-lipo-18), so the newest of its versioned directories is used.
+fn lipo() -> Result<PathBuf> {
+    for tool in ["lipo", "llvm-lipo"] {
+        if Command::new(tool).arg("-version").output().is_ok() {
+            return Ok(tool.into());
+        }
+    }
+    let newest = fs::read_dir("/usr/lib")
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.ok()?.file_name().into_string().ok()?;
+            let version: u32 = name.strip_prefix("llvm-")?.parse().ok()?;
+            Some((version, name))
+        })
+        .max();
+    match newest {
+        Some((_, dir)) => Ok(Path::new("/usr/lib").join(dir).join("bin/llvm-lipo")),
+        None => bail!("no lipo or llvm-lipo found"),
+    }
 }
 
 fn parse_triple(triple: &str) -> Result<(&'static str, &'static str)> {
@@ -406,6 +506,15 @@ fn run(cmd: &mut Command) -> Result<()> {
     Ok(())
 }
 
+/// Runs `cmd` and returns its trimmed standard output.
+fn output(cmd: &mut Command) -> Result<String> {
+    let out = cmd
+        .output()
+        .with_context(|| format!("running {:?}", cmd.get_program()))?;
+    ensure!(out.status.success(), "{cmd:?} failed");
+    Ok(String::from_utf8(out.stdout)?.trim().to_owned())
+}
+
 /// Writes `natives.sha256` covering every staged library, in `sha256sum`
 /// format with `/`-separated paths relative to `out`.
 fn write_manifest(out: &Path) -> Result<()> {
@@ -417,10 +526,7 @@ fn write_manifest(out: &Path) -> Result<()> {
         }
         for lib in fs::read_dir(platform.path())? {
             let lib = lib?;
-            let hash: String = Sha256::digest(fs::read(lib.path())?)
-                .iter()
-                .map(|b| format!("{b:02x}"))
-                .collect();
+            let hash = sha256(&lib.path())?;
             let rel = format!(
                 "{}/{}",
                 platform.file_name().to_string_lossy(),
@@ -436,6 +542,15 @@ fn write_manifest(out: &Path) -> Result<()> {
     }
     fs::write(out.join("natives.sha256"), manifest)?;
     Ok(())
+}
+
+/// A file's SHA-256, in hex as `sha256sum` prints it.
+fn sha256(path: &Path) -> Result<String> {
+    let bytes = fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    Ok(Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect())
 }
 
 /// Packages the release jar from the staged natives and THIRD_PARTY_LICENSES
@@ -524,6 +639,28 @@ fn server_image() -> Result<()> {
         ])
         .arg(&context))?;
     println!("built image {tag} (also yakvc-server:latest)");
+    Ok(())
+}
+
+/// Saves what `server_image` built into `dir`, as CI's `server` artifact:
+/// the gzipped image, for the release to push, and the static binary.
+fn save_server(dir: &Path) -> Result<()> {
+    fs::create_dir_all(dir)?;
+    let mut docker = Command::new("docker")
+        .args(["save", "yakvc-server:latest"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .context("running docker")?;
+    let archive = fs::File::create(dir.join("yakvc-server-image.tar.gz"))?;
+    run(Command::new("gzip")
+        .stdin(docker.stdout.take().unwrap())
+        .stdout(archive))?;
+    ensure!(docker.wait()?.success(), "docker save failed");
+    fs::copy(
+        root().join("target/server-image/yakvc-server"),
+        dir.join("yakvc-server-linux-x86_64"),
+    )?;
+    println!("saved the image and binary in {}", dir.display());
     Ok(())
 }
 

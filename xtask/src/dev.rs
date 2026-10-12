@@ -8,7 +8,7 @@ use std::process::Command;
 
 use anyhow::{Context, Result, ensure};
 
-use crate::{cargo, root};
+use crate::{cargo, output, root};
 
 /// A dev rendezvous ready to start: its server binary, its config and the
 /// client config that points at it.
@@ -128,12 +128,6 @@ pub(crate) fn prepare(port: u16, dir: &Path, real_auth: bool) -> Result<DevServe
         config,
         client,
     })
-}
-
-fn output(cmd: &mut Command) -> Result<String> {
-    let out = cmd.output()?;
-    ensure!(out.status.success(), "{cmd:?} failed");
-    Ok(String::from_utf8(out.stdout)?.trim().to_owned())
 }
 
 /// A TOML basic string for a path: backslashes (Windows) and quotes escaped.

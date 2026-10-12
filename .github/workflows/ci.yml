@@ -36,11 +36,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Whether a pull request or merge queue entry touches more than docs (the
-  # same files a push to main ignores). Pushes and manual runs always build,
-  # except a push to main of a commit that already carries a version tag (the
-  # tag's own run builds and releases it, so the tag is pushed first and main
-  # right after) or that the merge queue already tested.
+  # Whether this run builds anything (see `must_build` in xtask/src/github.rs):
+  # not for docs-only changes, nor for a push to main that a version tag or
+  # the merge queue already builds.
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -54,29 +52,14 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
+      - name: Install toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - id: diff
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
           GH_TOKEN: ${{ github.token }}
-        run: |
-          # Whether a merge queue run's ci-ok passed for this very commit.
-          queue_passed() {
-            for run in $(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&event=merge_group" --jq '.workflow_runs[].id'); do
-              gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs" --jq '.jobs[] | select(.name == "ci-ok") | .conclusion' | grep -qx success && return 0
-            done
-            return 1
-          }
-          if [ "$GITHUB_REF" = refs/heads/main ] && git tag --points-at HEAD | grep -q "^v"; then
-            echo "tagged $(git tag --points-at HEAD | tr "\n" " "): the tag run builds this commit"
-            echo code=false >> "$GITHUB_OUTPUT"
-          elif [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" = refs/heads/main ] && queue_passed; then
-            echo "the merge queue already tested this commit"
-            echo code=false >> "$GITHUB_OUTPUT"
-          elif [ -z "$BASE" ] || git diff --name-only "$BASE" HEAD | grep -qvE '(\.md$|^docs/|^LICENSE-)'; then
-            echo code=true >> "$GITHUB_OUTPUT"
-          else
-            echo code=false >> "$GITHUB_OUTPUT"
-          fi
+        run: cargo xtask changes
 
   rust:
     needs: changes
@@ -145,14 +128,7 @@ jobs:
         with:
           name: natives-Linux
           path: natives/
-      # The runner's libasound.so needs a newer glibc than 2.17. Skip checking
-      # it: at run time the user's libasound matches their glibc.
-      - name: Build yakvc-cli
-        run: |
-          mkdir cli
-          RUSTFLAGS="-C link-arg=-Wl,--allow-shlib-undefined" \
-            cargo zigbuild --release --locked -p yakvc-cli --target x86_64-unknown-linux-gnu.2.17
-          cp target/x86_64-unknown-linux-gnu/release/yakvc-cli cli/yakvc-cli-linux-x86_64
+      - run: cargo xtask cli --target x86_64-unknown-linux-gnu --out cli
       - uses: actions/upload-artifact@v7
         with:
           name: cli-Linux
@@ -170,9 +146,9 @@ jobs:
         include:
           # `test` runs the engine and JUnit tests where the runner can run
           # the target: macos-latest is arm, so not on the x86_64 half.
-          - { os: windows-latest, target: all, name: Windows, test: true }
-          - { os: macos-latest, target: x86_64-apple-darwin, name: macos-x86_64, test: false }
-          - { os: macos-latest, target: aarch64-apple-darwin, name: macos-aarch64, test: true }
+          - { os: windows-latest, target: all, cli: x86_64-pc-windows-msvc, name: Windows, test: true }
+          - { os: macos-latest, target: x86_64-apple-darwin, cli: x86_64-apple-darwin, name: macos-x86_64, test: false }
+          - { os: macos-latest, target: aarch64-apple-darwin, cli: aarch64-apple-darwin, name: macos-aarch64, test: true }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
@@ -202,17 +178,7 @@ jobs:
         working-directory: mod
         shell: bash
         run: ./gradlew test -Pyakvc.prebuiltNatives="$GITHUB_WORKSPACE/natives"
-      - name: Build yakvc-cli
-        shell: bash
-        run: |
-          mkdir cli
-          if [ "$RUNNER_OS" = Windows ]; then
-            cargo build --release --locked -p yakvc-cli --target x86_64-pc-windows-msvc
-            cp target/x86_64-pc-windows-msvc/release/yakvc-cli.exe cli/yakvc-cli-windows-x86_64.exe
-          else
-            cargo build --release --locked -p yakvc-cli --target ${{ matrix.target }}
-            cp target/${{ matrix.target }}/release/yakvc-cli cli/yakvc-cli-${{ matrix.name }}
-          fi
+      - run: cargo xtask cli --target ${{ matrix.cli }} --out cli
       # A Mac's half of the CLI isn't a release file: `jar` merges the two.
       - uses: actions/upload-artifact@v7
         with:
@@ -279,11 +245,7 @@ jobs:
       - uses: actions/checkout@v7
       # ALSA for the JUnit tests' native load; LLVM for llvm-lipo.
       - name: Install system libraries
-        run: |
-          sudo apt-get update && sudo apt-get install -y libasound2-dev llvm
-          # Ubuntu names LLVM's tools by version only on PATH (llvm-lipo-18);
-          # the plain names live in its versioned directory.
-          dirname "$(ls /usr/lib/llvm-*/bin/llvm-lipo | sort -V | tail -1)" >> "$GITHUB_PATH"
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev llvm
       - name: Install toolchain
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -300,7 +262,12 @@ jobs:
           pattern: natives-*
           path: natives
           merge-multiple: true
-      - run: cargo xtask merge-macos natives
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: maccli-*
+          path: maccli
+          merge-multiple: true
+      - run: cargo xtask merge-macos natives --cli maccli
       - name: Build the jar
         run: cargo xtask dist --from natives
       - name: Build the launcher packs
@@ -314,20 +281,10 @@ jobs:
             dist/*.jar
             dist/*.mrpack
             dist/*-prism.zip
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: maccli-*
-          path: maccli
-          merge-multiple: true
-      - name: Merge the Mac CLI
-        run: |
-          mkdir cli
-          llvm-lipo -create maccli/yakvc-cli-macos-x86_64 maccli/yakvc-cli-macos-aarch64 \
-            -output cli/yakvc-cli-macos-universal
       - uses: actions/upload-artifact@v7
         with:
           name: cli-macOS
-          path: cli/
+          path: maccli/
 
   server:
     needs: changes
@@ -345,17 +302,12 @@ jobs:
       - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
         with:
           tool: cargo-zigbuild,cargo-about
-      - run: cargo xtask server-image
+      - run: cargo xtask server-image --save server
       # Started as deploy/yakvc-server-docker.service starts it, the first run
       # must create its keys in a fresh volume (#51) and a second run must
       # find the same ones there.
       - name: Smoke-test the image's first start
         run: cargo xtask server-smoke
-      - name: Save the image and binary
-        run: |
-          mkdir server
-          docker save yakvc-server:latest | gzip > server/yakvc-server-image.tar.gz
-          cp target/server-image/yakvc-server server/yakvc-server-linux-x86_64
       - uses: actions/upload-artifact@v7
         with:
           name: server
@@ -391,13 +343,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - env:
-          RESULTS: ${{ join(needs.*.result, ' ') }}
-        run: |
-          echo "$RESULTS"
-          for result in $RESULTS; do
-            [ "$result" = success ] || [ "$result" = skipped ] || exit 1
-          done
+      - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
 
   # On a version tag: the GitHub release (jar, launcher packs, yakvc-cli,
   # static yakvc-server, SHA256SUMS) and the image on GHCR. Nothing goes to
@@ -414,6 +361,10 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
+      - uses: actions/checkout@v7
+      - name: Install toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - uses: actions/download-artifact@v8
         with:
           name: yakvc-mod
@@ -427,39 +378,7 @@ jobs:
         with:
           name: server
           path: server
-      - name: Check the tag matches the version
-        run: |
-          version=${GITHUB_REF_NAME#v}
-          test -f "dist/yakvc-$version.jar" || { echo "tag $GITHUB_REF_NAME, but built $(ls dist)" >&2; exit 1; }
-          echo "VERSION=$version" >> "$GITHUB_ENV"
-          # Alphas are playtest builds: a GitHub prerelease with no server
-          # image.
-          if [[ $version == *-alpha* ]]; then echo "GITHUB_ONLY=true" >> "$GITHUB_ENV"; fi
-      - name: GitHub release
-        run: |
-          # A version like 0.2.0-beta.1 makes a prerelease.
-          flags=(--generate-notes)
-          if [[ $VERSION == *-* ]]; then flags+=(--prerelease); fi
-          cp "dist/yakvc-$VERSION.jar" "dist/yakvc-$VERSION.mrpack" "dist/yakvc-$VERSION-prism.zip" \
-            server/yakvc-server-linux-x86_64 release/
-          # Checksums let a download by version (the NixOS server's, for one)
-          # pin and check the file's hash.
-          (cd release && sha256sum -- * > SHA256SUMS)
-          gh release create "$GITHUB_REF_NAME" "${flags[@]}" release/*
-      - name: Server image to GHCR
-        if: env.GITHUB_ONLY != 'true'
-        run: |
-          image=ghcr.io/${GITHUB_REPOSITORY_OWNER}/yakvc-server
-          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          docker load < server/yakvc-server-image.tar.gz
-          # Only a full release moves `latest`: a beta must not become what
-          # an unpinned `docker pull` gets.
-          tags=("$VERSION")
-          if [[ $VERSION != *-* ]]; then tags+=(latest); fi
-          for tag in "${tags[@]}"; do
-            docker tag yakvc-server:latest "$image:$tag"
-            docker push "$image:$tag"
-          done
+      - run: cargo xtask release
 
   # Puts the release on the production relay with `cargo xtask deploy-relay`
   # (see xtask/src/relay.rs). A manual run with "Deploy the relay" ticked
