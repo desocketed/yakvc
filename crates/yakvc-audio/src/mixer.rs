@@ -1,7 +1,7 @@
 use std::f32::consts::FRAC_PI_4;
 
 use crate::echo::{DelayLine, seconds_to_samples};
-use crate::{Echo, FRAME_SAMPLES, MonoFrame, Reverb, StereoFrame};
+use crate::{ECHO_TAPS, Echo, EchoTap, Echoes, FRAME_SAMPLES, MonoFrame, Reverb, StereoFrame};
 
 /// Samples below this magnitude pass the limiter untouched.
 const LIMITER_THRESHOLD: f32 = 0.9;
@@ -22,6 +22,9 @@ pub struct Spatial {
     pub muffle: f32,
     /// How much of the source goes to the room's reverb, from 0 (none) to 1.
     pub reverb: f32,
+    /// How much of the source the far surfaces echo back, from 0 (none) to
+    /// 1: a voice in the world, not one played centred.
+    pub echo: f32,
 }
 
 /// How the listener's surroundings sound: the room the game estimated, and
@@ -41,6 +44,8 @@ pub struct Acoustics {
     pub reverb_level: f32,
     /// How much faster the reverb's highs fade than its lows, from 0 to 0.95.
     pub reverb_damping: f32,
+    /// The distinct echoes off far surfaces, each from its own direction.
+    pub taps: [EchoTap; ECHO_TAPS],
 }
 
 impl Default for Acoustics {
@@ -52,6 +57,7 @@ impl Default for Acoustics {
             echo_feedback: 0.35,
             reverb_level: 1.0,
             reverb_damping: 0.3,
+            taps: [EchoTap::default(); ECHO_TAPS],
         }
     }
 }
@@ -66,6 +72,7 @@ pub struct Mixer {
     /// Holds the reverb sends back for the pre-delay.
     predelay: DelayLine,
     echo: Echo,
+    echoes: Echoes,
 }
 
 impl Mixer {
@@ -76,6 +83,7 @@ impl Mixer {
             reverb: Reverb::new(),
             predelay: DelayLine::new(),
             echo: Echo::new(),
+            echoes: Echoes::new(),
         }
     }
 
@@ -97,13 +105,17 @@ impl Mixer {
     ) {
         *out = [[0.0; 2]; FRAME_SAMPLES];
         let mut sends: MonoFrame = [0.0; FRAME_SAMPLES];
+        let mut far: MonoFrame = [0.0; FRAME_SAMPLES];
         for (frame, spatial) in sources {
             let [left, right] = pan_gains(spatial);
             let send = spatial.gain * finite_or_zero(spatial.reverb).clamp(0.0, 1.0);
-            for ((sample, mixed), sent) in frame.iter().zip(out.iter_mut()).zip(&mut sends) {
+            let echo = spatial.gain * finite_or_zero(spatial.echo).clamp(0.0, 1.0);
+            let into = out.iter_mut().zip(&mut sends).zip(&mut far);
+            for (sample, ((mixed, sent), echoed)) in frame.iter().zip(into) {
                 mixed[0] += sample * left;
                 mixed[1] += sample * right;
                 *sent += sample * send;
+                *echoed += sample * echo;
             }
         }
         // Every frame, even with nobody talking, so tails ring out.
@@ -128,6 +140,7 @@ impl Mixer {
         let feedback = finite_or_zero(a.echo_feedback).clamp(0.0, 0.9);
         let echo = finite_or_zero(a.echo).max(0.0);
         self.echo.process(&sends, echo, a.echo_delay, feedback, out);
+        self.echoes.process(&far, &a.taps, out);
         for sample in out.iter_mut().flatten() {
             *sample = soft_limit(*sample * self.master_gain);
         }
@@ -140,6 +153,7 @@ impl Mixer {
             self.set_acoustics(self.acoustics);
             self.predelay = DelayLine::new();
             self.echo = Echo::new();
+            self.echoes = Echoes::new();
         }
     }
 }
@@ -206,6 +220,7 @@ mod tests {
                     pan: 0.0,
                     muffle: 0.0,
                     reverb: 0.0,
+                    echo: 0.0,
                 },
             )],
             1.0,
@@ -225,6 +240,7 @@ mod tests {
                     pan: -1.0,
                     muffle: 0.0,
                     reverb: 0.0,
+                    echo: 0.0,
                 },
             )],
             1.0,
@@ -239,6 +255,7 @@ mod tests {
                     pan: 1.0,
                     muffle: 0.0,
                     reverb: 0.0,
+                    echo: 0.0,
                 },
             )],
             1.0,
@@ -257,6 +274,7 @@ mod tests {
                     pan: -1.0,
                     muffle: 0.0,
                     reverb: 0.0,
+                    echo: 0.0,
                 },
             ),
             (
@@ -266,6 +284,7 @@ mod tests {
                     pan: -1.0,
                     muffle: 0.0,
                     reverb: 0.0,
+                    echo: 0.0,
                 },
             ),
         ];
@@ -284,6 +303,7 @@ mod tests {
             pan: 0.0,
             muffle: 0.0,
             reverb: 1.0,
+            echo: 0.0,
         };
         mixer.mix([(&constant(f32::NAN), spatial)], &mut out);
         assert!(out.iter().flatten().all(|&s| s == 0.0));
@@ -291,6 +311,43 @@ mod tests {
         mixer.mix([(&constant(0.1), spatial)], &mut out);
         assert!(out.iter().flatten().all(|s| s.is_finite()));
         assert!(out.iter().flatten().any(|&s| s != 0.0));
+    }
+
+    #[test]
+    fn only_voices_in_the_world_echo_off_far_cliffs() {
+        let echoed = |echo| {
+            let mut mixer = Mixer::new();
+            let mut taps = [EchoTap::default(); ECHO_TAPS];
+            taps[0] = EchoTap {
+                delay: 0.1,
+                gain: 0.5,
+                pan: 1.0,
+                cutoff_hz: 20_000.0,
+            };
+            mixer.set_acoustics(Acoustics {
+                taps,
+                ..Acoustics::default()
+            });
+            let spatial = Spatial {
+                gain: 1.0,
+                pan: -1.0,
+                muffle: 0.0,
+                reverb: 0.0,
+                echo,
+            };
+            let mut out = [[0.0; 2]; FRAME_SAMPLES];
+            mixer.mix([(&constant(0.2), spatial)], &mut out);
+            // The voice is fully left: anything on the right is the echo.
+            let silence = constant(0.0);
+            (0..6)
+                .map(|_| {
+                    mixer.mix([(&silence, spatial)], &mut out);
+                    out.iter().map(|[_, r]| r.abs()).fold(0.0, f32::max)
+                })
+                .fold(0.0, f32::max)
+        };
+        assert!(echoed(1.0) > 0.05);
+        assert_eq!(echoed(0.0), 0.0);
     }
 
     #[test]
@@ -302,6 +359,7 @@ mod tests {
                 pan: -1.0,
                 muffle: 0.0,
                 reverb: 0.0,
+                echo: 0.0,
             },
         ); 8];
         let out = mix(&sources, 1.0);
@@ -315,6 +373,7 @@ mod tests {
                     pan: 1.0,
                     muffle: 0.0,
                     reverb: 0.0,
+                    echo: 0.0,
                 },
             )],
             1.0,

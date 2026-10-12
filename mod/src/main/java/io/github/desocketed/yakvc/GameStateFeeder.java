@@ -111,6 +111,7 @@ public final class GameStateFeeder {
 	private boolean worldEmpty = true;
 	/** The listener's surroundings, smoothed from tick to tick. */
 	private Room room = Room.OPEN_AIR;
+	private final FarEchoes farEchoes = new FarEchoes();
 	/** The mod's half of the {@code [acoustics]} tuning, read again whenever the config changes. */
 	private SoundTuning tuning;
 	/** Each occluded player's way around, if any: see {@link #heard}. */
@@ -436,8 +437,9 @@ public final class GameStateFeeder {
 		tracked = List.of();
 		worldEmpty = true;
 		room = Room.OPEN_AIR;
+		farEchoes.clear();
 		detours.clear();
-		bridge.pushWorld(engine, new double[10], new byte[0], new double[0]);
+		bridge.pushWorld(engine, new double[NativeBridge.LISTENER_LENGTH], new byte[0], new double[0]);
 	}
 
 	/**
@@ -470,8 +472,16 @@ public final class GameStateFeeder {
 		float yaw = camera.isInitialized() ? camera.yRot() : player.getYRot();
 		float pitch = camera.isInitialized() ? camera.xRot() : player.getXRot();
 		room = room.towards(Room.around(minecraft.level, eye, tuning));
-		double[] listener = {eye.x, eye.y, eye.z, yaw, pitch, room.reverb(),
-				room.criticalDistance(), room.decay(), room.echo(), room.echoDelay()};
+		double[] listener = new double[NativeBridge.LISTENER_LENGTH];
+		System.arraycopy(new double[] {eye.x, eye.y, eye.z, yaw, pitch, room.reverb(), room.criticalDistance(),
+				room.decay(), room.echo(), room.echoDelay()}, 0, listener, 0, 10);
+		// Unused slots stay zero: silent. The engine glides each echo from tick to tick.
+		List<FarEchoes.Echo> echoes = farEchoes.update(minecraft.level, eye, tuning);
+		for (int i = 0; i < echoes.size(); i++) {
+			FarEchoes.Echo echo = echoes.get(i);
+			System.arraycopy(new double[] {echo.direction().x, echo.direction().y, echo.direction().z, echo.delay(),
+					echo.gain(), echo.cutoff()}, 0, listener, 10 + 6 * i, 6);
+		}
 
 		List<UUID> uuids = new ArrayList<>();
 		List<double[]> players = new ArrayList<>();

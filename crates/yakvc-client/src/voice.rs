@@ -1113,6 +1113,7 @@ impl AudioLoop {
                 echo_feedback: state.acoustics.echo_feedback,
                 reverb_level: state.acoustics.reverb_level,
                 reverb_damping: state.acoustics.reverb_damping,
+                taps: rules::echo_taps(&world, state.acoustics.echo_level),
             });
             let mut out: StereoFrame = [[0.0; 2]; FRAME_SAMPLES];
             self.mixer.mix(

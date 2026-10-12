@@ -34,7 +34,9 @@ import java.util.UUID;
  */
 public final class NativeBridge {
 	/** Must equal {@code YAKVC_ABI_VERSION} in {@code yakvc.h}. */
-	public static final int ABI_VERSION = 14;
+	public static final int ABI_VERSION = 15;
+	/** Doubles in {@link #pushWorld}'s listener: the pose, the room and four far echoes. */
+	public static final int LISTENER_LENGTH = 34;
 
 	public static final int INPUT_PUSH_TO_TALK = 1;
 	public static final int INPUT_MUTED = 1 << 1;
@@ -163,7 +165,8 @@ public final class NativeBridge {
 	/**
 	 * Pushes one tick's world.
 	 *
-	 * @param listener x, y, z, yaw, pitch, then the room's reverb, decay, echo and echo delay
+	 * @param listener x, y, z, yaw, pitch, then the room's reverb, critical distance, decay, echo and echo delay,
+	 *                 then four far echoes of dx, dy, dz, delay, gain and cutoff each: {@link #LISTENER_LENGTH}
 	 * @param uuids    16 bytes per tracked player, from {@link #uuidBytes}
 	 * @param players  per tracked player x, y, z, occlusion (0 open air to 1 fully blocked), and the x, y, z its voice
 	 *                 seems to come from
@@ -171,7 +174,7 @@ public final class NativeBridge {
 	 */
 	public void pushWorld(MemorySegment engine, double[] listener, byte[] uuids, double[] players) {
 		long count = uuids.length / 16;
-		if (listener.length != 10 || uuids.length % 16 != 0 || players.length != 7 * count) {
+		if (listener.length != LISTENER_LENGTH || uuids.length % 16 != 0 || players.length != 7 * count) {
 			throw new IllegalArgumentException("pushWorld: listener " + listener.length + ", uuids " + uuids.length
 					+ " bytes, players " + players.length);
 		}

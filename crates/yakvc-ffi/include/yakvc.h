@@ -22,8 +22,9 @@
  * 10: `yakvc_push_world` takes where each player is heard from.
  * 11: `yakvc_push_world` takes the room's echo and echo delay.
  * 12: `yakvc_set_voice_sink`.
+ * 15: `yakvc_push_world` takes the far echoes after the room.
  */
-#define YAKVC_ABI_VERSION 14
+#define YAKVC_ABI_VERSION 15
 
 #define YAKVC_OK 0
 
@@ -306,15 +307,17 @@ int32_t yakvc_set_tab_list(struct YakVcEngine *engine, const uint8_t *uuids, siz
 /**
  * Pushes one tick's world: `listener` is `x, y, z, yaw, pitch, reverb,
  * critical_distance, decay, echo, echo_delay`, the last five describing
- * the room around it
- * (see `Room`); then `count`
+ * the room around it (see `Room`), then four far echoes of `dx, dy, dz,
+ * delay, gain, cutoff_hz` each: the unit vector to the surface, seconds
+ * until it comes back, its gain (0 for an unused one) and the air's
+ * low-pass (see `FarEcho`). Then `count`
  * tracked players as UUIDs and, per player, `x, y, z, occlusion, heard_x,
  * heard_y, heard_z`: the eye position, how much the sound reaching the
  * listener is blocked, from 0 (open air) to 1 (fully blocked), and where
  * the voice seems to come from (see `Player`).
  *
  * # Safety
- * `engine` must be live; `listener` must point to 10 doubles, `uuids` to
+ * `engine` must be live; `listener` must point to 34 doubles, `uuids` to
  * `16 * count` bytes and `players` to `7 * count` doubles.
  */
 int32_t yakvc_push_world(struct YakVcEngine *engine,

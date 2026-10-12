@@ -186,7 +186,7 @@ Voices follow the world: walls and closed doors muffle them, a voice behind a wa
 
 - **Distance**: how close a voice must be to play at full volume, and how it fades towards the voice range. Below ×1, distant voices stay louder for longer.
 - **Walls**: how much quieter and more muffled a voice behind walls is, and how muffled a voice coming round a corner or through a doorway is, plus a little more for each block of the way round.
-- **Rooms**: how loud and how dark the reverb is, how much sound the furnishing you can't see soaks up (more makes rooms ring shorter), the longest any space may ring, how far around you to look for walls, and how many times the echo off far walls repeats. How long a room rings, and how much of a voice rings in it, come from its size and its blocks: a talker right next to you stays clear, one across a hall sounds far away.
+- **Rooms**: how loud and how dark the reverb is, how much sound the furnishing you can't see soaks up (more makes rooms ring shorter), the longest any space may ring, how far around you to look for walls, how many times the echo off nearby walls repeats, how far away to look for cliffs and walls that echo (**Echo Reach**) and how loud those echoes are (**Echo Volume**). How long a room rings, and how much of a voice rings in it, come from its size and its blocks: a talker right next to you stays clear, one across a hall sounds far away. Far cliffs and walls each send back their own echo from their own direction, so in a valley or a canyon a friend's call comes back from each side.
 
 ## Privacy
 

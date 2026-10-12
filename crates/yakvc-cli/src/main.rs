@@ -218,6 +218,7 @@ fn loopback(wav: Option<PathBuf>, null_out: bool, json: bool) -> anyhow::Result<
                 pan: 0.0,
                 muffle: 0.0,
                 reverb: 0.0,
+                echo: 0.0,
             };
             mixer.mix([(&decoded, centred)], &mut mixed);
             sink.write(&mixed);

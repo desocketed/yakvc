@@ -92,7 +92,7 @@ fn create_rejects_bad_arguments() {
 fn every_engine_call_rejects_a_null_engine() {
     let null = ptr::null_mut();
     let uuid = [0u8; 16];
-    let listener = [0.0f64; 10];
+    let listener = [0.0f64; 34];
     let mut buf = [0u8; 16];
     let mut len = 0usize;
 
@@ -205,7 +205,7 @@ fn engine_lifecycle_through_the_c_abi() {
 
     let me = [1u8; 16];
     let other = [2u8; 16];
-    let listener = [0.0, 64.0, 0.0, 90.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0];
+    let listener = with_far_echoes([0.0, 64.0, 0.0, 90.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0]);
     let players = [3.0, 64.0, 4.0, 0.0, 3.0, 64.0, 4.0];
     // SAFETY: `engine` is live and every buffer is valid for its length.
     unsafe {
@@ -313,7 +313,7 @@ fn engine_calls_reject_invalid_values() {
     assert_eq!(code, YAKVC_OK, "{}", last_error());
 
     let uuid = [1u8; 16];
-    let nan_listener = [0.0, f64::NAN, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0];
+    let nan_listener = with_far_echoes([0.0, f64::NAN, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0]);
     // SAFETY: `engine` is live and every buffer is valid for its length.
     unsafe {
         assert_eq!(yakvc_set_input(engine, 1 << 31), YAKVC_ERR_INVALID_ARGUMENT);
@@ -498,4 +498,13 @@ fn voice_sinks_are_checked_asked_and_cleared() {
         assert_eq!(yakvc_set_voice_sink(engine, ptr::null()), YAKVC_OK);
         yakvc_destroy(engine);
     }
+}
+
+/// A listener push: the pose and room, then one far echo straight ahead
+/// (`dx, dy, dz, delay, gain, cutoff`) and three silent ones.
+fn with_far_echoes(head: [f64; 10]) -> [f64; 34] {
+    let mut listener = [0.0; 34];
+    listener[..10].copy_from_slice(&head);
+    listener[10..16].copy_from_slice(&[0.0, 0.0, 1.0, 0.2, 0.1, 5000.0]);
+    listener
 }

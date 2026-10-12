@@ -50,6 +50,7 @@ fn tone_reaches_the_sink() {
                     pan: 0.0,
                     muffle: 0.0,
                     reverb: 0.0,
+                    echo: 0.0,
                 },
             ));
             mixer.mix(sources, &mut mixed);

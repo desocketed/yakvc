@@ -34,11 +34,10 @@ class RoomTest {
 
 	/** The test world's cavern, 48 × 24 × 48 inside. */
 	@Test
-	void aCavernRingsForSecondsWithAnEcho() {
+	void aCavernRingsForSecondsAndLeavesItsFarWallsToFarEchoes() {
 		Room room = box(48, 24, 48);
 		assertBetween(4, 6, room.decay());
-		assertTrue(room.echo() > 0.1, "echo " + room.echo());
-		assertEquals(2 * 24 / 343.0, room.echoDelay(), 0.05);
+		assertEquals(0, room.echo());
 	}
 
 	@Test
@@ -49,7 +48,7 @@ class RoomTest {
 	@Test
 	void openGroundStaysDry() {
 		List<Room.Ray> rays = new ArrayList<>();
-		for (Vec3 d : Room.directions()) {
+		for (Vec3 d : Room.directions(48)) {
 			double ground = d.y < 0 ? EYE / -d.y : Double.MAX_VALUE;
 			rays.add(ground <= TUNING.roomReach() ? new Room.Ray(d.y <= -0.3, true, ground, -d.y, STONE)
 					: Room.Ray.miss(d.y <= -0.3));
@@ -62,7 +61,7 @@ class RoomTest {
 
 	@Test
 	void decayIsCappedByTheTuning() {
-		Room room = Room.of(rays(200, 100, 200, 0), new SoundTuning(0, 6, 128, 0, 0));
+		Room room = Room.of(rays(200, 100, 200, 0), new SoundTuning(0, 6, 128, 200, 0, 0));
 		assertEquals(6, room.decay(), 1e-6);
 	}
 
@@ -79,7 +78,7 @@ class RoomTest {
 		double[] eye = {width / 2, EYE, depth / 2};
 		double[] size = {width, height, depth};
 		List<Room.Ray> rays = new ArrayList<>();
-		for (Vec3 d : Room.directions()) {
+		for (Vec3 d : Room.directions(48)) {
 			double[] v = {d.x, d.y, d.z};
 			double nearest = Double.MAX_VALUE;
 			double incidence = 1;
