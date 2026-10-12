@@ -47,7 +47,7 @@ public sealed interface EngineEvent {
 	enum RendezvousState { CONNECTING, AUTHENTICATING, REGISTERED, RETRYING, DISCONNECTED }
 
 	/** In {@code YAKVC_PEER_*} order. */
-	enum PeerState { CONNECTING, DIRECT, RELAYED, RELAY_FULL, FAILED, GONE }
+	enum PeerState { CONNECTING, DIRECT, RELAYED, RELAY_FULL, FAILED, GONE, OLDER_VERSION, NEWER_VERSION }
 
 	/**
 	 * Decodes the first {@code length} bytes of {@code buf}. Unknown record types and state codes are skipped, as are

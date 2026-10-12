@@ -36,6 +36,18 @@ class EngineEventTest {
 	}
 
 	@Test
+	void decodesVersionMismatches() {
+		ByteArrayOutputStream out = new ByteArrayOutputStream();
+		record(out, 3, UUID_BYTES, new byte[] {6, 1});
+		record(out, 3, UUID_BYTES, new byte[] {7, 0});
+		byte[] buf = out.toByteArray();
+
+		assertEquals(List.of(
+				new EngineEvent.Peer(ID, EngineEvent.PeerState.OLDER_VERSION, true),
+				new EngineEvent.Peer(ID, EngineEvent.PeerState.NEWER_VERSION, false)), EngineEvent.decode(buf, buf.length));
+	}
+
+	@Test
 	void decodesGroupEvents() {
 		UUID other = UUID.fromString("ffeeddcc-bbaa-9988-7766-554433221100");
 		byte[] otherBytes = NativeBridge.uuidBytes(List.of(other));

@@ -23,7 +23,7 @@ use yakvc_proto::{ProtocolId, SignedTicket, Ticket, Uuid, wire};
 use super::rendezvous::Backoff;
 use super::{
     Bans, ControlRecv, ControlSend, Inner, Link, Peer, PeerEntry, PeerLink, PeerStatus, Protocol,
-    RETRY_AFTER_FAILURE, close, is_relayed,
+    RETRY_AFTER_FAILURE, Version, close, is_relayed,
 };
 
 /// The higher EndpointId waits this long for the lower one to dial first.
@@ -60,7 +60,7 @@ struct Hello {
     expires: Instant,
     /// The protocols and versions the peer offered, for the debug overlay.
     offered: Vec<(ProtocolId, u16)>,
-    /// Protocols both sides speak, with the agreed version.
+    /// Protocols both sides speak at the same version, with that version.
     agreed: Vec<(Arc<dyn Protocol>, u16)>,
     control_send: SendStream,
     control_recv: RecvStream,
@@ -261,17 +261,7 @@ async fn handshake(
             .map_err(|err| SetupError::Connection(err.to_string()))?;
     }
 
-    let agreed = inner
-        .protocols
-        .iter()
-        .filter_map(|protocol| {
-            let (_, version) = theirs
-                .protocols
-                .iter()
-                .find(|(id, _)| *id == protocol.id())?;
-            Some((protocol.clone(), protocol.version().min(*version)))
-        })
-        .collect();
+    let agreed = agree(&inner.protocols, &theirs.protocols);
     Ok(Hello {
         uuid: ticket.uuid,
         name: ticket.name.clone(),
@@ -284,6 +274,35 @@ async fn handshake(
         control_recv: recv,
         own_ticket_updates,
     })
+}
+
+/// The protocols both sides speak at the same version, with that version.
+/// Each protocol speaks only its own version, so one the peer has at another
+/// version is left out rather than spoken badly; [`compare_versions`] tells
+/// the player who needs to update.
+fn agree(
+    ours: &[Arc<dyn Protocol>],
+    theirs: &[(ProtocolId, u16)],
+) -> Vec<(Arc<dyn Protocol>, u16)> {
+    ours.iter()
+        .filter(|protocol| theirs.contains(&(protocol.id(), protocol.version())))
+        .map(|protocol| (protocol.clone(), protocol.version()))
+        .collect()
+}
+
+/// How the peer's versions of the protocols we share compare to ours.
+fn compare_versions(ours: &[Arc<dyn Protocol>], theirs: &[(ProtocolId, u16)]) -> Version {
+    let mut version = Version::Same;
+    for protocol in ours {
+        for (id, their_version) in theirs {
+            if *id == protocol.id() && *their_version < protocol.version() {
+                version = Version::PeerOlder;
+            } else if *id == protocol.id() && *their_version > protocol.version() {
+                version = Version::PeerNewer;
+            }
+        }
+    }
+    version
 }
 
 /// A hello's protocol list is short and names each protocol once.
@@ -437,6 +456,7 @@ fn register(
         flags.connected = true;
         flags.failed = false;
         flags.relayed = relayed;
+        flags.version = compare_versions(&inner.protocols, offered);
         flags.verified = verified;
     });
     Ok(entry.status.clone())
@@ -958,7 +978,20 @@ mod tests {
     }
 
     async fn side(n: u8, issuer: &IssuerKey, trusted: &IssuerKey) -> Side {
-        side_as(uuid(n), &format!("player{n}"), true, issuer, trusted).await
+        side_speaking(n, 1, issuer, trusted).await
+    }
+
+    /// A side whose probe protocol is at `version`.
+    async fn side_speaking(n: u8, version: u16, issuer: &IssuerKey, trusted: &IssuerKey) -> Side {
+        side_as(
+            uuid(n),
+            &format!("player{n}"),
+            true,
+            version,
+            issuer,
+            trusted,
+        )
+        .await
     }
 
     /// A side claiming `uuid` and `name`, with a verified or unverified ticket.
@@ -966,12 +999,13 @@ mod tests {
         uuid: Uuid,
         name: &str,
         verified: bool,
+        version: u16,
         issuer: &IssuerKey,
         trusted: &IssuerKey,
     ) -> Side {
         let endpoint = loopback_endpoint().await;
         let (events_tx, events) = event::channel();
-        let (probe, links) = probe(1, 1);
+        let (probe, links) = probe(1, version);
         let trust = Trust {
             verifier: TicketVerifier::new([trusted.id()]),
             verified_only: false,
@@ -1020,6 +1054,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn peers_at_different_versions_link_but_report_who_is_older() {
+        let issuer = IssuerKey::generate();
+        let mut alice = side_speaking(1, 1, &issuer, &issuer).await;
+        let mut bob = side_speaking(2, 2, &issuer, &issuer).await;
+        alice.sees(&[2]);
+        bob.sees(&[1]);
+
+        alice.dial(&bob).await.unwrap();
+        assert_eq!(
+            alice.next_peer_state().await,
+            (uuid(2), PeerState::NewerVersion)
+        );
+        assert_eq!(
+            bob.next_peer_state().await,
+            (uuid(1), PeerState::OlderVersion)
+        );
+        // Neither side starts the protocol it can't speak.
+        assert!(alice._links.try_recv().is_err());
+        assert!(bob._links.try_recv().is_err());
+    }
+
+    #[tokio::test]
     async fn peers_with_trusted_tickets_connect() {
         let issuer = IssuerKey::generate();
         let mut alice = side(1, &issuer, &issuer).await;
@@ -1044,8 +1100,8 @@ mod tests {
         let issuer = IssuerKey::generate();
         let bob = offline_uuid("bob");
         let alice = side(1, &issuer, &issuer).await;
-        let impostor = side_as(bob, "bob", false, &issuer, &issuer).await;
-        let real = side_as(bob, "bob", true, &issuer, &issuer).await;
+        let impostor = side_as(bob, "bob", false, 1, &issuer, &issuer).await;
+        let real = side_as(bob, "bob", true, 1, &issuer, &issuer).await;
         alice.net.set_tab_list(HashSet::from([bob]));
         impostor.sees(&[1]);
         real.sees(&[1]);
@@ -1074,7 +1130,7 @@ mod tests {
         let issuer = IssuerKey::generate();
         let alice = side(1, &issuer, &issuer).await;
         let bob = offline_uuid("bob");
-        let unverified = side_as(bob, "bob", false, &issuer, &issuer).await;
+        let unverified = side_as(bob, "bob", false, 1, &issuer, &issuer).await;
         alice.net.set_tab_list(HashSet::from([bob]));
         unverified.sees(&[1]);
 

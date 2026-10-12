@@ -23,7 +23,7 @@
  * 11: `yakvc_push_world` takes the room's echo and echo delay.
  * 12: `yakvc_set_voice_sink`.
  */
-#define YAKVC_ABI_VERSION 12
+#define YAKVC_ABI_VERSION 13
 
 #define YAKVC_OK 0
 
@@ -141,6 +141,16 @@
 #define YAKVC_PEER_FAILED 4
 
 #define YAKVC_PEER_GONE 5
+
+/**
+ * Linked, but the peer runs an older Yak VC: no voice until it updates.
+ */
+#define YAKVC_PEER_OLDER_VERSION 6
+
+/**
+ * Linked, but the peer runs a newer Yak VC: no voice until we update.
+ */
+#define YAKVC_PEER_NEWER_VERSION 7
 
 /**
  * The newest `YakVcVoiceSink` version this library takes. Version 1 sinks

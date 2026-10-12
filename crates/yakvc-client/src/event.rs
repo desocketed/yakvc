@@ -87,6 +87,12 @@ pub enum PeerState {
     /// Relayed, but outside the relay budget, so not receiving our audio.
     RelayFull,
     Failed,
+    /// Linked, but the peer runs an older voice protocol than ours, so
+    /// there is no voice with it until it updates.
+    OlderVersion,
+    /// Linked, but the peer runs a newer voice protocol than ours, so there
+    /// is no voice with it until we update.
+    NewerVersion,
     /// Connection closed; the peer is no longer listed.
     Gone,
 }

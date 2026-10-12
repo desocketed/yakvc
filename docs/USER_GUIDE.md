@@ -98,6 +98,7 @@ Each row shows the player's face and name, the verified badge if their Minecraft
 | Relayed | Connected through the Yak VC relay, because a direct connection wasn't possible or one of you uses Relay Only. |
 | Relay full | Your relay allowance is used up by nearer players, so they don't get your voice until a slot frees up. |
 | Connection failed | Yak VC couldn't reach them, or refused them (for example an unverified player while **Only Verified Players** is on). It tries again later. |
+| Different version | They run another version of Yak VC, so you can't hear each other. Hover over it to see who needs to update; you also get a notice the first time it happens. |
 | Blocked: muted both ways | You blocked them in Social Interactions. |
 
 **Volume** goes from 0 to 200 % and **Mute** silences just that player; they also stop sending you their voice. Both are remembered for that player, on every server.

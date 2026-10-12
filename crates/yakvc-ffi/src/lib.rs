@@ -56,7 +56,7 @@ use crate::guard::{
 /// 10: `yakvc_push_world` takes where each player is heard from.
 /// 11: `yakvc_push_world` takes the room's echo and echo delay.
 /// 12: `yakvc_set_voice_sink`.
-pub const YAKVC_ABI_VERSION: u32 = 12;
+pub const YAKVC_ABI_VERSION: u32 = 13;
 
 pub const YAKVC_OK: i32 = 0;
 /// A null pointer, bad UUID, invalid UTF-8 or out-of-range value.
@@ -117,6 +117,10 @@ pub const YAKVC_PEER_RELAYED: u8 = 2;
 pub const YAKVC_PEER_RELAY_FULL: u8 = 3;
 pub const YAKVC_PEER_FAILED: u8 = 4;
 pub const YAKVC_PEER_GONE: u8 = 5;
+/// Linked, but the peer runs an older Yak VC: no voice until it updates.
+pub const YAKVC_PEER_OLDER_VERSION: u8 = 6;
+/// Linked, but the peer runs a newer Yak VC: no voice until we update.
+pub const YAKVC_PEER_NEWER_VERSION: u8 = 7;
 
 /// The newest `YakVcVoiceSink` version this library takes. Version 1 sinks
 /// get other players' voices; version 2 sinks also get the player's own, as
