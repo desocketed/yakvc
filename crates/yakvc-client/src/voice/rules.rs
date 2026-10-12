@@ -499,14 +499,14 @@ mod tests {
         assert_eq!(gain(48.0), Some(0.0));
         assert_eq!(gain(48.1), None);
 
-        // A gentler rolloff keeps distant voices louder.
-        let gentle = spatial(
+        // The default, steeper rolloff drops distant voices sooner.
+        let steep = spatial(
             &listener(0.0),
             at(0.0, 40.0),
             48.0,
             &AcousticsConfig::default(),
         );
-        assert!(gentle.unwrap().gain > gain(40.0).unwrap() * 1.5);
+        assert!(steep.unwrap().gain < gain(40.0).unwrap() * 0.5);
     }
 
     #[test]
