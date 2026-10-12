@@ -188,12 +188,19 @@ pub(crate) fn release() -> Result<()> {
     Ok(())
 }
 
-/// A dev build's release notes: where it was built from, and the commits
-/// since the previous release (dev or not), so testers know what's in it.
+/// A dev build's release notes, in the releases' usual shape: a short line
+/// for players, then the commits since the previous release (dev or not)
+/// collapsed under "Technical details", so testers can see what's in it.
 fn dev_notes() -> Result<String> {
     let sha = env::var("GITHUB_SHA")?;
     let branch = env::var("GITHUB_REF_NAME")?;
-    let mut notes = format!("Dev build of `{branch}` at {sha}. Untested: for testers only.\n");
+    let mut notes = String::from(
+        "**Development build for playtesting.** Not a release: it may be broken, and \
+         everyone you play with needs this same build. Please [report anything \
+         odd](https://github.com/desocketed/yakvc/issues).\n\n\
+         <details>\n<summary>Technical details</summary>\n\n",
+    );
+    writeln!(notes, "Built from `{branch}` at {sha}.\n")?;
     if let Ok(previous) = git(&["describe", "--tags", "--abbrev=0", "--match", "v*", "HEAD"]) {
         let log = git(&[
             "log",
@@ -201,8 +208,9 @@ fn dev_notes() -> Result<String> {
             "--format=- %s",
             &format!("{previous}..HEAD"),
         ])?;
-        write!(notes, "\nChanges since {previous}:\n\n{log}\n")?;
+        write!(notes, "Changes since {previous}:\n\n{log}\n")?;
     }
+    notes.push_str("\n</details>\n\n<!-- claude -->\n");
     Ok(notes)
 }
 
