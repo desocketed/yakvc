@@ -36,11 +36,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Whether a pull request or merge queue entry touches more than docs (the
-  # same files a push to main ignores). Pushes and manual runs always build,
-  # except a push to main of a commit that already carries a version tag (the
-  # tag's own run builds and releases it, so the tag is pushed first and main
-  # right after) or that the merge queue already tested.
+  # Whether this run builds anything (see `must_build` in xtask/src/github.rs):
+  # not for docs-only changes, nor for a push to main that a version tag or
+  # the merge queue already builds.
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -54,29 +52,14 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
+      - name: Install toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - id: diff
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
           GH_TOKEN: ${{ github.token }}
-        run: |
-          # Whether a merge queue run's ci-ok passed for this very commit.
-          queue_passed() {
-            for run in $(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&event=merge_group" --jq '.workflow_runs[].id'); do
-              gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs" --jq '.jobs[] | select(.name == "ci-ok") | .conclusion' | grep -qx success && return 0
-            done
-            return 1
-          }
-          if [ "$GITHUB_REF" = refs/heads/main ] && git tag --points-at HEAD | grep -q "^v"; then
-            echo "tagged $(git tag --points-at HEAD | tr "\n" " "): the tag run builds this commit"
-            echo code=false >> "$GITHUB_OUTPUT"
-          elif [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" = refs/heads/main ] && queue_passed; then
-            echo "the merge queue already tested this commit"
-            echo code=false >> "$GITHUB_OUTPUT"
-          elif [ -z "$BASE" ] || git diff --name-only "$BASE" HEAD | grep -qvE '(\.md$|^docs/|^LICENSE-)'; then
-            echo code=true >> "$GITHUB_OUTPUT"
-          else
-            echo code=false >> "$GITHUB_OUTPUT"
-          fi
+        run: cargo xtask changes
 
   rust:
     needs: changes

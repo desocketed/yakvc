@@ -5,6 +5,7 @@ use std::{env, fs};
 
 mod ci;
 mod dev;
+mod github;
 mod headless;
 mod pack;
 mod pipewire;
@@ -92,6 +93,9 @@ enum Cmd {
         #[arg(long)]
         pipewire: bool,
     },
+    /// For CI's `changes` job: whether this run builds anything, written to
+    /// `$GITHUB_OUTPUT` as `code=true` or `code=false`.
+    Changes,
     /// Fail if yakvc-server depends on an audio crate.
     CheckServerDeps,
     /// Fail if a release jar lacks a platform's native, the checksums, the
@@ -187,6 +191,7 @@ fn main() -> Result<()> {
             accept_eula || std::env::var("YAKVC_ACCEPT_MINECRAFT_EULA").as_deref() == Ok("1"),
             pipewire,
         ),
+        Cmd::Changes => github::changes(),
         Cmd::CheckServerDeps => ci::check_server_deps(),
         Cmd::CheckJar { jar } => ci::check_jar(&jar),
         Cmd::ServerSmoke => ci::server_smoke(),
@@ -404,6 +409,15 @@ fn run(cmd: &mut Command) -> Result<()> {
         .with_context(|| format!("running {:?}", cmd.get_program()))?;
     ensure!(status.success(), "{cmd:?} failed");
     Ok(())
+}
+
+/// Runs `cmd` and returns its trimmed standard output.
+fn output(cmd: &mut Command) -> Result<String> {
+    let out = cmd
+        .output()
+        .with_context(|| format!("running {:?}", cmd.get_program()))?;
+    ensure!(out.status.success(), "{cmd:?} failed");
+    Ok(String::from_utf8(out.stdout)?.trim().to_owned())
 }
 
 /// Writes `natives.sha256` covering every staged library, in `sha256sum`
