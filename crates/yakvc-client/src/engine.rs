@@ -725,8 +725,16 @@ mod tests {
             .audio_sink(sink)
             .start()
             .unwrap();
+        // The tone's first mic level can beat the rendezvous state on a slow
+        // machine.
+        let first = loop {
+            match events.next().await {
+                Some(Event::MicLevel(_)) => continue,
+                other => break other,
+            }
+        };
         assert_eq!(
-            events.next().await,
+            first,
             Some(Event::Rendezvous(RendezvousState::Disconnected))
         );
         engine.set_identity(uuid(1), "alice");
