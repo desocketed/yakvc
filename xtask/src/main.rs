@@ -1,6 +1,6 @@
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::{env, fs};
 
 mod ci;
@@ -70,7 +70,12 @@ enum Cmd {
         out: Option<PathBuf>,
     },
     /// Build the yakvc-server Docker image.
-    ServerImage,
+    ServerImage {
+        /// Also save the image (`yakvc-server-image.tar.gz`) and the static
+        /// binary (`yakvc-server-linux-x86_64`) into this directory.
+        #[arg(long)]
+        save: Option<PathBuf>,
+    },
     /// Everything CI checks on Linux, locally and in order, stopping at the
     /// first failure. Also refreshes the user guide's screenshots.
     Ci {
@@ -196,7 +201,13 @@ fn main() -> Result<()> {
         Cmd::Cli { target, out } => cli(&target, &out),
         Cmd::Header { check } => header(check),
         Cmd::Dist { from } => dist(from.as_deref()),
-        Cmd::ServerImage => server_image(),
+        Cmd::ServerImage { save } => {
+            server_image()?;
+            match save {
+                Some(dir) => save_server(&dir),
+                None => Ok(()),
+            }
+        }
         Cmd::Ci { fast } => ci::ci(fast),
         Cmd::MergeMacos { natives, cli } => merge_macos(&natives, cli.as_deref()),
         Cmd::Gametest { gradle_args } => headless::gametest(&gradle_args),
@@ -618,6 +629,28 @@ fn server_image() -> Result<()> {
         ])
         .arg(&context))?;
     println!("built image {tag} (also yakvc-server:latest)");
+    Ok(())
+}
+
+/// Saves what `server_image` built into `dir`, as CI's `server` artifact:
+/// the gzipped image, for the release to push, and the static binary.
+fn save_server(dir: &Path) -> Result<()> {
+    fs::create_dir_all(dir)?;
+    let mut docker = Command::new("docker")
+        .args(["save", "yakvc-server:latest"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .context("running docker")?;
+    let archive = fs::File::create(dir.join("yakvc-server-image.tar.gz"))?;
+    run(Command::new("gzip")
+        .stdin(docker.stdout.take().unwrap())
+        .stdout(archive))?;
+    ensure!(docker.wait()?.success(), "docker save failed");
+    fs::copy(
+        root().join("target/server-image/yakvc-server"),
+        dir.join("yakvc-server-linux-x86_64"),
+    )?;
+    println!("saved the image and binary in {}", dir.display());
     Ok(())
 }
 
