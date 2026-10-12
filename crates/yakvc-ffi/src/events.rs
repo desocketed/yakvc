@@ -112,6 +112,8 @@ pub(crate) fn encode(event: &Event) -> Vec<u8> {
                 PeerState::RelayFull => YAKVC_PEER_RELAY_FULL,
                 PeerState::Failed => YAKVC_PEER_FAILED,
                 PeerState::Gone => YAKVC_PEER_GONE,
+                PeerState::OlderVersion => YAKVC_PEER_OLDER_VERSION,
+                PeerState::NewerVersion => YAKVC_PEER_NEWER_VERSION,
             });
             payload.push(u8::from(*verified));
             YAKVC_EVENT_PEER_STATE
@@ -233,6 +235,19 @@ mod tests {
         let mut payload = UUID_BYTES.to_vec();
         payload.push(YAKVC_PEER_RELAY_FULL);
         payload.push(1);
+        assert_eq!(encode(&event), record(YAKVC_EVENT_PEER_STATE, &payload));
+    }
+
+    #[test]
+    fn encodes_version_mismatch() {
+        let event = Event::Peer {
+            uuid: UUID,
+            state: PeerState::NewerVersion,
+            verified: false,
+        };
+        let mut payload = UUID_BYTES.to_vec();
+        payload.push(YAKVC_PEER_NEWER_VERSION);
+        payload.push(0);
         assert_eq!(encode(&event), record(YAKVC_EVENT_PEER_STATE, &payload));
     }
 

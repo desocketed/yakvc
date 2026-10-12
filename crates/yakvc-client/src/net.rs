@@ -274,12 +274,24 @@ struct PeerStatus {
     flags: Mutex<StatusFlags>,
 }
 
+/// How a peer's protocol versions compare to ours. Each protocol speaks
+/// only its own version, so any difference means no protocol with that peer.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Version {
+    #[default]
+    Same,
+    PeerOlder,
+    PeerNewer,
+}
+
 #[derive(Debug, Default)]
 struct StatusFlags {
     connected: bool,
     failed: bool,
     relayed: bool,
     relay_full: bool,
+    /// How the peer's protocol versions compare to ours.
+    version: Version,
     verified: bool,
     /// The state and verified flag last sent in an [`Event::Peer`].
     reported: Option<(PeerState, bool)>,
@@ -866,6 +878,11 @@ impl PeerStatus {
 
 impl StatusFlags {
     fn state(&self) -> PeerState {
+        match (self.connected, self.version) {
+            (true, Version::PeerOlder) => return PeerState::OlderVersion,
+            (true, Version::PeerNewer) => return PeerState::NewerVersion,
+            _ => {}
+        }
         match (self.connected, self.relayed, self.relay_full) {
             (false, _, _) if self.failed => PeerState::Failed,
             (false, _, _) => PeerState::Connecting,
@@ -988,6 +1005,7 @@ mod tests {
                 failed,
                 relayed,
                 relay_full,
+                version: Version::Same,
                 verified: false,
                 reported: None,
                 closed_by_peer: None,

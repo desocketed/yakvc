@@ -137,6 +137,8 @@ public final class GameStateFeeder {
 	private final Map<UUID, EngineEvent.PeerState> peers = new HashMap<>();
 	private final Set<UUID> verifiedPeers = new HashSet<>();
 	private final Set<UUID> talking = new LinkedHashSet<>();
+	/** Peers on another Yak VC version we already told the player about this server session. */
+	private final Set<UUID> versionWarned = new HashSet<>();
 	private int errorEvents;
 	private final EngineErrorToasts errorToasts = new EngineErrorToasts();
 	private boolean micHeard;
@@ -204,6 +206,7 @@ public final class GameStateFeeder {
 		if (session == null && hadSession) {
 			step(this::leaveGroup);
 			groupChat.clear();
+			versionWarned.clear();
 		}
 		hadSession = session != null;
 		LocalPlayer player = minecraft.player;
@@ -581,6 +584,8 @@ public final class GameStateFeeder {
 					verifiedPeers.remove(uuid);
 				} else {
 					peers.put(uuid, state);
+					Component mismatch = VoiceToasts.versionMismatch(state, name(uuid));
+					if (mismatch != null && versionWarned.add(uuid)) VoiceToasts.show(mismatch);
 					if (isVerified) verifiedPeers.add(uuid);
 					else verifiedPeers.remove(uuid);
 				}

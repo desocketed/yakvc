@@ -1,8 +1,11 @@
 package io.github.desocketed.yakvc.ui;
 
+import io.github.desocketed.yakvc.UpdateCheck;
+import io.github.desocketed.yakvc.natives.EngineEvent;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.toasts.SystemToast;
 import net.minecraft.network.chat.Component;
+import org.jspecify.annotations.Nullable;
 
 /** Tells the player that voice stopped working, which otherwise would only be in the log. */
 public final class VoiceToasts {
@@ -26,6 +29,21 @@ public final class VoiceToasts {
 	public static void showGroupNotice(Component message) {
 		SystemToast.addOrUpdate(Minecraft.getInstance().gui.toastManager(), GROUP,
 				Component.translatable("yakvc.toast.group_title"), message);
+	}
+
+	/**
+	 * Why there is no voice with {@code name}, a peer in {@code state}, or null when its version is ours. When the peer
+	 * is newer and the update check found a release, it names that release so the player knows what to get.
+	 */
+	public static @Nullable Component versionMismatch(EngineEvent.@Nullable PeerState state, String name) {
+		if (state == EngineEvent.PeerState.OLDER_VERSION) {
+			return Component.translatable("yakvc.peer.older_version", name);
+		}
+		if (state != EngineEvent.PeerState.NEWER_VERSION) return null;
+		UpdateCheck.Release release = UpdateNotice.newer();
+		return release == null
+				? Component.translatable("yakvc.peer.newer_version", name)
+				: Component.translatable("yakvc.peer.newer_version.update", name, release.version());
 	}
 
 	/** Must run on the client thread, after the game has started. */

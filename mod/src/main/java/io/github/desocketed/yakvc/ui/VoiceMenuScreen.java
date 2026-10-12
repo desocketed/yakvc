@@ -266,7 +266,13 @@ public final class VoiceMenuScreen extends Screen {
 			if (feeder.talking().contains(uuid)) {
 				graphics.text(font, Icons.SPEAKER, iconX, y + 3, 0xFFFFFFFF, false);
 			}
-			graphics.text(font, connection(), textX, y + 14, 0xFFA0A0A0, false);
+			Component connection = connection();
+			graphics.text(font, connection, textX, y + 14, 0xFFA0A0A0, false);
+			Component mismatch = VoiceToasts.versionMismatch(feeder.peerState(uuid), name);
+			if (mismatch != null && mouseX >= textX && mouseX < textX + font.width(connection)
+					&& mouseY >= y + 14 && mouseY < y + 14 + font.lineHeight) {
+				graphics.setTooltipForNextFrame(mismatch, mouseX, mouseY);
+			}
 
 			mute.setPosition(getContentRight() - mute.getWidth(), y + 2);
 			volume.setPosition(mute.getX() - 4 - volume.getWidth(), y + 2);

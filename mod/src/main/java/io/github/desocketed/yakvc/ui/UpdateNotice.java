@@ -29,6 +29,11 @@ public final class UpdateNotice {
 		ScreenEvents.AFTER_INIT.register((minecraft, screen, width, height) -> addTo(screen));
 	}
 
+	/** The newer release the update check found, or null. */
+	public static UpdateCheck.@Nullable Release newer() {
+		return newer;
+	}
+
 	/** Shows {@code release} from now on. Must run on the client thread. */
 	public static void show(UpdateCheck.Release release) {
 		newer = release;
