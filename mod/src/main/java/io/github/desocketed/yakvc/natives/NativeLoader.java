@@ -22,14 +22,15 @@ import org.tukaani.xz.XZInputStream;
 /**
  * Extracts the bundled yakvc-ffi library for this platform and opens it.
  *
- * <p>Libraries live in the jar xz-compressed, as {@code natives/<os>-<arch>/<library>.xz} (or
- * {@code natives/<os>-universal/}), which makes the jar about 30 % smaller than its own compression would. Next to them
+ * <p>Libraries live in the jar xz-compressed, as {@code yakvc/natives/<os>-<arch>/<library>.xz} (or
+ * {@code yakvc/natives/<os>-universal/}), which makes the jar about 30 % smaller than its own compression would. Next to them
  * is a {@code natives.sha256} manifest of the uncompressed libraries. The library is unpacked to
  * {@code <configDir>/natives/<sha256>/}, checked against the manifest and opened with the global arena. It is never
  * unloaded, because it owns live threads.
  */
 public final class NativeLoader {
-	private static final String RESOURCE_ROOT = "/natives/";
+	// Under our own namespace: the jars share one classpath, and other mods ship a /natives/ of their own.
+	private static final String RESOURCE_ROOT = "/yakvc/natives/";
 
 	private NativeLoader() {}
 

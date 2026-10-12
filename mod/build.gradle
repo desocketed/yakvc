@@ -118,7 +118,7 @@ processResources {
 		expand 'version': version
 	}
 
-	from(compressNatives) { into 'natives' }
+	from(compressNatives) { into 'yakvc/natives' }
 }
 
 fabricApi {
