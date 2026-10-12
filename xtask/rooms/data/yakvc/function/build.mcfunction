@@ -36,3 +36,9 @@ fill 49 -59 51 49 -36 98 stone
 fill 1 -59 51 48 -48 98 air
 fill 1 -47 51 48 -36 98 air
 fill 24 -59 50 25 -57 50 air
+
+# A canyon: two stone cliffs 30 tall and 80 long, 70 apart, under open sky.
+# Stand between them, at x 99, and each cliff sends back its own distinct echo
+# about 0.2 s later, one from each side.
+fill 61 -60 10 63 -31 89 stone
+fill 134 -60 10 136 -31 89 stone
