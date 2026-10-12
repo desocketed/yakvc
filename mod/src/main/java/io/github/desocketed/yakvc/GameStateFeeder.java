@@ -7,6 +7,7 @@ import com.google.gson.JsonParser;
 import com.mojang.authlib.GameProfile;
 import io.github.desocketed.yakvc.config.ClientConfig;
 import io.github.desocketed.yakvc.config.PlayerVolumes;
+import io.github.desocketed.yakvc.config.SoundTuning;
 import io.github.desocketed.yakvc.input.VoiceKeys;
 import io.github.desocketed.yakvc.natives.EngineEvent;
 import io.github.desocketed.yakvc.natives.NativeBridge;
@@ -90,6 +91,8 @@ public final class GameStateFeeder {
 	private boolean worldEmpty = true;
 	/** The listener's surroundings, smoothed from tick to tick. */
 	private Room room = Room.OPEN_AIR;
+	/** The mod's half of the {@code [acoustics]} tuning, read again whenever the config changes. */
+	private SoundTuning tuning;
 	/** Each occluded player's way around, if any: see {@link #heard}. */
 	private final Map<UUID, Optional<SoundPath>> detours = new HashMap<>();
 	private static final int DETOUR_TICKS = 10;
@@ -132,6 +135,7 @@ public final class GameStateFeeder {
 		this.bridge = bridge;
 		this.engine = engine;
 		this.config = config;
+		this.tuning = SoundTuning.of(config);
 		this.keys = keys;
 		this.joiner = joiner;
 		this.volumes = volumes;
@@ -234,6 +238,7 @@ public final class GameStateFeeder {
 			return e.getMessage();
 		}
 		config = newConfig;
+		tuning = SoundTuning.of(newConfig);
 		ticksUntilBlockedRefresh = 0;
 		return null;
 	}
@@ -406,7 +411,7 @@ public final class GameStateFeeder {
 		worldEmpty = true;
 		room = Room.OPEN_AIR;
 		detours.clear();
-		bridge.pushWorld(engine, new double[7], new byte[0], new double[0]);
+		bridge.pushWorld(engine, new double[9], new byte[0], new double[0]);
 	}
 
 	/**
@@ -421,7 +426,7 @@ public final class GameStateFeeder {
 			return new SoundPath(pos, direct);
 		}
 		if (!detours.containsKey(other.getUUID()) || (other.tickCount + other.getId()) % DETOUR_TICKS == 0) {
-			detours.put(other.getUUID(), Optional.ofNullable(SoundPath.around(level, eye, pos)));
+			detours.put(other.getUUID(), Optional.ofNullable(SoundPath.around(level, eye, pos, tuning)));
 		}
 		return detours.get(other.getUUID()).filter(around -> around.occlusion() < direct)
 				.orElse(new SoundPath(pos, direct));
@@ -438,8 +443,9 @@ public final class GameStateFeeder {
 		Vec3 eye = camera.isInitialized() ? camera.position() : player.getEyePosition();
 		float yaw = camera.isInitialized() ? camera.yRot() : player.getYRot();
 		float pitch = camera.isInitialized() ? camera.xRot() : player.getXRot();
-		room = room.towards(Room.around(minecraft.level, eye));
-		double[] listener = {eye.x, eye.y, eye.z, yaw, pitch, room.reverb(), room.decay()};
+		room = room.towards(Room.around(minecraft.level, eye, tuning));
+		double[] listener = {eye.x, eye.y, eye.z, yaw, pitch, room.reverb(), room.decay(), room.echo(),
+				room.echoDelay()};
 
 		List<UUID> uuids = new ArrayList<>();
 		List<double[]> players = new ArrayList<>();

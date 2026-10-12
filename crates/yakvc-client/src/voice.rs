@@ -264,6 +264,7 @@ impl Voice {
     pub(crate) fn update_config(&self, config: &Config) {
         self.shared.change(|state| {
             state.audio = config.audio.clone();
+            state.acoustics = config.acoustics.clone();
             state.voice_range = config.voice_range;
             state.friends_only = config.friends_only.clone();
             state.invites_from = config.invites;
@@ -318,6 +319,7 @@ impl Shared {
             config.friends_only.clone(),
         );
         state.invites_from = config.invites;
+        state.acoustics = config.acoustics.clone();
         Shared {
             state: Mutex::new(Arc::new(state)),
             peers: Mutex::new(HashMap::new()),
@@ -949,7 +951,11 @@ impl AudioLoop {
             };
             let talking_frame = spatial.is_some() && level_db(&frame) > TALKING_LEVEL_DB;
             if let Some(spatial) = spatial {
-                remote.muffle.apply(&mut frame, spatial.muffle);
+                remote.muffle.apply(
+                    &mut frame,
+                    spatial.muffle,
+                    state.acoustics.muffled_cutoff_hz,
+                );
                 voices.push((frame, spatial));
             }
             if talking_frame {
@@ -968,7 +974,14 @@ impl AudioLoop {
         }
 
         self.mixer.set_master_gain(state.game_volume);
-        self.mixer.set_reverb_decay(world.room.decay);
+        self.mixer.set_acoustics(yakvc_audio::Acoustics {
+            decay: world.room.decay,
+            echo: world.room.echo,
+            echo_delay: world.room.echo_delay,
+            echo_feedback: state.acoustics.echo_feedback,
+            reverb_level: state.acoustics.reverb_level,
+            reverb_damping: state.acoustics.reverb_damping,
+        });
         let mut out: StereoFrame = [[0.0; 2]; FRAME_SAMPLES];
         self.mixer.mix(
             voices.iter().map(|(frame, spatial)| (frame, *spatial)),

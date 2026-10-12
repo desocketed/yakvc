@@ -31,6 +31,8 @@ pub struct Config {
     /// Who may invite us to a group.
     pub invites: InvitesFrom,
     pub audio: AudioConfig,
+    /// How voices sound through the world, for tuning by ear.
+    pub acoustics: AcousticsConfig,
     /// Test audio for machines without sound hardware. Needs `dev_mode`.
     pub dev: DevConfig,
 }
@@ -72,6 +74,46 @@ pub struct AudioConfig {
     pub noise_suppression: bool,
     pub input_gain: f32,
     pub vad_threshold_db: f32,
+}
+
+/// The `[acoustics]` section: the engine's half of how voices sound
+/// through the world. The mod keeps its own half (how it reads rooms and
+/// walls) in the same section; unknown keys are ignored.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AcousticsConfig {
+    /// Within this many blocks a voice plays at full volume.
+    pub full_volume_distance: f32,
+    /// How a voice fades from there to the voice range: 1 is a straight
+    /// line, below 1 keeps distant voices louder for longer, above 1 drops
+    /// them sooner.
+    pub distance_rolloff: f32,
+    /// How much quieter a fully occluded voice is, from 0 to 1.
+    pub occlusion_attenuation: f32,
+    /// The muffle filter's cutoff for a fully occluded voice, in Hz.
+    pub muffled_cutoff_hz: f32,
+    /// Scales the reverb's loudness; 1 is as built.
+    pub reverb_level: f32,
+    /// How much faster the reverb's highs fade than its lows, from 0 to 0.95.
+    pub reverb_damping: f32,
+    /// How much of each echo repeat comes back again, from 0 to 0.9.
+    pub echo_feedback: f32,
+}
+
+impl Default for AcousticsConfig {
+    /// Voices that carry far and spaces that ring, like a mountain climbing
+    /// game.
+    fn default() -> Self {
+        AcousticsConfig {
+            full_volume_distance: 4.0,
+            distance_rolloff: 0.6,
+            occlusion_attenuation: 0.75,
+            muffled_cutoff_hz: 600.0,
+            reverb_level: 1.2,
+            reverb_damping: 0.25,
+            echo_feedback: 0.4,
+        }
+    }
 }
 
 /// The `[dev]` section: stand-ins for the microphone and speakers, so dev
@@ -138,6 +180,28 @@ impl Config {
         if !(-100.0..=0.0).contains(&self.audio.vad_threshold_db) {
             return invalid("audio.vad_threshold_db must be between -100 and 0");
         }
+        let a = &self.acoustics;
+        if !(0.0..=64.0).contains(&a.full_volume_distance) {
+            return invalid("acoustics.full_volume_distance must be between 0 and 64");
+        }
+        if !(0.1..=4.0).contains(&a.distance_rolloff) {
+            return invalid("acoustics.distance_rolloff must be between 0.1 and 4");
+        }
+        if !(0.0..=1.0).contains(&a.occlusion_attenuation) {
+            return invalid("acoustics.occlusion_attenuation must be between 0 and 1");
+        }
+        if !(100.0..=20_000.0).contains(&a.muffled_cutoff_hz) {
+            return invalid("acoustics.muffled_cutoff_hz must be between 100 and 20000");
+        }
+        if !(0.0..=4.0).contains(&a.reverb_level) {
+            return invalid("acoustics.reverb_level must be between 0 and 4");
+        }
+        if !(0.0..=0.95).contains(&a.reverb_damping) {
+            return invalid("acoustics.reverb_damping must be between 0 and 0.95");
+        }
+        if !(0.0..=0.9).contains(&a.echo_feedback) {
+            return invalid("acoustics.echo_feedback must be between 0 and 0.9");
+        }
         if self.rendezvous.is_some() && self.trusted_issuers.is_empty() {
             // Nothing would be trusted, not even our own ticket.
             return invalid("trusted_issuers must list the rendezvous's issuer");
@@ -193,6 +257,7 @@ impl Default for Config {
             friends_only: None,
             invites: InvitesFrom::Everyone,
             audio: AudioConfig::default(),
+            acoustics: AcousticsConfig::default(),
             dev: DevConfig::default(),
         }
     }

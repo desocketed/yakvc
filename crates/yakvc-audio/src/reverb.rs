@@ -6,8 +6,6 @@ const COMB_DELAYS: [usize; 4] = [1116, 1188, 1277, 1356];
 const ALLPASS_DELAYS: [usize; 2] = [556, 441];
 /// The right channel's delays are this much longer, so the tail is wide.
 const STEREO_SPREAD: usize = 23;
-/// How much each comb's feedback loses of its highs: walls absorb treble.
-const DAMPING: f32 = 0.3;
 const ALLPASS_FEEDBACK: f32 = 0.5;
 /// The combs add up, so their sum is scaled back down.
 const OUTPUT_GAIN: f32 = 0.25;
@@ -22,6 +20,9 @@ const MAX_DECAY: f32 = 10.0;
 #[derive(Debug)]
 pub struct Reverb {
     channels: [Bank; 2],
+    /// How much each comb's feedback loses of its highs, from 0 to 0.95:
+    /// walls absorb treble.
+    damping: f32,
 }
 
 #[derive(Debug)]
@@ -62,6 +63,7 @@ impl Reverb {
         };
         let mut reverb = Reverb {
             channels: [bank(0), bank(STEREO_SPREAD)],
+            damping: 0.3,
         };
         reverb.set_decay(1.0);
         reverb
@@ -83,11 +85,20 @@ impl Reverb {
         }
     }
 
+    /// How much faster the tail's highs fade than its lows, from 0 to 0.95.
+    pub fn set_damping(&mut self, damping: f32) {
+        self.damping = if damping.is_finite() {
+            damping.clamp(0.0, 0.95)
+        } else {
+            0.3
+        };
+    }
+
     /// Adds the reverberated `input` to `out`.
     pub fn process(&mut self, input: &MonoFrame, out: &mut StereoFrame) {
         for (channel, bank) in self.channels.iter_mut().enumerate() {
             for i in 0..FRAME_SAMPLES {
-                out[i][channel] += bank.process(input[i]) * OUTPUT_GAIN;
+                out[i][channel] += bank.process(input[i], self.damping) * OUTPUT_GAIN;
             }
         }
     }
@@ -100,11 +111,11 @@ impl Default for Reverb {
 }
 
 impl Bank {
-    fn process(&mut self, input: f32) -> f32 {
+    fn process(&mut self, input: f32, damping: f32) -> f32 {
         let mut sum = 0.0;
         for comb in &mut self.combs {
             let delayed = comb.delay.read();
-            comb.filtered = delayed * (1.0 - DAMPING) + comb.filtered * DAMPING;
+            comb.filtered = delayed * (1.0 - damping) + comb.filtered * damping;
             comb.delay.write(input + comb.filtered * comb.feedback);
             sum += delayed;
         }

@@ -90,7 +90,7 @@ fn create_rejects_bad_arguments() {
 fn every_engine_call_rejects_a_null_engine() {
     let null = ptr::null_mut();
     let uuid = [0u8; 16];
-    let listener = [0.0f64; 7];
+    let listener = [0.0f64; 9];
     let mut buf = [0u8; 16];
     let mut len = 0usize;
 
@@ -202,7 +202,7 @@ fn engine_lifecycle_through_the_c_abi() {
 
     let me = [1u8; 16];
     let other = [2u8; 16];
-    let listener = [0.0, 64.0, 0.0, 90.0, 0.0, 0.0, 1.0];
+    let listener = [0.0, 64.0, 0.0, 90.0, 0.0, 0.0, 1.0, 0.0, 0.0];
     let players = [3.0, 64.0, 4.0, 0.0, 3.0, 64.0, 4.0];
     // SAFETY: `engine` is live and every buffer is valid for its length.
     unsafe {
@@ -310,7 +310,7 @@ fn engine_calls_reject_invalid_values() {
     assert_eq!(code, YAKVC_OK, "{}", last_error());
 
     let uuid = [1u8; 16];
-    let nan_listener = [0.0, f64::NAN, 0.0, 0.0, 0.0, 0.0, 1.0];
+    let nan_listener = [0.0, f64::NAN, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0];
     // SAFETY: `engine` is live and every buffer is valid for its length.
     unsafe {
         assert_eq!(yakvc_set_input(engine, 1 << 31), YAKVC_ERR_INVALID_ARGUMENT);

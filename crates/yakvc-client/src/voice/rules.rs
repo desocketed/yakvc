@@ -8,19 +8,15 @@ use yakvc_audio::{DeviceChoice, Spatial};
 use yakvc_proto::{GroupId, Uuid};
 
 use super::group::{Invite, OwnGroup, PendingGroup, SentInvite};
-use crate::config::{Activation, AudioConfig, InvitesFrom};
+use crate::config::{AcousticsConfig, Activation, AudioConfig, InvitesFrom};
 use crate::engine::PeerAudio;
 use crate::world::{Input, Pose, Vec3, World, distance, interpolate};
 
-/// Within this distance a speaker plays at full volume.
-const FULL_VOLUME_DISTANCE: f64 = 4.0;
 /// Snapshots further apart than this are not interpolated: the game paused
 /// or lagged, so gliding would only move voices late.
 const MAX_SNAPSHOT_GAP: Duration = Duration::from_millis(250);
 /// Directly behind the listener a speaker is this much quieter.
 const BEHIND_ATTENUATION: f64 = 0.3;
-/// A fully occluded speaker is this much quieter, as well as muffled.
-const OCCLUDED_ATTENUATION: f32 = 0.75;
 const MAX_RECIPIENTS: usize = 32;
 /// Above this many recipients the encoder steps down to save upload.
 const STEP_DOWN_RECIPIENTS: usize = 16;
@@ -51,6 +47,7 @@ pub(crate) struct VoiceState {
     pub friends_only: Option<Vec<Uuid>>,
     pub invites_from: InvitesFrom,
     pub audio: AudioConfig,
+    pub acoustics: AcousticsConfig,
     /// The game's selected sound device, which output follows unless
     /// `audio.output_device` is set.
     pub game_device: Option<String>,
@@ -112,6 +109,7 @@ impl VoiceState {
             friends_only,
             invites_from: InvitesFrom::Everyone,
             audio,
+            acoustics: AcousticsConfig::default(),
             game_device: None,
             ignore_world: false,
             group: None,
@@ -211,10 +209,15 @@ impl VoiceState {
             return Some(CENTRED);
         }
         let player = world.players.iter().find(|p| p.uuid == peer)?;
-        let spatial = spatial(&world.listener, player.heard_from, self.voice_range)?;
+        let spatial = spatial(
+            &world.listener,
+            player.heard_from,
+            self.voice_range,
+            &self.acoustics,
+        )?;
         Some(Spatial {
             reverb: world.room.reverb,
-            ..occluded(spatial, player.occlusion)
+            ..occluded(spatial, player.occlusion, &self.acoustics)
         })
     }
 
@@ -274,20 +277,26 @@ const CENTRED: Spatial = Spatial {
 /// Gain and pan for a source at `source`, heard by `listener` with voice
 /// range `range`. `None` beyond range.
 ///
-/// Gain is 1 within 4 blocks and falls linearly to 0 at the range; sources
-/// behind the listener are a little quieter. Pan is the sideways part of
-/// the direction to the source, so equal-power panning in the mixer puts a
-/// source at 90° fully to one side.
-pub(crate) fn spatial(listener: &Pose, source: Vec3, range: f32) -> Option<Spatial> {
+/// Gain is 1 within `full_volume_distance` and falls to 0 at the range,
+/// curved by `distance_rolloff`; sources behind the listener are a little
+/// quieter. Pan is the sideways part of the direction to the source, so
+/// equal-power panning in the mixer puts a source at 90° fully to one side.
+pub(crate) fn spatial(
+    listener: &Pose,
+    source: Vec3,
+    range: f32,
+    acoustics: &AcousticsConfig,
+) -> Option<Spatial> {
     let range = f64::from(range);
+    let full = f64::from(acoustics.full_volume_distance).min(range);
     let distance = distance(listener.pos, source);
     if distance > range {
         return None;
     }
-    let mut gain = if distance <= FULL_VOLUME_DISTANCE {
+    let mut gain = if distance <= full {
         1.0
     } else {
-        (range - distance) / (range - FULL_VOLUME_DISTANCE)
+        ((range - distance) / (range - full)).powf(f64::from(acoustics.distance_rolloff))
     };
 
     // Minecraft yaw: 0 faces +Z and grows clockwise seen from above, so
@@ -318,10 +327,10 @@ pub(crate) fn spatial(listener: &Pose, source: Vec3, range: f32) -> Option<Spati
 
 /// `spatial` heard through obstacles that block `occlusion` of the direct
 /// path (0 to 1): quieter and muffled.
-fn occluded(spatial: Spatial, occlusion: f32) -> Spatial {
+fn occluded(spatial: Spatial, occlusion: f32, acoustics: &AcousticsConfig) -> Spatial {
     let occlusion = occlusion.clamp(0.0, 1.0);
     Spatial {
-        gain: spatial.gain * (1.0 - OCCLUDED_ATTENUATION * occlusion),
+        gain: spatial.gain * (1.0 - acoustics.occlusion_attenuation * occlusion),
         muffle: occlusion,
         ..spatial
     }
@@ -401,17 +410,34 @@ mod tests {
 
     #[test]
     fn gain_is_full_up_close_and_fades_to_zero_at_range() {
-        let gain = |d: f64| spatial(&listener(0.0), at(0.0, d), 48.0).map(|s| s.gain);
+        let linear = AcousticsConfig {
+            distance_rolloff: 1.0,
+            ..AcousticsConfig::default()
+        };
+        let gain = |d: f64| spatial(&listener(0.0), at(0.0, d), 48.0, &linear).map(|s| s.gain);
         assert_eq!(gain(0.0), Some(1.0));
         assert_eq!(gain(4.0), Some(1.0));
         assert!((gain(26.0).unwrap() - 0.5).abs() < 1e-6);
         assert_eq!(gain(48.0), Some(0.0));
         assert_eq!(gain(48.1), None);
+
+        // A gentler rolloff keeps distant voices louder.
+        let gentle = spatial(
+            &listener(0.0),
+            at(0.0, 40.0),
+            48.0,
+            &AcousticsConfig::default(),
+        );
+        assert!(gentle.unwrap().gain > gain(40.0).unwrap() * 1.5);
     }
 
     #[test]
     fn pan_follows_yaw() {
-        let pan = |yaw: f32, x: f64, z: f64| spatial(&listener(yaw), at(x, z), 48.0).unwrap().pan;
+        let pan = |yaw: f32, x: f64, z: f64| {
+            spatial(&listener(yaw), at(x, z), 48.0, &AcousticsConfig::default())
+                .unwrap()
+                .pan
+        };
         // Facing +Z (south): -X is to the right.
         assert!((pan(0.0, -10.0, 0.0) - 1.0).abs() < 1e-6);
         assert!((pan(0.0, 10.0, 0.0) + 1.0).abs() < 1e-6);
@@ -422,8 +448,22 @@ mod tests {
 
     #[test]
     fn sources_behind_are_quieter() {
-        let front = spatial(&listener(0.0), at(0.0, 10.0), 48.0).unwrap().gain;
-        let behind = spatial(&listener(0.0), at(0.0, -10.0), 48.0).unwrap().gain;
+        let front = spatial(
+            &listener(0.0),
+            at(0.0, 10.0),
+            48.0,
+            &AcousticsConfig::default(),
+        )
+        .unwrap()
+        .gain;
+        let behind = spatial(
+            &listener(0.0),
+            at(0.0, -10.0),
+            48.0,
+            &AcousticsConfig::default(),
+        )
+        .unwrap()
+        .gain;
         assert!((behind - front * 0.7).abs() < 1e-6);
     }
 

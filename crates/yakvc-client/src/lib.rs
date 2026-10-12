@@ -22,7 +22,8 @@ pub use yakvc_audio::{DeviceChoice, DeviceInfo, Devices, FrameSink, FrameSource,
 pub use yakvc_proto::{EndpointAddr, GroupId, Uuid};
 
 pub use crate::config::{
-    Activation, AudioConfig, Config, ConfigError, DevConfig, InvitesFrom, RendezvousConfig,
+    AcousticsConfig, Activation, AudioConfig, Config, ConfigError, DevConfig, InvitesFrom,
+    RendezvousConfig,
 };
 pub use crate::engine::{Engine, EngineBuilder, NetReport, PeerAudio, PeerInfo, StartError};
 pub use crate::event::{Event, Events, GroupNoticeKind, JoinId, PeerState, RendezvousState};

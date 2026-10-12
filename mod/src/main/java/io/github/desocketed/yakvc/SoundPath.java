@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import io.github.desocketed.yakvc.config.SoundTuning;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.BlockGetter;
@@ -25,24 +26,23 @@ import org.jspecify.annotations.Nullable;
 public record SoundPath(Vec3 heardFrom, float occlusion) {
 	/** Below this the direct path is clear enough that no way around can beat it. */
 	public static final float CLEAR = 0.1f;
-	/** Bending round an edge muffles a voice this much however short the way: going round is never free. */
-	private static final double BEND = 0.4;
-	/** Each block the way round is longer than the straight line adds this much on top. */
-	private static final double PER_EXTRA_BLOCK = 1 / 24.0;
 	/** How far beyond the two players the search may wander. */
 	private static final int MARGIN = 8;
 	/** At most this many blocks are visited per search, about a 16-block cube. */
 	private static final int MAX_VISITED = 4096;
 
 	/** The voice through what is in the way or around it, whichever is clearer. */
-	public static SoundPath between(BlockGetter level, Vec3 listener, Vec3 speaker) {
+	public static SoundPath between(BlockGetter level, Vec3 listener, Vec3 speaker, SoundTuning tuning) {
 		float direct = Occlusion.between(level, listener, speaker);
-		SoundPath around = direct < CLEAR ? null : around(level, listener, speaker);
+		SoundPath around = direct < CLEAR ? null : around(level, listener, speaker, tuning);
 		return around != null && around.occlusion < direct ? around : new SoundPath(speaker, direct);
 	}
 
-	/** The voice's way around whatever is in the way, or null if there is none nearby. */
-	public static @Nullable SoundPath around(BlockGetter level, Vec3 listener, Vec3 speaker) {
+	/**
+	 * The voice's way around whatever is in the way, or null if there is none nearby. Going round always costs the
+	 * tuning's {@code pathBend} for the edge, plus {@code pathPerBlock} for each block longer than the straight line.
+	 */
+	public static @Nullable SoundPath around(BlockGetter level, Vec3 listener, Vec3 speaker, SoundTuning tuning) {
 		List<BlockPos> path = openPath(level, BlockPos.containing(listener), BlockPos.containing(speaker));
 		if (path == null) return null;
 		double distance = listener.distanceTo(speaker);
@@ -56,7 +56,7 @@ public record SoundPath(Vec3 heardFrom, float occlusion) {
 		}
 		// Right next to the listener the opening gives no direction, so the speaker's own is used.
 		Vec3 direction = (opening.distanceTo(listener) < 1 ? speaker : opening).subtract(listener).normalize();
-		float occlusion = (float) Math.min(1, BEND + (length - distance) * PER_EXTRA_BLOCK);
+		float occlusion = (float) Math.min(1, tuning.pathBend() + (length - distance) * tuning.pathPerBlock());
 		return new SoundPath(listener.add(direction.scale(length)), occlusion);
 	}
 
