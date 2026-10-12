@@ -26,7 +26,7 @@ check:
 
 # Everything CI runs on Linux; --fast skips the mod build and gametest.
 ci *flags:
-    scripts/ci-local.sh {{flags}}
+    cargo xtask ci {{flags}}
 
 # The headless client gametest, which also refreshes the guide screenshots.
 gametest:

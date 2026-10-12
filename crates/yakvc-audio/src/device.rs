@@ -56,21 +56,13 @@ pub enum DeviceChoice {
     ClosestTo(String),
 }
 
-/// The machine's devices, and after its microphones the built-in
-/// [`TEST_INPUTS`](crate::TEST_INPUTS).
 pub fn devices() -> Result<Devices, AudioError> {
     let host = cpal::default_host();
-    let mut inputs = list(
-        Direction::Input.devices(&host)?,
-        Direction::Input.default(&host),
-    );
-    inputs.extend(crate::TEST_INPUTS.map(|(id, name, _)| DeviceInfo {
-        id: id.to_owned(),
-        name: name.to_owned(),
-        is_default: false,
-    }));
     Ok(Devices {
-        inputs,
+        inputs: list(
+            Direction::Input.devices(&host)?,
+            Direction::Input.default(&host),
+        ),
         outputs: list(
             Direction::Output.devices(&host)?,
             Direction::Output.default(&host),

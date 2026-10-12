@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{env, fs};
 
+mod ci;
 mod dev;
 mod pack;
 mod pipewire;
@@ -58,6 +59,21 @@ enum Cmd {
     },
     /// Build the yakvc-server Docker image.
     ServerImage,
+    /// Everything CI checks on Linux, locally and in order, stopping at the
+    /// first failure. Also refreshes the user guide's screenshots.
+    Ci {
+        /// Stop before the flake check, release builds, mod and gametest.
+        #[arg(long)]
+        fast: bool,
+    },
+    /// Fail if yakvc-server depends on an audio crate.
+    CheckServerDeps,
+    /// Fail if a release jar lacks a platform's native, the checksums, the
+    /// licences or native access in its manifest.
+    CheckJar { jar: PathBuf },
+    /// Start the yakvc-server image twice, as the service does: the first
+    /// start must create its keys in a fresh volume, the second keep them.
+    ServerSmoke,
     /// Start a dev-mode yakvc-server and print the client config for it.
     Dev {
         /// Port on 127.0.0.1.
@@ -81,14 +97,6 @@ enum Cmd {
         /// Only start these clients, joining a session that is already running.
         #[arg(long)]
         join: bool,
-        /// Players who talk on their own, with no microphone: they send a
-        /// looping clip, by voice activation. Repeat for more than one.
-        #[arg(long, value_name = "NAME")]
-        talk: Vec<String>,
-        /// What they say: a WAV file. Without it, the engine's built-in
-        /// test beeps, with gaps between so echoes and reverb can be heard.
-        #[arg(long, value_name = "WAV")]
-        talk_file: Option<PathBuf>,
     },
     /// Run a command against real audio devices: a private PipeWire session
     /// with a test microphone (playing a tone) and test speakers, reached
@@ -130,6 +138,10 @@ fn main() -> Result<()> {
         Cmd::Header { check } => header(check),
         Cmd::Dist { from } => dist(from.as_deref()),
         Cmd::ServerImage => server_image(),
+        Cmd::Ci { fast } => ci::ci(fast),
+        Cmd::CheckServerDeps => ci::check_server_deps(),
+        Cmd::CheckJar { jar } => ci::check_jar(&jar),
+        Cmd::ServerSmoke => ci::server_smoke(),
         Cmd::Pack { jar, out } => pack::pack(
             &jar.unwrap_or_else(|| root().join(format!("dist/yakvc-{VERSION}.jar"))),
             &out.unwrap_or_else(|| root().join("dist")),
@@ -139,12 +151,7 @@ fn main() -> Result<()> {
             dir,
             write_client_config,
         } => dev::dev(port, dir, write_client_config),
-        Cmd::Session {
-            names,
-            join,
-            talk,
-            talk_file,
-        } => session::session(&names, join, &talk, talk_file.as_deref()),
+        Cmd::Session { names, join } => session::session(&names, join),
         Cmd::WithPipewire { command } => std::process::exit(pipewire::with_pipewire(&command)?),
         Cmd::DeployRelay {
             flake,

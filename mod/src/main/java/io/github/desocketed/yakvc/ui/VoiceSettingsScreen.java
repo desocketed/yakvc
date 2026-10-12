@@ -7,7 +7,6 @@ import io.github.desocketed.yakvc.config.ClientConfig;
 import io.github.desocketed.yakvc.natives.EngineEvent;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -30,8 +29,6 @@ import org.jspecify.annotations.Nullable;
  */
 public final class VoiceSettingsScreen extends OptionsSubScreen {
 	private static final String PUSH_TO_TALK = "push_to_talk";
-	/** The ids of the engine's built-in test inputs ({@code TEST_INPUTS} in yakvc-audio). */
-	private static final String TEST_INPUT_PREFIX = "yakvc:test-";
 	private static final String VOICE = "voice";
 	/** Stands for an unset device: the system default microphone, or speakers that follow the game. */
 	private static final String DEFAULT_DEVICE = "";
@@ -172,21 +169,10 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		return values;
 	}
 
-	/**
-	 * The microphones to offer. The engine's built-in test inputs (a tone, beeps) are for testing without a
-	 * microphone, so they only show while the debug overlay is on; one already chosen stays listed regardless.
-	 */
-	private Map<String, String> inputs(Map<String, String> listed) {
-		if (feeder.debugOverlay()) return listed;
-		Map<String, String> real = new LinkedHashMap<>(listed);
-		real.keySet().removeIf(id -> id.startsWith(TEST_INPUT_PREFIX));
-		return real;
-	}
-
 	/** On the client thread, possibly after the screen closed, which is harmless. */
 	private void fillDevices(GameStateFeeder.Devices listed) {
 		devices = listed;
-		inputDevice.setValues(values(inputs(listed.inputs()), initial.inputDevice()));
+		inputDevice.setValues(values(listed.inputs(), initial.inputDevice()));
 		outputDevice.setValues(values(listed.outputs(), initial.outputDevice()));
 		inputDevice.active = true;
 		outputDevice.active = true;
