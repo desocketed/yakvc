@@ -66,7 +66,7 @@ pub(crate) fn session(names: &[String], join: bool) -> Result<()> {
     let mut parts: Vec<(String, Child)> = Vec::new();
     let result = (|| {
         if !join {
-            let rendezvous = dev::prepare(RENDEZVOUS_PORT, &dir.join("rendezvous"))?;
+            let rendezvous = dev::prepare(RENDEZVOUS_PORT, &dir.join("rendezvous"), false)?;
             let child = Command::new(&rendezvous.server)
                 .arg("run")
                 .arg("--config")
