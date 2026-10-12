@@ -1,8 +1,5 @@
 use crate::{MonoFrame, SAMPLE_RATE};
 
-/// Cutoff when fully muffled: a voice through thick walls keeps its low end.
-const MUFFLED_CUTOFF_HZ: f32 = 600.0;
-
 /// Cutoff when barely muffled, near the top of what Opus keeps.
 const CLEAR_CUTOFF_HZ: f32 = 20_000.0;
 
@@ -21,8 +18,13 @@ impl Muffle {
     }
 
     /// Filters `frame` in place, gliding from the last amount to `amount`
-    /// (0 is clear, 1 fully muffled).
-    pub fn apply(&mut self, frame: &mut MonoFrame, amount: f32) {
+    /// (0 is clear, 1 fully muffled, which cuts above `muffled_cutoff_hz`).
+    pub fn apply(&mut self, frame: &mut MonoFrame, amount: f32, muffled_cutoff_hz: f32) {
+        let muffled = if muffled_cutoff_hz.is_finite() {
+            muffled_cutoff_hz.clamp(100.0, CLEAR_CUTOFF_HZ)
+        } else {
+            CLEAR_CUTOFF_HZ
+        };
         // `clamp` keeps NaN, which would stick in the filter's state.
         let amount = if amount.is_nan() {
             0.0
@@ -38,7 +40,7 @@ impl Muffle {
         }
         let step = (amount - from) / frame.len() as f32;
         for (i, sample) in frame.iter_mut().enumerate() {
-            let coefficient = coefficient(from + step * (i + 1) as f32);
+            let coefficient = coefficient(from + step * (i + 1) as f32, muffled);
             let mut value = *sample;
             for stage in &mut self.stages {
                 *stage += coefficient * (value - *stage);
@@ -54,9 +56,9 @@ impl Muffle {
 
 /// The one-pole coefficient for a muffle amount. The cutoff moves
 /// geometrically, and fastest at first, so even a little muffle is heard:
-/// half muffled cuts above about 1.7 kHz.
-fn coefficient(amount: f32) -> f32 {
-    let cutoff = CLEAR_CUTOFF_HZ * (MUFFLED_CUTOFF_HZ / CLEAR_CUTOFF_HZ).powf(amount.sqrt());
+/// with a 600 Hz muffle, half muffled cuts above about 1.7 kHz.
+fn coefficient(amount: f32, muffled_cutoff_hz: f32) -> f32 {
+    let cutoff = CLEAR_CUTOFF_HZ * (muffled_cutoff_hz / CLEAR_CUTOFF_HZ).powf(amount.sqrt());
     1.0 - (-std::f32::consts::TAU * cutoff / SAMPLE_RATE as f32).exp()
 }
 
@@ -74,7 +76,7 @@ mod tests {
                 let t = (n * FRAME_SAMPLES + i) as f32 / SAMPLE_RATE as f32;
                 (std::f32::consts::TAU * hz * t).sin()
             });
-            muffle.apply(&mut frame, amount);
+            muffle.apply(&mut frame, amount, 600.0);
             if n == 9 {
                 sum = frame.iter().map(|s| s * s).sum::<f32>();
             }
@@ -86,7 +88,7 @@ mod tests {
     fn clear_passes_through() {
         let mut frame: MonoFrame = std::array::from_fn(|i| (i as f32 * 0.37).sin());
         let original = frame;
-        Muffle::new().apply(&mut frame, 0.0);
+        Muffle::new().apply(&mut frame, 0.0, 600.0);
         assert_eq!(frame, original);
     }
 

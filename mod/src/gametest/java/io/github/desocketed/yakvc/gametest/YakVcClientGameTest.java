@@ -11,6 +11,7 @@ import io.github.desocketed.yakvc.SoundPath;
 import io.github.desocketed.yakvc.YakVcClient;
 import io.github.desocketed.yakvc.config.ClientConfig;
 import io.github.desocketed.yakvc.config.PlayerVolumes;
+import io.github.desocketed.yakvc.config.SoundTuning;
 import io.github.desocketed.yakvc.natives.EngineEvent;
 import io.github.desocketed.yakvc.natives.NativeBridge;
 import io.github.desocketed.yakvc.natives.VoiceGroup;
@@ -18,6 +19,7 @@ import io.github.desocketed.yakvc.natives.VoiceStats;
 import io.github.desocketed.yakvc.ui.GroupsScreen;
 import io.github.desocketed.yakvc.ui.Icons;
 import io.github.desocketed.yakvc.ui.VoiceMenuScreen;
+import io.github.desocketed.yakvc.ui.SoundTuningScreen;
 import io.github.desocketed.yakvc.ui.VoiceSettingsScreen;
 import io.github.desocketed.yakvc.ui.VoiceToasts;
 import java.awt.Graphics2D;
@@ -185,6 +187,7 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 			checkOcclusion(context, singleplayer);
 			checkRoom(context, singleplayer);
 			checkSoundPath(context, singleplayer);
+			checkSoundTuning(context, feeder);
 
 			if (context.computeOnClient(mc -> feeder.errorEvents() != 0 || feeder.closed())) {
 				throw new AssertionError("engine reported errors; see the log");
@@ -221,14 +224,14 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 	/** Open ground has almost no reverb; a small stone box has plenty, and a short one; a big hall rings longer. */
 	private static void checkRoom(ClientGameTestContext context, TestSingleplayerContext singleplayer) {
 		Vec3 eye = new Vec3(20.5, -58.5, 20.5);
-		Room open = context.computeOnClient(mc -> Room.around(mc.level, eye));
+		Room open = context.computeOnClient(mc -> Room.around(mc.level, eye, SoundTuning.DEFAULT));
 		singleplayer.getServer().runCommand("fill 18 -61 18 22 -56 22 stone hollow");
 		context.waitTicks(3);
-		Room small = context.computeOnClient(mc -> Room.around(mc.level, eye));
+		Room small = context.computeOnClient(mc -> Room.around(mc.level, eye, SoundTuning.DEFAULT));
 		singleplayer.getServer().runCommand("fill 18 -61 18 22 -56 22 air");
 		singleplayer.getServer().runCommand("fill 10 -61 10 30 -46 30 stone hollow");
 		context.waitTicks(3);
-		Room hall = context.computeOnClient(mc -> Room.around(mc.level, eye));
+		Room hall = context.computeOnClient(mc -> Room.around(mc.level, eye, SoundTuning.DEFAULT));
 		singleplayer.getServer().runCommand("fill 10 -61 10 30 -46 30 air");
 		singleplayer.getServer().runCommand("fill 10 -61 10 30 -61 30 grass_block");
 		if (!(open.reverb() < 0.1f && small.reverb() > 0.5f && hall.reverb() > 0.5f && hall.decay() > small.decay())) {
@@ -246,7 +249,7 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		// Too tall to go over within the search box, and the way round is short only past x 44.
 		singleplayer.getServer().runCommand("fill 26 -60 43 44 -45 45 stone");
 		context.waitTicks(3);
-		SoundPath around = context.computeOnClient(mc -> SoundPath.between(mc.level, listener, speaker));
+		SoundPath around = context.computeOnClient(mc -> SoundPath.between(mc.level, listener, speaker, SoundTuning.DEFAULT));
 		if (!(around.occlusion() > 0.4f && around.occlusion() < 0.875f && around.heardFrom().x > 41)) {
 			throw new AssertionError("round the wall: " + around);
 		}
@@ -256,21 +259,40 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		singleplayer.getServer().runCommand("setblock 41 -59 44 oak_door[facing=north,half=lower]");
 		singleplayer.getServer().runCommand("setblock 41 -58 44 oak_door[facing=north,half=upper]");
 		context.waitTicks(3);
-		SoundPath closed = context.computeOnClient(mc -> SoundPath.between(mc.level, listener, speaker));
+		SoundPath closed = context.computeOnClient(mc -> SoundPath.between(mc.level, listener, speaker, SoundTuning.DEFAULT));
 		singleplayer.getServer().runCommand("setblock 41 -59 44 oak_door[facing=north,half=lower,open=true]");
 		singleplayer.getServer().runCommand("setblock 41 -58 44 oak_door[facing=north,half=upper,open=true]");
 		context.waitTicks(3);
-		SoundPath open = context.computeOnClient(mc -> SoundPath.between(mc.level, listener, speaker));
+		SoundPath open = context.computeOnClient(mc -> SoundPath.between(mc.level, listener, speaker, SoundTuning.DEFAULT));
 		if (!(closed.heardFrom().equals(speaker) && open.occlusion() < 0.6f && open.heardFrom().x > 40.5)) {
 			throw new AssertionError("doors: closed " + closed + ", open " + open);
 		}
 		singleplayer.getServer().runCommand("fill 20 -60 43 60 -45 45 stone");
 		context.waitTicks(3);
-		SoundPath through = context.computeOnClient(mc -> SoundPath.between(mc.level, listener, speaker));
+		SoundPath through = context.computeOnClient(mc -> SoundPath.between(mc.level, listener, speaker, SoundTuning.DEFAULT));
 		singleplayer.getServer().runCommand("fill 20 -60 43 60 -45 45 air");
 		if (!(through.occlusion() > 0.85f && through.heardFrom().equals(speaker))) {
 			throw new AssertionError("through the wall: " + through);
 		}
+	}
+
+	/** The tuning screen applies a changed value to the engine at once, and saves it on close. */
+	private static void checkSoundTuning(ClientGameTestContext context, GameStateFeeder feeder) {
+		context.runOnClient(mc -> mc.gui.setScreen(new SoundTuningScreen(null, mc.options, feeder)));
+		context.waitTicks(2);
+		context.takeScreenshot(TestScreenshotOptions.of("sound-tuning").disableCounterPrefix());
+		context.runOnClient(mc -> ((SoundTuningScreen) mc.gui.screen()).option("echo_level").set(90));
+		if (context.computeOnClient(mc -> feeder.config().acoustics("echo_level", -1)) != 0.9) {
+			throw new AssertionError("the tuning didn't reach the engine");
+		}
+		context.runOnClient(mc -> mc.gui.setScreen(null));
+		context.waitTicks(2);
+		if (!context.computeOnClient(mc -> feeder.config().toml()).contains("echo_level = 0.9")) {
+			throw new AssertionError("the tuning wasn't saved");
+		}
+		// Back to the defaults, so later runs start the same.
+		context.runOnClient(mc -> VoiceSettingsScreen.applyAndSave(feeder,
+				feeder.config().with("acoustics", "echo_level", null)));
 	}
 
 	/** Two engine errors in a row both show, one after the other, rather than the second replacing the first. */

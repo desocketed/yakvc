@@ -18,7 +18,7 @@
  * 6: kick votes removed (`yakvc_vote_kick`, the kick vote event and notice).
  * 7: `yakvc_join_group` takes the id length.
  */
-#define YAKVC_ABI_VERSION 10
+#define YAKVC_ABI_VERSION 11
 
 #define YAKVC_OK 0
 
@@ -189,14 +189,15 @@ int32_t yakvc_set_tab_list(struct YakVcEngine *engine, const uint8_t *uuids, siz
 
 /**
  * Pushes one tick's world: `listener` is `x, y, z, yaw, pitch, reverb,
- * decay`, the last two describing the room around it (see `Room`); then `count`
+ * decay, echo, echo_delay`, the last four describing the room around it
+ * (see `Room`); then `count`
  * tracked players as UUIDs and, per player, `x, y, z, occlusion, heard_x,
  * heard_y, heard_z`: the eye position, how much the sound reaching the
  * listener is blocked, from 0 (open air) to 1 (fully blocked), and where
  * the voice seems to come from (see `Player`).
  *
  * # Safety
- * `engine` must be live; `listener` must point to 7 doubles, `uuids` to
+ * `engine` must be live; `listener` must point to 9 doubles, `uuids` to
  * `16 * count` bytes and `players` to `7 * count` doubles.
  */
 int32_t yakvc_push_world(struct YakVcEngine *engine,

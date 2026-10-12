@@ -35,6 +35,11 @@ pub struct Room {
     pub reverb: f32,
     /// Seconds until the reverb fades by 60 dB: longer in bigger spaces.
     pub decay: f32,
+    /// How loud the distinct echo off the far walls is, from 0: loud in a
+    /// big hall or a canyon, nothing in a small room or out in the open.
+    pub echo: f32,
+    /// Seconds until that echo comes back, by how far the walls are.
+    pub echo_delay: f32,
 }
 
 /// Another player as the listener hears them.
@@ -116,6 +121,11 @@ pub(crate) fn interpolate(from: &World, to: &World, t: f64) -> World {
     let room = Room {
         reverb: lerp(f64::from(from.room.reverb), f64::from(to.room.reverb)) as f32,
         decay: lerp(f64::from(from.room.decay), f64::from(to.room.decay)) as f32,
+        echo: lerp(f64::from(from.room.echo), f64::from(to.room.echo)) as f32,
+        echo_delay: lerp(
+            f64::from(from.room.echo_delay),
+            f64::from(to.room.echo_delay),
+        ) as f32,
     };
     World {
         listener,

@@ -161,6 +161,18 @@ Under **Account** the settings say whether your Minecraft account is verified (s
 Under **Troubleshooting**:
 
 - **Debug Overlay**: shows the [debug overlay](#the-debug-overlay). It switches on and off at once and isn't saved, so it is off again after a restart.
+- **Sound Tuning…**: opens [Sound Tuning](#sound-tuning).
+
+### Sound Tuning
+
+![The Sound Tuning screen](guide/sound-tuning.png)
+
+Voices follow the world: walls and closed doors muffle them, a voice behind a wall comes round through the nearest opening, and caves, halls and canyons ring with reverb and echo, the bigger the longer. Sound Tuning lets you adjust all of that by ear. Every slider applies as you drag it, so have someone talk while you tune, and is saved when you close the screen. **Reset to Defaults** puts every slider back.
+
+- **Distance**: how close a voice must be to play at full volume, and how it fades towards the voice range. Below ×1, distant voices stay louder for longer.
+- **Walls**: how much quieter and more muffled a voice behind walls is, and how muffled a voice coming round a corner or through a doorway is, plus a little more for each block of the way round.
+- **Rooms**: how much of a voice rings in the space around you, how loud and how dark that reverb is, how far around you to look for walls, and how long a small room and a big space ring.
+- **Echo**: how loud the distinct echo off far walls is in big spaces, and how many times it repeats.
 
 ## Privacy
 

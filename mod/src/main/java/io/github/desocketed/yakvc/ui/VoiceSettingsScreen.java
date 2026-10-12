@@ -14,6 +14,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.OptionInstance;
 import net.minecraft.client.Options;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.MultiLineTextWidget;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
@@ -200,7 +201,8 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		list.addBig(accountText);
 		list.addSmall(verifiedOnly);
 		list.addHeader(Component.translatable("yakvc.settings.troubleshooting"));
-		list.addSmall(debugOverlay);
+		list.addSmall(debugOverlay.createButton(options), Button.builder(Component.translatable("yakvc.tuning.open"),
+				button -> minecraft.gui.setScreen(new SoundTuningScreen(this, options, feeder))).build());
 	}
 
 	@Override
@@ -294,7 +296,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	}
 
 	/** Has the engine check and apply {@code changed}, and saves it if it took it; says so if anything failed. */
-	static void applyAndSave(GameStateFeeder feeder, ClientConfig changed) {
+	public static void applyAndSave(GameStateFeeder feeder, ClientConfig changed) {
 		String error = feeder.applyConfig(changed);
 		if (error != null) {
 			VoiceToasts.show(Component.translatable("yakvc.toast.settings_rejected", error));

@@ -1,6 +1,7 @@
 use std::f32::consts::FRAC_PI_4;
 
-use crate::{FRAME_SAMPLES, MonoFrame, Reverb, StereoFrame};
+use crate::echo::{DelayLine, seconds_to_samples};
+use crate::{Echo, FRAME_SAMPLES, MonoFrame, Reverb, StereoFrame};
 
 /// Samples below this magnitude pass the limiter untouched.
 const LIMITER_THRESHOLD: f32 = 0.9;
@@ -23,19 +24,58 @@ pub struct Spatial {
     pub reverb: f32,
 }
 
-/// Mixes mono sources into one stereo frame, with the room's reverb, master
-/// gain and a soft limiter.
+/// How the listener's surroundings sound: the room the game estimated, and
+/// the player's tuning of it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Acoustics {
+    /// Seconds until the reverb fades by 60 dB.
+    pub decay: f32,
+    /// How loud the distinct echo off the far walls is, from 0.
+    pub echo: f32,
+    /// Seconds until the echo comes back. The reverb starts after half of
+    /// it, so a big space has a moment of quiet before it rings.
+    pub echo_delay: f32,
+    /// Each echo repeat keeps this much of the last, from 0 to 0.9.
+    pub echo_feedback: f32,
+    /// Scales the reverb's loudness; 1 is as built.
+    pub reverb_level: f32,
+    /// How much faster the reverb's highs fade than its lows, from 0 to 0.95.
+    pub reverb_damping: f32,
+}
+
+impl Default for Acoustics {
+    fn default() -> Self {
+        Acoustics {
+            decay: 1.0,
+            echo: 0.0,
+            echo_delay: 0.0,
+            echo_feedback: 0.35,
+            reverb_level: 1.0,
+            reverb_damping: 0.3,
+        }
+    }
+}
+
+/// Mixes mono sources into one stereo frame, with the room's reverb and
+/// echo, master gain and a soft limiter.
 #[derive(Debug)]
 pub struct Mixer {
     master_gain: f32,
+    acoustics: Acoustics,
     reverb: Reverb,
+    /// Holds the reverb sends back for the pre-delay.
+    predelay: DelayLine,
+    echo: Echo,
 }
 
 impl Mixer {
     pub fn new() -> Self {
         Mixer {
             master_gain: 1.0,
+            acoustics: Acoustics::default(),
             reverb: Reverb::new(),
+            predelay: DelayLine::new(),
+            echo: Echo::new(),
         }
     }
 
@@ -43,9 +83,10 @@ impl Mixer {
         self.master_gain = gain;
     }
 
-    /// How long the room's reverb rings, in seconds until it fades by 60 dB.
-    pub fn set_reverb_decay(&mut self, seconds: f32) {
-        self.reverb.set_decay(seconds);
+    pub fn set_acoustics(&mut self, acoustics: Acoustics) {
+        self.reverb.set_decay(acoustics.decay);
+        self.reverb.set_damping(acoustics.reverb_damping);
+        self.acoustics = acoustics;
     }
 
     /// Overwrites `out` with the mix of `sources`.
@@ -66,7 +107,27 @@ impl Mixer {
             }
         }
         // Every frame, even with nobody talking, so tails ring out.
-        self.reverb.process(&sends, out);
+        let a = self.acoustics;
+        let predelay = seconds_to_samples(a.echo_delay / 2.0);
+        let mut delayed: MonoFrame = [0.0; FRAME_SAMPLES];
+        for (sent, late) in sends.iter().zip(&mut delayed) {
+            self.predelay.write(*sent);
+            *late = if predelay == 0 {
+                *sent
+            } else {
+                self.predelay.read(predelay + 1)
+            };
+        }
+        let mut wet: StereoFrame = [[0.0; 2]; FRAME_SAMPLES];
+        self.reverb.process(&delayed, &mut wet);
+        let level = finite_or_zero(a.reverb_level).max(0.0);
+        for (mixed, wet) in out.iter_mut().zip(&wet) {
+            mixed[0] += wet[0] * level;
+            mixed[1] += wet[1] * level;
+        }
+        let feedback = finite_or_zero(a.echo_feedback).clamp(0.0, 0.9);
+        let echo = finite_or_zero(a.echo).max(0.0);
+        self.echo.process(&sends, echo, a.echo_delay, feedback, out);
         for sample in out.iter_mut().flatten() {
             *sample = soft_limit(*sample * self.master_gain);
         }
@@ -76,6 +137,9 @@ impl Mixer {
         if !out.iter().flatten().all(|s| s.is_finite()) {
             *out = [[0.0; 2]; FRAME_SAMPLES];
             self.reverb = Reverb::new();
+            self.set_acoustics(self.acoustics);
+            self.predelay = DelayLine::new();
+            self.echo = Echo::new();
         }
     }
 }
