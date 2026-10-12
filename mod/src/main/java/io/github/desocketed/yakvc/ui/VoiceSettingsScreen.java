@@ -42,6 +42,11 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	private static final String VOICE = "voice";
 	/** Stands for an unset device: the system default microphone, or speakers that follow the game. */
 	private static final String DEFAULT_DEVICE = "";
+	/**
+	 * The slider's top. The engine allows up to 1000%, but past 400% a quiet microphone mostly gets louder hiss; a
+	 * hand-edited higher gain shows as 400% and is left alone until the slider moves.
+	 */
+	private static final int MAX_INPUT_GAIN_PERCENT = 400;
 
 	private final GameStateFeeder feeder;
 	private final ClientConfig initial;
@@ -49,6 +54,8 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	private final OptionInstance<String> activation;
 	private final OptionInstance<Integer> range;
 	private final OptionInstance<Integer> bitrateKbps;
+	/** The microphone's gain, in percent. */
+	private final OptionInstance<Integer> inputGainPercent;
 	private final OptionInstance<Boolean> noiseSuppression;
 	private final Dropdown inputDevice;
 	private final Dropdown outputDevice;
@@ -100,6 +107,10 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		noiseSuppression = OptionInstance.createBoolean("yakvc.settings.noise_suppression",
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.noise_suppression.tooltip")),
 				initial.noiseSuppression(), value -> throttle.changed());
+		inputGainPercent = new OptionInstance<>("yakvc.settings.input_gain",
+				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.input_gain.tooltip")),
+				(caption, value) -> Options.genericValueLabel(caption, Component.translatable("yakvc.tuning.percent", value)),
+				new OptionInstance.IntRange(0, MAX_INPUT_GAIN_PERCENT), inputGainPercent(initial), value -> throttle.changed());
 		inputDevice = device("yakvc.settings.input_device", true, initial.inputDevice(),
 				"yakvc.settings.input_device.default");
 		outputDevice = device("yakvc.settings.output_device", false, initial.outputDevice(),
@@ -245,6 +256,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		list.addSmall(activation, range);
 		list.addSmall(bitrateKbps, noiseSuppression);
 		list.addBig(inputDevice);
+		list.addBig(inputGainPercent);
 		list.addBig(new MicLevelMeter(feeder::micLevelDb, initial.vadThresholdDb()));
 		list.addBig(outputDevice);
 		list.addHeader(Component.translatable("yakvc.settings.privacy"));
@@ -368,6 +380,9 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		if (bitrateKbps.get() != current.bitrate() / 1000) {
 			changed = changed.with("audio", "bitrate", String.valueOf(bitrateKbps.get() * 1000));
 		}
+		if (inputGainPercent.get() != inputGainPercent(current)) {
+			changed = changed.with("audio", "input_gain", String.valueOf(inputGainPercent.get() / 100.0));
+		}
 		if (noiseSuppression.get() != current.noiseSuppression()) {
 			changed = changed.with("audio", "noise_suppression", String.valueOf(noiseSuppression.get()));
 		}
@@ -397,6 +412,11 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 			VoiceToasts.show(Component.translatable("yakvc.toast.settings_not_saved"));
 		}
 		return true;
+	}
+
+	/** The config's microphone gain as the slider shows it, so an untouched slider never rewrites it. */
+	private static int inputGainPercent(ClientConfig config) {
+		return (int) Math.clamp(Math.round(config.inputGain() * 100), 0, MAX_INPUT_GAIN_PERCENT);
 	}
 
 	private static @Nullable String deviceValue(String id) {
