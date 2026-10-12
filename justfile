@@ -30,4 +30,4 @@ ci *flags:
 
 # The headless client gametest, which also refreshes the guide screenshots.
 gametest:
-    scripts/gametest-headless.sh
+    cargo xtask gametest

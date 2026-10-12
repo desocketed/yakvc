@@ -5,6 +5,7 @@ use std::{env, fs};
 
 mod ci;
 mod dev;
+mod headless;
 mod pack;
 mod pipewire;
 mod relay;
@@ -65,6 +66,13 @@ enum Cmd {
         /// Stop before the flake check, release builds, mod and gametest.
         #[arg(long)]
         fast: bool,
+    },
+    /// The Fabric client gametest with no display or GPU (Xvfb and Mesa's
+    /// software renderers), then the user guide's screenshots refreshed from
+    /// it. Arguments go to Gradle.
+    Gametest {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        gradle_args: Vec<String>,
     },
     /// Fail if yakvc-server depends on an audio crate.
     CheckServerDeps,
@@ -139,6 +147,7 @@ fn main() -> Result<()> {
         Cmd::Dist { from } => dist(from.as_deref()),
         Cmd::ServerImage => server_image(),
         Cmd::Ci { fast } => ci::ci(fast),
+        Cmd::Gametest { gradle_args } => headless::gametest(&gradle_args),
         Cmd::CheckServerDeps => ci::check_server_deps(),
         Cmd::CheckJar { jar } => ci::check_jar(&jar),
         Cmd::ServerSmoke => ci::server_smoke(),

@@ -114,7 +114,7 @@ pub(crate) fn ci(fast: bool) -> Result<()> {
     step("mod: jar manifest");
     check_jar_manifest(&dist_jar()?)?;
     step("mod: client gametest, and the user guide's screenshots");
-    run(Command::new(root.join("scripts/gametest-headless.sh")).current_dir(&root))?;
+    crate::headless::gametest(&[])?;
 
     step("all checks passed");
     Ok(())

@@ -1,4 +1,5 @@
-# Sourced by the headless scripts, inside `nix shell nixpkgs#xorg-server` and
+# Sourced by scripts/two-clients.sh until it moves into xtask (#43), as
+# `cargo xtask gametest` already has (xtask/src/headless.rs); inside `nix shell nixpkgs#xorg-server` and
 # `nix develop`: points the game at Mesa's software renderers from nixpkgs and
 # starts an Xvfb display, exported as DISPLAY and killed on exit. Minecraft
 # 26.3 finds no sRGB GLX config on Xvfb and falls back to Vulkan, which Mesa's
