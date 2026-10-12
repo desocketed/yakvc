@@ -25,7 +25,6 @@
 use std::fs;
 use std::io::Write;
 use std::net::{TcpListener, UdpSocket};
-use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::thread::sleep;
@@ -231,7 +230,10 @@ struct Part {
 
 impl Part {
     fn new(cmd: &mut Command, group: bool) -> Result<Part> {
+        // The check runs on Linux only (Xvfb, PipeWire), but xtask also builds on Windows.
+        #[cfg(unix)]
         if group {
+            use std::os::unix::process::CommandExt;
             cmd.process_group(0);
         }
         let child = cmd
