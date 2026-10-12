@@ -55,7 +55,7 @@ class ClientConfigTest {
 		assertTrue(config.muteBlockedPlayers(), "keys in tables are not top-level");
 		assertEquals("Mic \"USB\" # 2", config.inputDevice());
 		assertEquals("C:\\Speakers", config.outputDevice());
-		assertEquals(48, config.voiceRange(), "the engine's default when unset");
+		assertEquals(256, config.voiceRange(), "the engine's default when unset");
 	}
 
 	@Test
