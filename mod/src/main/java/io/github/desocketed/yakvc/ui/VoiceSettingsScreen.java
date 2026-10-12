@@ -48,6 +48,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	private final OptionInstance<Boolean> muteBlockedPlayers;
 	private final OptionInstance<Boolean> verifiedOnly;
 	private final OptionInstance<String> invites;
+	private final OptionInstance<Boolean> checkForUpdates;
 	private final OptionInstance<Boolean> debugOverlay;
 	/** The account line, which follows the rendezvous state while the screen is open. */
 	private @Nullable MultiLineTextWidget accountText;
@@ -100,6 +101,9 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		verifiedOnly = OptionInstance.createBoolean("yakvc.settings.verified_only",
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.verified_only.tooltip")),
 				initial.verifiedOnly());
+		checkForUpdates = OptionInstance.createBoolean("yakvc.settings.check_for_updates",
+				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.check_for_updates.tooltip")),
+				initial.checkForUpdates());
 		// Takes effect at once and isn't saved, unlike the settings above.
 		debugOverlay = OptionInstance.createBoolean("yakvc.settings.debug_overlay",
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.debug_overlay.tooltip")),
@@ -195,6 +199,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 				.setMaxWidth(310).setCentered(true));
 		list.addSmall(relayOnly, respectChatRestrictions);
 		list.addSmall(muteBlockedPlayers, invites);
+		list.addSmall(checkForUpdates);
 		list.addHeader(Component.translatable("yakvc.settings.account"));
 		shownAccountState = accountState();
 		accountText = new MultiLineTextWidget(shownAccountState, font).setMaxWidth(310).setCentered(true);
@@ -277,6 +282,9 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		}
 		if (verifiedOnly.get() != initial.verifiedOnly()) {
 			changed = changed.with("", "verified_only", String.valueOf(verifiedOnly.get()));
+		}
+		if (checkForUpdates.get() != initial.checkForUpdates()) {
+			changed = changed.with("", "check_for_updates", String.valueOf(checkForUpdates.get()));
 		}
 		changed = withActivationAndInvites(changed, activation, invites);
 		// In kbps: a hand-edited bitrate that isn't a whole kbps would otherwise be rewritten on every close.

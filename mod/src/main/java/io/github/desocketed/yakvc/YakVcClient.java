@@ -10,6 +10,7 @@ import io.github.desocketed.yakvc.ui.DebugOverlay;
 import io.github.desocketed.yakvc.ui.PauseMenuButton;
 import io.github.desocketed.yakvc.ui.SoundOptionsButton;
 import io.github.desocketed.yakvc.ui.TalkingIndicator;
+import io.github.desocketed.yakvc.ui.UpdateNotice;
 import io.github.desocketed.yakvc.ui.VoiceHud;
 import io.github.desocketed.yakvc.ui.VoiceToasts;
 import java.lang.foreign.MemorySegment;
@@ -52,6 +53,7 @@ public final class YakVcClient implements ClientModInitializer {
 		SoundOptionsButton.register();
 		PauseMenuButton.register();
 		Path configDir = configDir();
+		checkForUpdate(configDir);
 		NativeBridge bridge;
 		try {
 			bridge = new NativeBridge(NativeLoader.load(configDir));
@@ -123,6 +125,26 @@ public final class YakVcClient implements ClientModInitializer {
 		HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("yakvc", "voice"), new VoiceHud(feeder));
 		HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("yakvc", "debug"), new DebugOverlay(feeder));
 		LevelRenderEvents.COLLECT_SUBMITS.register(new TalkingIndicator(feeder)::submit);
+	}
+
+	/**
+	 * Starts the update check unless it is turned off. Before the engine, so a player whose voice fails to start
+	 * still hears about the release that may fix it.
+	 */
+	private static void checkForUpdate(Path configDir) {
+		FabricLoader loader = FabricLoader.getInstance();
+		// A dev build's version says nothing about which release it is.
+		if (loader.isDevelopmentEnvironment()) return;
+		try {
+			if (!ClientConfig.load(configDir).checkForUpdates()) return;
+		} catch (Exception e) {
+			return; // The engine start below reports the broken config.
+		}
+		String running = loader.getModContainer("yakvc").orElseThrow().getMetadata().getVersion().getFriendlyString();
+		UpdateNotice.register();
+		UpdateCheck.start(running).thenAccept(release -> {
+			if (release != null) Minecraft.getInstance().execute(() -> UpdateNotice.show(release));
+		});
 	}
 
 	/** Logs why voice is off for this game and tells the player once the title screen is up. */
