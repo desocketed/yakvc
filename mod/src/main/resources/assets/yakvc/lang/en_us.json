@@ -130,6 +130,8 @@
 	"yakvc.settings.ip_note": "Other Yak VC players on the server learn your IP address, unless Relay Only is on.",
 	"yakvc.settings.relay_only": "Relay Only",
 	"yakvc.settings.relay_only.tooltip": "All voice goes through the relay, so other players don't learn your IP address. Applies after restarting the game.",
+	"yakvc.settings.relay_only.on_after_restart": "On after restart",
+	"yakvc.settings.relay_only.off_after_restart": "Off after restart",
 	"yakvc.settings.respect_chat_restrictions": "Obey Chat Limits",
 	"yakvc.settings.respect_chat_restrictions.tooltip": "Turn voice off while your Microsoft account or launcher disables chat.",
 	"yakvc.settings.mute_blocked_players": "Mute Blocked",

@@ -179,25 +179,34 @@ public final class VoiceMenuScreen extends Screen {
 
 	/**
 	 * The first-run card: who may invite you to a group and how you talk, the two choices a new player should make
-	 * before anything else. Got it saves both and sets {@code setup_done}, so the card doesn't come back.
+	 * before anything else. Each applies and is saved at once; Got it sets {@code setup_done}, so the card doesn't come
+	 * back.
 	 */
 	private final class SetupRow extends Row {
 		private final AbstractWidget invites;
 		private final AbstractWidget activation;
 		private final Button gotIt;
+		private final OptionInstance<String> activationOption;
+		private final OptionInstance<String> invitesOption;
 
 		SetupRow() {
 			ClientConfig config = feeder.config();
-			OptionInstance<String> invitesOption = VoiceSettingsScreen.invitesOption(config);
-			OptionInstance<String> activationOption = VoiceSettingsScreen.activationOption(config);
-			invites = invitesOption.createButton(minecraft.options, 0, 0, 125);
+			// Each choice applies at once, as in the settings.
+			activationOption = VoiceSettingsScreen.activationOption(config, value -> applyChoices());
+			invitesOption = VoiceSettingsScreen.invitesOption(config, value -> applyChoices());
 			activation = activationOption.createButton(minecraft.options, 0, 0, 125);
+			invites = invitesOption.createButton(minecraft.options, 0, 0, 125);
 			gotIt = Button.builder(Component.translatable("yakvc.setup.ok"), button -> {
-				ClientConfig changed = VoiceSettingsScreen.withActivationAndInvites(config, activationOption, invitesOption)
-						.with("", "setup_done", "true");
-				VoiceSettingsScreen.applyAndSave(feeder, changed);
+				VoiceSettingsScreen.applyAndSave(feeder, feeder.config().with("", "setup_done", "true"));
 				rebuildWidgets();
 			}).width(52).build();
+		}
+
+		/** A rejected choice rebuilds the card from what is in effect. */
+		private void applyChoices() {
+			ClientConfig current = feeder.config();
+			ClientConfig changed = VoiceSettingsScreen.withActivationAndInvites(current, activationOption, invitesOption);
+			if (!changed.equals(current) && !VoiceSettingsScreen.applyAndSave(feeder, changed)) rebuildWidgets();
 		}
 
 		@Override

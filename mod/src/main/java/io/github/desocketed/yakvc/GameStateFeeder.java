@@ -148,6 +148,8 @@ public final class GameStateFeeder {
 	private long micLevelNanos;
 	/** Whether the debug overlay shows, and its latest snapshot (null until the first refresh). */
 	private boolean debugOverlay;
+	/** {@code relay_only} as the engine started, which is what it uses until a restart: it builds its endpoint once. */
+	private final boolean startedRelayOnly;
 	private @Nullable VoiceStats stats;
 	private int ticksUntilStats;
 	/** Whether the last tick had a server session, to leave our group once it ends. */
@@ -160,6 +162,7 @@ public final class GameStateFeeder {
 		this.bridge = bridge;
 		this.engine = engine;
 		this.config = config;
+		this.startedRelayOnly = config.relayOnly();
 		this.tuning = SoundTuning.of(config);
 		this.keys = keys;
 		this.joiner = joiner;
@@ -666,6 +669,10 @@ public final class GameStateFeeder {
 
 	public boolean closed() {
 		return closed;
+	}
+
+	public boolean startedRelayOnly() {
+		return startedRelayOnly;
 	}
 
 	public ClientConfig config() {
