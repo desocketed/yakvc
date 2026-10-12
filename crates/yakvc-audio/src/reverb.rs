@@ -69,7 +69,12 @@ impl Reverb {
 
     /// How long the tail lasts, in seconds until it has faded by 60 dB.
     pub fn set_decay(&mut self, seconds: f32) {
-        let seconds = seconds.clamp(MIN_DECAY, MAX_DECAY);
+        // `clamp` keeps NaN, which would poison every comb for good.
+        let seconds = if seconds.is_nan() {
+            MIN_DECAY
+        } else {
+            seconds.clamp(MIN_DECAY, MAX_DECAY)
+        };
         for bank in &mut self.channels {
             for comb in &mut bank.combs {
                 let delay = comb.delay.buffer.len() as f32 / SAMPLE_RATE as f32;

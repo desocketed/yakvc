@@ -58,7 +58,7 @@ impl Mixer {
         let mut sends: MonoFrame = [0.0; FRAME_SAMPLES];
         for (frame, spatial) in sources {
             let [left, right] = pan_gains(spatial);
-            let send = spatial.gain * spatial.reverb.clamp(0.0, 1.0);
+            let send = spatial.gain * finite_or_zero(spatial.reverb).clamp(0.0, 1.0);
             for ((sample, mixed), sent) in frame.iter().zip(out.iter_mut()).zip(&mut sends) {
                 mixed[0] += sample * left;
                 mixed[1] += sample * right;
@@ -70,6 +70,13 @@ impl Mixer {
         for sample in out.iter_mut().flatten() {
             *sample = soft_limit(*sample * self.master_gain);
         }
+        // Whatever went wrong upstream, never hand the sound server NaN or
+        // infinity: it would pass them on to every filter and device after
+        // us. A broken reverb starts over rather than ringing NaN forever.
+        if !out.iter().flatten().all(|s| s.is_finite()) {
+            *out = [[0.0; 2]; FRAME_SAMPLES];
+            self.reverb = Reverb::new();
+        }
     }
 }
 
@@ -77,6 +84,10 @@ impl Default for Mixer {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn finite_or_zero(value: f32) -> f32 {
+    if value.is_finite() { value } else { 0.0 }
 }
 
 /// Left and right gains for a source. Equal-power: the total power is the
@@ -198,6 +209,24 @@ mod tests {
         // (0.2 * 0.5 + 0.2 * 1.0) * 2.0
         assert!((out[0][0] - 0.6).abs() < 1e-6);
         assert!(out[0][1].abs() < 1e-6);
+    }
+
+    #[test]
+    fn non_finite_input_plays_silence() {
+        let mut mixer = Mixer::new();
+        let mut out = [[0.0; 2]; FRAME_SAMPLES];
+        let spatial = Spatial {
+            gain: 1.0,
+            pan: 0.0,
+            muffle: 0.0,
+            reverb: 1.0,
+        };
+        mixer.mix([(&constant(f32::NAN), spatial)], &mut out);
+        assert!(out.iter().flatten().all(|&s| s == 0.0));
+        // The reverb started over, so a clean frame plays cleanly.
+        mixer.mix([(&constant(0.1), spatial)], &mut out);
+        assert!(out.iter().flatten().all(|s| s.is_finite()));
+        assert!(out.iter().flatten().any(|&s| s != 0.0));
     }
 
     #[test]
