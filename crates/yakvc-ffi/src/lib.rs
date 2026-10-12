@@ -33,8 +33,8 @@ use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 
 use yakvc_client::{
-    Config, ConfigError, Engine, GroupError, GroupId, Input, JoinId, MonoFrame, PeerAudio, Player,
-    Pose, Room, StartError, Uuid, Vec3, VoiceFrame, VoiceSink, World,
+    Config, ConfigError, Engine, FarEcho, GroupError, GroupId, Input, JoinId, MonoFrame, PeerAudio,
+    Player, Pose, Room, StartError, Uuid, Vec3, VoiceFrame, VoiceSink, World,
 };
 
 use crate::events::EventQueue;
@@ -56,7 +56,8 @@ use crate::guard::{
 /// 10: `yakvc_push_world` takes where each player is heard from.
 /// 11: `yakvc_push_world` takes the room's echo and echo delay.
 /// 12: `yakvc_set_voice_sink`.
-pub const YAKVC_ABI_VERSION: u32 = 14;
+/// 15: `yakvc_push_world` takes the far echoes after the room.
+pub const YAKVC_ABI_VERSION: u32 = 15;
 
 pub const YAKVC_OK: i32 = 0;
 /// A null pointer, bad UUID, invalid UTF-8 or out-of-range value.
@@ -330,15 +331,17 @@ pub unsafe extern "C" fn yakvc_set_tab_list(
 
 /// Pushes one tick's world: `listener` is `x, y, z, yaw, pitch, reverb,
 /// critical_distance, decay, echo, echo_delay`, the last five describing
-/// the room around it
-/// (see `Room`); then `count`
+/// the room around it (see `Room`), then four far echoes of `dx, dy, dz,
+/// delay, gain, cutoff_hz` each: the unit vector to the surface, seconds
+/// until it comes back, its gain (0 for an unused one) and the air's
+/// low-pass (see `FarEcho`). Then `count`
 /// tracked players as UUIDs and, per player, `x, y, z, occlusion, heard_x,
 /// heard_y, heard_z`: the eye position, how much the sound reaching the
 /// listener is blocked, from 0 (open air) to 1 (fully blocked), and where
 /// the voice seems to come from (see `Player`).
 ///
 /// # Safety
-/// `engine` must be live; `listener` must point to 10 doubles, `uuids` to
+/// `engine` must be live; `listener` must point to 34 doubles, `uuids` to
 /// `16 * count` bytes and `players` to `7 * count` doubles.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn yakvc_push_world(
@@ -351,8 +354,8 @@ pub unsafe extern "C" fn yakvc_push_world(
     // SAFETY: the caller guarantees `engine` is live.
     unsafe {
         with_engine(engine, |e| {
-            // SAFETY: the caller guarantees `listener` points to 10 doubles.
-            let listener = slice_arg(listener, 10, "listener")?;
+            // SAFETY: the caller guarantees `listener` points to 34 doubles.
+            let listener = slice_arg(listener, 34, "listener")?;
             // SAFETY: the caller guarantees `uuids` points to `16 * count` bytes.
             let uuids = uuids_arg(uuids, count, "uuids")?;
             let players_len = count
@@ -380,6 +383,15 @@ pub unsafe extern "C" fn yakvc_push_world(
                 decay: listener[7] as f32,
                 echo: listener[8] as f32,
                 echo_delay: listener[9] as f32,
+                far_echoes: std::array::from_fn(|i| {
+                    let [dx, dy, dz, delay, gain, cutoff_hz] = listener[10..].as_chunks::<6>().0[i];
+                    FarEcho {
+                        direction: Vec3::new(dx, dy, dz),
+                        delay: delay as f32,
+                        gain: gain as f32,
+                        cutoff_hz: cutoff_hz as f32,
+                    }
+                }),
             };
             let listener = Pose {
                 pos: Vec3::new(listener[0], listener[1], listener[2]),

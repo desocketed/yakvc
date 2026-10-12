@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
-use yakvc_audio::{DeviceChoice, Spatial};
+use yakvc_audio::{DeviceChoice, ECHO_TAPS, EchoTap, Spatial};
 use yakvc_proto::{GroupId, Uuid};
 
 use super::group::{Invite, OwnGroup, PendingGroup, SentInvite};
@@ -317,6 +317,7 @@ const CENTRED: Spatial = Spatial {
     pan: 0.0,
     muffle: 0.0,
     reverb: 0.0,
+    echo: 0.0,
 };
 
 /// Gain and pan for a source at `source`, heard by `listener` with voice
@@ -344,21 +345,8 @@ pub(crate) fn spatial(
         ((range - distance) / (range - full)).powf(f64::from(acoustics.distance_rolloff))
     };
 
-    // Minecraft yaw: 0 faces +Z and grows clockwise seen from above, so
-    // facing +Z the listener's right hand points to -X.
-    let yaw = f64::from(listener.yaw).to_radians();
-    let (forward_x, forward_z) = (-yaw.sin(), yaw.cos());
-    let (right_x, right_z) = (-yaw.cos(), -yaw.sin());
     let (dx, dz) = (source.x - listener.pos.x, source.z - listener.pos.z);
-    let horizontal = dx.hypot(dz);
-    let (pan, front) = if horizontal < 1e-6 {
-        (0.0, 1.0)
-    } else {
-        (
-            (dx * right_x + dz * right_z) / horizontal,
-            (dx * forward_x + dz * forward_z) / horizontal,
-        )
-    };
+    let (pan, front) = pan_and_front(listener, dx, dz);
     if front < 0.0 {
         gain *= 1.0 + BEHIND_ATTENUATION * front;
     }
@@ -367,6 +355,39 @@ pub(crate) fn spatial(
         pan: pan as f32,
         muffle: 0.0,
         reverb: 0.0,
+        echo: 1.0,
+    })
+}
+
+/// The sideways (pan, -1 left to 1 right) and forward parts of the
+/// horizontal direction `dx, dz` from `listener`.
+fn pan_and_front(listener: &Pose, dx: f64, dz: f64) -> (f64, f64) {
+    // Minecraft yaw: 0 faces +Z and grows clockwise seen from above, so
+    // facing +Z the listener's right hand points to -X.
+    let yaw = f64::from(listener.yaw).to_radians();
+    let (forward_x, forward_z) = (-yaw.sin(), yaw.cos());
+    let (right_x, right_z) = (-yaw.cos(), -yaw.sin());
+    let horizontal = dx.hypot(dz);
+    if horizontal < 1e-6 {
+        return (0.0, 1.0);
+    }
+    (
+        (dx * right_x + dz * right_z) / horizontal,
+        (dx * forward_x + dz * forward_z) / horizontal,
+    )
+}
+
+/// The room's far echoes as the mixer plays them: each panned to where its
+/// wall is from the way the listener faces now, scaled by `level`.
+pub(crate) fn echo_taps(world: &World, level: f32) -> [EchoTap; ECHO_TAPS] {
+    world.room.far_echoes.map(|echo| {
+        let (pan, _) = pan_and_front(&world.listener, echo.direction.x, echo.direction.z);
+        EchoTap {
+            delay: echo.delay,
+            gain: echo.gain * level,
+            pan: pan as f32,
+            cutoff_hz: echo.cutoff_hz,
+        }
     })
 }
 
@@ -437,6 +458,7 @@ mod tests {
     use yakvc_proto::{GroupKey, GroupState};
 
     use super::*;
+    use crate::world::FarEcho;
 
     fn uuid(n: u8) -> Uuid {
         Uuid::from_bytes([n; 16])
@@ -643,6 +665,27 @@ mod tests {
             None,
             "untracked"
         );
+    }
+
+    #[test]
+    fn far_echoes_follow_the_listener_turning() {
+        let mut world = World::default();
+        // A cliff to the west (-X).
+        world.room.far_echoes[0] = FarEcho {
+            direction: Vec3::new(-1.0, 0.0, 0.0),
+            delay: 0.3,
+            gain: 0.2,
+            cutoff_hz: 4000.0,
+        };
+        // Facing +Z, -X is on the right; turned round, on the left.
+        world.listener = listener(0.0);
+        let taps = echo_taps(&world, 0.5);
+        assert!((taps[0].pan - 1.0).abs() < 1e-6);
+        assert!((taps[0].gain - 0.1).abs() < 1e-6);
+        assert_eq!((taps[0].delay, taps[0].cutoff_hz), (0.3, 4000.0));
+        assert_eq!(taps[1].gain, 0.0);
+        world.listener = listener(180.0);
+        assert!((echo_taps(&world, 0.5)[0].pan + 1.0).abs() < 1e-6);
     }
 
     #[test]

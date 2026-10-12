@@ -24,7 +24,7 @@ use std::time::Duration;
 
 pub use crate::codec::{Encoder, MAX_PACKET};
 pub use crate::device::{DeviceChoice, DeviceInfo, Devices, Microphone, Speakers, devices};
-pub use crate::echo::Echo;
+pub use crate::echo::{ECHO_TAPS, Echo, EchoTap, Echoes};
 pub use crate::input::{InputActivity, InputConfig, InputProcessor, level_db};
 pub use crate::mixer::{Acoustics, Mixer, Spatial};
 pub use crate::muffle::Muffle;

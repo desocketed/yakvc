@@ -18,7 +18,8 @@ import net.minecraft.world.phys.shapes.CollisionContext;
  * How the space around the listener rings, measured like a real room, taking a block as a metre: how walled in it is
  * ({@code reverb}, 0 in open air up to 1 shut in), its critical distance ({@code criticalDistance}, metres at which a
  * voice's reverb is as loud as the voice), how long the reverb lasts ({@code decay}, seconds until it fades by 60 dB)
- * and the distinct echo off far walls ({@code echo}, its loudness, and {@code echoDelay}, seconds until it returns).
+ * and the echo off walls a little way off ({@code echo}, its loudness, and {@code echoDelay}, seconds until it returns;
+ * walls further than {@link FarEchoes#MIN_DISTANCE} each echo apart, in {@link FarEchoes}).
  *
  * <p>Rays cast evenly in every direction measure the room: each stands for an equal cone of it, so together they give
  * its volume, its surface and how much that surface absorbs. From those, Eyring's formula gives the decay. The ground
@@ -47,7 +48,7 @@ public record Room(float reverb, float criticalDistance, float decay, float echo
 	private static final double FACING = 0.5;
 	/** Each tick, a room moves this much of the way to a new estimate, so walking through a doorway is smooth. */
 	private static final float SMOOTHING = 0.15f;
-	private static final Vec3[] DIRECTIONS = directions();
+	private static final Vec3[] DIRECTIONS = directions(RAYS);
 
 	public static final Room OPEN_AIR = new Room(0, 1, 0.1f, 0, 0);
 
@@ -113,7 +114,8 @@ public record Room(float reverb, float criticalDistance, float decay, float echo
 			if (!ray.hit) continue;
 			walls++;
 			wallDistance += ray.distance;
-			if (ray.incidence < FACING) continue;
+			// Further walls echo apart, each from its own direction: FarEchoes.
+			if (ray.incidence < FACING || ray.distance > FarEchoes.MIN_DISTANCE) continue;
 			facing++;
 			facingDistance += ray.distance;
 			facingAbsorption += absorption;
@@ -177,11 +179,11 @@ public record Room(float reverb, float criticalDistance, float decay, float echo
 	}
 
 	/** Evenly spread unit vectors: a Fibonacci sphere. */
-	static Vec3[] directions() {
-		Vec3[] directions = new Vec3[RAYS];
+	static Vec3[] directions(int count) {
+		Vec3[] directions = new Vec3[count];
 		double golden = Math.PI * (3 - Math.sqrt(5));
-		for (int i = 0; i < RAYS; i++) {
-			double y = 1 - 2 * (i + 0.5) / RAYS;
+		for (int i = 0; i < count; i++) {
+			double y = 1 - 2 * (i + 0.5) / count;
 			double radius = Math.sqrt(1 - y * y);
 			directions[i] = new Vec3(Math.cos(golden * i) * radius, y, Math.sin(golden * i) * radius);
 		}

@@ -6,6 +6,7 @@ import com.terraformersmc.modmenu.gui.widget.ModListWidget;
 import com.terraformersmc.modmenu.gui.widget.entries.ModListEntry;
 import io.github.desocketed.yakvc.GameStateFeeder;
 import io.github.desocketed.yakvc.Occlusion;
+import io.github.desocketed.yakvc.FarEchoes;
 import io.github.desocketed.yakvc.Room;
 import io.github.desocketed.yakvc.SoundPath;
 import io.github.desocketed.yakvc.YakVcClient;
@@ -186,6 +187,7 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 
 			checkOcclusion(context, singleplayer);
 			checkRoom(context, singleplayer);
+			checkFarEchoes(context, singleplayer);
 			checkSoundPath(context, singleplayer);
 			checkSoundTuning(context, feeder);
 
@@ -237,6 +239,26 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		if (!(open.reverb() < 0.1f && small.reverb() > 0.5f && hall.reverb() > 0.5f && hall.decay() > small.decay())) {
 			throw new AssertionError("rooms: open " + open + ", small " + small + ", hall " + hall);
 		}
+	}
+
+	/** Between two far cliffs, each sends back its own echo, from its own side, after the round trip. */
+	private static void checkFarEchoes(ClientGameTestContext context, TestSingleplayerContext singleplayer) {
+		Vec3 eye = new Vec3(80.5, -58.5, 20.5);
+		singleplayer.getServer().runCommand("fill 59 -60 0 59 -41 40 stone");
+		singleplayer.getServer().runCommand("fill 102 -60 0 102 -41 40 stone");
+		context.waitTicks(3);
+		FarEchoes echoes = new FarEchoes();
+		// Enough ticks for the long rays to turn through every direction.
+		List<FarEchoes.Echo> found = context.computeOnClient(mc -> {
+			List<FarEchoes.Echo> last = List.of();
+			for (int tick = 0; tick < 30; tick++) last = echoes.update(mc.level, eye, SoundTuning.DEFAULT);
+			return last;
+		});
+		singleplayer.getServer().runCommand("fill 59 -60 0 59 -41 40 air");
+		singleplayer.getServer().runCommand("fill 102 -60 0 102 -41 40 air");
+		boolean west = found.stream().anyMatch(e -> e.direction().x < -0.9 && Math.abs(e.delay() - 2 * 20.5 / 343) < 0.01);
+		boolean east = found.stream().anyMatch(e -> e.direction().x > 0.9 && Math.abs(e.delay() - 2 * 21.5 / 343) < 0.01);
+		if (!west || !east) throw new AssertionError("far echoes: " + found);
 	}
 
 	/**

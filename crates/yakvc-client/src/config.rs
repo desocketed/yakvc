@@ -98,6 +98,8 @@ pub struct AcousticsConfig {
     pub reverb_damping: f32,
     /// How much of each echo repeat comes back again, from 0 to 0.9.
     pub echo_feedback: f32,
+    /// Scales the distinct echoes off far cliffs and walls; 1 is as built.
+    pub echo_level: f32,
 }
 
 impl Default for AcousticsConfig {
@@ -112,6 +114,7 @@ impl Default for AcousticsConfig {
             reverb_level: 0.85,
             reverb_damping: 0.25,
             echo_feedback: 0.4,
+            echo_level: 1.0,
         }
     }
 }
@@ -203,6 +206,9 @@ impl Config {
         }
         if !(0.0..=0.9).contains(&a.echo_feedback) {
             return invalid("acoustics.echo_feedback must be between 0 and 0.9");
+        }
+        if !(0.0..=4.0).contains(&a.echo_level) {
+            return invalid("acoustics.echo_level must be between 0 and 4");
         }
         if self.rendezvous.is_some() && self.trusted_issuers.is_empty() {
             // Nothing would be trusted, not even our own ticket.
