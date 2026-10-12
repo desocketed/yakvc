@@ -447,6 +447,15 @@ impl EngineBuilder {
         if let (None, Some(hz)) = (&io.source, config.dev.tone_hz) {
             io.source = Some(Box::new(yakvc_audio::ToneSource::new(hz)));
         }
+        if let (None, Some(path)) = (&io.source, &config.dev.wav) {
+            let wav = yakvc_audio::WavSource::open(path, true).map_err(|e| {
+                StartError::Config(ConfigError::Invalid(format!(
+                    "dev.wav {}: {e}",
+                    path.display()
+                )))
+            })?;
+            io.source = Some(Box::new(wav));
+        }
         if io.sink.is_none() && config.dev.null_output {
             io.sink = Some(Box::new(yakvc_audio::NullSink::new().0));
         }
