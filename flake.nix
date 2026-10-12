@@ -79,8 +79,6 @@
             just
           ] ++ lib.optionals stdenv.hostPlatform.isLinux [
             alsa-lib
-            # `ss`, which scripts/two-clients.sh picks its ports with.
-            iproute2
           ];
           JAVA_HOME = pkgs.jdk25.home;
           # pkg-config's per-target search path, read by alsa-sys when

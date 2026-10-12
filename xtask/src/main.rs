@@ -10,6 +10,7 @@ mod pack;
 mod pipewire;
 mod relay;
 mod session;
+mod two_clients;
 
 use anyhow::{Context, Result, bail, ensure};
 use clap::{Parser, Subcommand};
@@ -73,6 +74,19 @@ enum Cmd {
     Gametest {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         gradle_args: Vec<String>,
+    },
+    /// The end-to-end check: a dev rendezvous, a local Minecraft server and
+    /// two headless clients that must hear each other, and not while one is
+    /// a spectator. About a minute.
+    TwoClients {
+        /// Accept the Minecraft EULA (https://aka.ms/MinecraftEULA), which
+        /// running the server needs; or set YAKVC_ACCEPT_MINECRAFT_EULA=1.
+        #[arg(long)]
+        accept_eula: bool,
+        /// Give the clients real devices through a private PipeWire session
+        /// each, instead of the dev test audio.
+        #[arg(long)]
+        pipewire: bool,
     },
     /// Fail if yakvc-server depends on an audio crate.
     CheckServerDeps,
@@ -148,6 +162,13 @@ fn main() -> Result<()> {
         Cmd::ServerImage => server_image(),
         Cmd::Ci { fast } => ci::ci(fast),
         Cmd::Gametest { gradle_args } => headless::gametest(&gradle_args),
+        Cmd::TwoClients {
+            accept_eula,
+            pipewire,
+        } => two_clients::two_clients(
+            accept_eula || std::env::var("YAKVC_ACCEPT_MINECRAFT_EULA").as_deref() == Ok("1"),
+            pipewire,
+        ),
         Cmd::CheckServerDeps => ci::check_server_deps(),
         Cmd::CheckJar { jar } => ci::check_jar(&jar),
         Cmd::ServerSmoke => ci::server_smoke(),
