@@ -1,6 +1,7 @@
 package io.github.desocketed.yakvc.ui;
 
 import java.util.List;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Options;
@@ -27,6 +28,7 @@ final class Dropdown extends AbstractButton {
 	private List<String> values;
 	private final Function<String, Component> label;
 	private String selected;
+	private Consumer<String> onPick = value -> {};
 	private boolean open;
 	/** The first visible row. */
 	private int scroll;
@@ -41,6 +43,16 @@ final class Dropdown extends AbstractButton {
 
 	String get() {
 		return selected;
+	}
+
+	/** Selects {@code value}, which must be among the values, without calling the pick listener. */
+	void set(String value) {
+		select(value);
+	}
+
+	/** Called when the player picks a value from the list. */
+	void onPick(Consumer<String> listener) {
+		onPick = listener;
 	}
 
 	boolean isOpen() {
@@ -127,7 +139,10 @@ final class Dropdown extends AbstractButton {
 	boolean listClicked(double x, double y, int screenHeight) {
 		if (!open) return false;
 		int row = rowAt(x, y, screenHeight);
-		if (row >= 0) select(values.get(row));
+		if (row >= 0) {
+			select(values.get(row));
+			onPick.accept(selected);
+		}
 		open = false;
 		return true;
 	}

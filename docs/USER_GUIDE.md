@@ -143,18 +143,6 @@ Open the settings from **Options → Music & Sounds → Voice Chat…**, at the 
 - **Bitrate**: the sound quality of your voice, from 16 to 64 kbit/s. Higher sounds better and uses more data; 24 kbit/s is plenty for speech.
 - **Noise Filter**: filters fans, hum and room noise out of your microphone. On by default; turn it off if it makes your voice sound choppy or robotic, or if your microphone is already clean.
 - **Microphone**: which microphone to use. Click it for a list of your microphones and pick one; scroll the list if it is long. *System Default* follows your system's setting.
-
-  While the debug overlay is on, the list also offers test sounds that play instead of a microphone, so you can hear how voices carry without talking (open the settings again after turning the overlay on):
-
-  | Test sound | What it is | Good for hearing |
-  | --- | --- | --- |
-  | Test: Clicks | a sharp clap-like click a second | echo and reverb, in the quiet after each click |
-  | Test: Noise Bursts | a short burst of hiss a second | which way a voice comes from, and how muffled it is |
-  | Test: Sweep | a tone gliding from low to high | how much a wall muffles: the high end drops away |
-  | Test: Beeps | short beeps rising in pitch | a bit of everything, easy on the ears |
-  | Test: Tone | a steady tone | volume over distance |
-
-  They are sent like your voice, so set **Activation** to *Voice* or hold push to talk.
 - **Microphone Level**: shows live how loud your microphone hears you, so you can check it works without joining a world or holding the talk key. The bar turns green above the white mark, the level at which *Voice* activation starts sending (`vad_threshold_db` in the [config file](#the-config-file)). It shows the microphone in use, so after picking another one, leave and reopen the settings to see it.
 - **Speakers**: where voices play. Click it to pick from a list, like the microphone. *Same as Game* uses the game's sound device (Options → Music & Sounds → Device).
 
@@ -172,10 +160,23 @@ Under **Account** the settings say whether your Minecraft account is verified (s
 
 - **Only Verified Players**: talk only with players whose Minecraft account is verified, the ones with the badge. Players without an account, as on offline-mode servers, can't hear you and you don't hear them. Off by default.
 
-Under **Troubleshooting**:
+![The developer settings](guide/voice-settings-developer.png)
+
+Under **Developer**, tools for testing Yak VC:
 
 - **Debug Overlay**: shows the [debug overlay](#the-debug-overlay). It switches on and off at once and isn't saved, so it is off again after a restart.
 - **Sound Tuning…**: opens [Sound Tuning](#sound-tuning).
+- **Test Sound**: plays a built-in test sound instead of your microphone, so you can hear how voices carry without talking. *Off* goes back to the microphone you picked.
+
+  | Test sound | What it is | Good for hearing |
+  | --- | --- | --- |
+  | Clicks | a sharp clap-like click a second | echo and reverb, in the quiet after each click |
+  | Noise Bursts | a short burst of hiss a second | which way a voice comes from, and how muffled it is |
+  | Sweep | a tone gliding from low to high | how much a wall muffles: the high end drops away |
+  | Beeps | short beeps rising in pitch | a bit of everything, easy on the ears |
+  | Tone | a steady tone | volume over distance |
+
+  They are sent like your voice, so set **Activation** to *Voice* or hold push to talk.
 
 ### Sound Tuning
 
