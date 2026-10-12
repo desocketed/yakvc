@@ -17,6 +17,11 @@ use crate::{
 /// when several tones are mixed.
 const TONE_AMPLITUDE: f32 = 0.25;
 
+/// Peak of the built-in test sounds: `-18` dBFS, so a sine averages about
+/// `-21` dBFS RMS, like normal speech into a microphone. Louder ones were
+/// uncomfortable to listen to, and the player's mic volume still applies.
+const TEST_PEAK: f32 = 0.125;
+
 /// `-60` dBFS.
 const AUDIBLE_PEAK: f32 = 0.001;
 
@@ -236,7 +241,7 @@ impl TestSource {
                 // About 10 ms of hiss falling off fast, like a clap.
                 let decay = (-(into as f32) / (SAMPLE_RATE as f32 * 0.002)).exp();
                 let sample = if into < SECOND / 100 {
-                    self.white() * decay * 0.8
+                    self.white() * decay * TEST_PEAK
                 } else {
                     0.0
                 };
@@ -246,7 +251,7 @@ impl TestSource {
                 let into = at % SECOND;
                 let length = SECOND / 5;
                 let sample = if into < length {
-                    self.white() * fade(into, length) * 0.3
+                    self.white() * fade(into, length) * TEST_PEAK
                 } else {
                     0.0
                 };
@@ -259,7 +264,7 @@ impl TestSource {
                     let t = at as f32 / length as f32;
                     let hz = 100.0 * 80f32.powf(t);
                     self.phase = (self.phase + TAU * hz / SAMPLE_RATE as f32) % TAU;
-                    self.phase.sin() * fade(at, length) * TONE_AMPLITUDE
+                    self.phase.sin() * fade(at, length) * TEST_PEAK
                 } else {
                     self.phase = 0.0;
                     0.0
@@ -273,7 +278,7 @@ impl TestSource {
                 let sample = if into < length {
                     let hz = PITCHES_HZ[at / SECOND];
                     let t = into as f32 / SAMPLE_RATE as f32;
-                    (TAU * hz * t).sin() * fade(into, length) * TONE_AMPLITUDE
+                    (TAU * hz * t).sin() * fade(into, length) * TEST_PEAK
                 } else {
                     0.0
                 };
@@ -281,7 +286,7 @@ impl TestSource {
             }
             TestSignal::Tone => {
                 let t = at as f32 / SAMPLE_RATE as f32;
-                ((TAU * 440.0 * t).sin() * TONE_AMPLITUDE, SECOND)
+                ((TAU * 440.0 * t).sin() * TEST_PEAK, SECOND)
             }
         };
         self.position = (at + 1) % period;
@@ -630,7 +635,7 @@ mod tests {
         ] {
             let peaks = peaks(signal, 50);
             assert!(
-                peaks[..loud].iter().all(|&p| p > 0.05),
+                peaks[..loud].iter().all(|&p| p > 0.01),
                 "{signal:?} {peaks:?}"
             );
             assert!(
@@ -643,7 +648,7 @@ mod tests {
     #[test]
     fn the_sweep_plays_two_seconds_then_pauses() {
         let peaks = peaks(TestSignal::Sweep, 150);
-        assert!(peaks[1..99].iter().all(|&p| p > 0.05));
+        assert!(peaks[1..99].iter().all(|&p| p > 0.01));
         assert!(peaks[101..150].iter().all(|&p| p == 0.0));
     }
 
@@ -651,6 +656,35 @@ mod tests {
     fn signals_stay_in_range() {
         for (_, _, signal) in TEST_INPUTS {
             assert!(peaks(signal, 200).iter().all(|&p| p <= 1.0), "{signal:?}");
+        }
+    }
+
+    /// Peaks near `-18` dBFS, and sounds other than the clicks average a
+    /// speech-like `-24` to `-20` dBFS RMS while they play.
+    #[test]
+    fn test_signals_are_speech_level() {
+        for (_, _, signal) in TEST_INPUTS {
+            let mut source = TestSource::new(signal);
+            let mut sounding = Vec::new();
+            let mut peak = 0.0f32;
+            for _ in 0..200 {
+                let mut frame = [0.0; FRAME_SAMPLES];
+                skip_pacing(&mut source.clock);
+                assert!(source.read(&mut frame));
+                peak = frame.iter().fold(peak, |m, s| m.max(s.abs()));
+                if frame.iter().any(|&s| s != 0.0) {
+                    sounding.extend_from_slice(&frame);
+                }
+            }
+            let peak_db = 20.0 * peak.log10();
+            assert!(
+                (-18.5..=-12.0).contains(&peak_db),
+                "{signal:?} peak {peak_db}"
+            );
+            if signal != TestSignal::Clicks {
+                let rms_db = level_db(&sounding);
+                assert!((-24.0..=-20.0).contains(&rms_db), "{signal:?} rms {rms_db}");
+            }
         }
     }
 
