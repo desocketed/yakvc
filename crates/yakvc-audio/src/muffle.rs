@@ -23,7 +23,12 @@ impl Muffle {
     /// Filters `frame` in place, gliding from the last amount to `amount`
     /// (0 is clear, 1 fully muffled).
     pub fn apply(&mut self, frame: &mut MonoFrame, amount: f32) {
-        let amount = amount.clamp(0.0, 1.0);
+        // `clamp` keeps NaN, which would stick in the filter's state.
+        let amount = if amount.is_nan() {
+            0.0
+        } else {
+            amount.clamp(0.0, 1.0)
+        };
         let from = self.amount;
         self.amount = amount;
         if from == 0.0 && amount == 0.0 {
@@ -40,6 +45,9 @@ impl Muffle {
                 value = *stage;
             }
             *sample = value;
+        }
+        if !self.stages.iter().all(|s| s.is_finite()) {
+            self.stages = [0.0; 2];
         }
     }
 }
