@@ -19,9 +19,9 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use tokio::sync::watch;
 use yakvc_audio::{
-    AudioError, DeviceChoice, Encoder, FRAME_DURATION, FRAME_SAMPLES, FrameSink, FrameSource, InputConfig,
-    InputProcessor, JitterConfig, Microphone, Mixer, MonoFrame, Muffle, Packet, Pulled,
-    ReceiveStream, Speakers, StereoFrame, StreamStats, level_db,
+    AudioError, DeviceChoice, Encoder, FRAME_DURATION, FRAME_SAMPLES, FrameSink, FrameSource,
+    InputConfig, InputProcessor, JitterConfig, Microphone, Mixer, MonoFrame, Muffle, Packet,
+    Pulled, ReceiveStream, Speakers, StereoFrame, StreamStats, level_db,
 };
 use yakvc_proto::peer::CloseCode;
 use yakvc_proto::voice::{VERSION, VoiceHeader, VoiceMsg};
@@ -1670,7 +1670,10 @@ mod tests {
         voice.stop();
         // 25 frames in real time; unpaced it would be 1000. Leeway for a
         // slow test machine.
-        assert!((15..=45).contains(&played), "played {played} frames in 500 ms");
+        assert!(
+            (15..=45).contains(&played),
+            "played {played} frames in 500 ms"
+        );
     }
 
     /// Records the streams it is told ended.
@@ -1724,7 +1727,10 @@ mod tests {
 
     #[test]
     fn a_replaced_sink_hears_its_streams_end_and_the_next_starts_fresh() {
-        for next in [Some(Box::new(EndsSink::default()) as Box<dyn VoiceSink>), None] {
+        for next in [
+            Some(Box::new(EndsSink::default()) as Box<dyn VoiceSink>),
+            None,
+        ] {
             let mut audio = loop_with_a_remote();
             let old = EndsSink::default();
             audio.voice_sink = Some(Box::new(old.clone()));
