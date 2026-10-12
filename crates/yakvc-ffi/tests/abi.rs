@@ -2,7 +2,9 @@
 
 #![allow(unsafe_code)]
 
+use std::ffi::c_void;
 use std::ptr;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use yakvc_ffi::*;
@@ -117,6 +119,7 @@ fn every_engine_call_rejects_a_null_engine() {
             yakvc_set_group_public(null, true),
             yakvc_set_group_label(null, ptr::null(), 0),
             yakvc_list_groups(null, buf.as_mut_ptr(), buf.len(), &mut len),
+            yakvc_set_voice_sink(null, ptr::null()),
         ]
     };
     for code in codes {
@@ -423,6 +426,68 @@ fn groups_through_the_c_abi() {
             YAKVC_ERR_INVALID_ARGUMENT
         );
         assert_eq!(yakvc_leave_group(engine), YAKVC_OK);
+        yakvc_destroy(engine);
+    }
+}
+
+/// How often the audio thread asked the test sink for a frame.
+static ASKED: AtomicU32 = AtomicU32::new(0);
+
+extern "C" fn wants_frame(_user: *mut c_void) -> bool {
+    ASKED.fetch_add(1, Ordering::Relaxed);
+    false
+}
+
+extern "C" fn frame(_user: *mut c_void, _frame: *const YakVcVoiceFrame) {}
+
+extern "C" fn stream_end(_user: *mut c_void, _uuid: *const u8) {}
+
+#[test]
+fn voice_sinks_are_checked_asked_and_cleared() {
+    let dir = temp_dir("voice-sink");
+    let toml = offline_config();
+    let (code, engine) = create(
+        dir.to_str().unwrap().as_bytes(),
+        toml.as_bytes(),
+        YAKVC_ABI_VERSION,
+    );
+    assert_eq!(code, YAKVC_OK, "{}", last_error());
+
+    let sink = YakVcVoiceSink {
+        version: YAKVC_VOICE_SINK_VERSION,
+        user: ptr::null_mut(),
+        wants_frame: Some(wants_frame),
+        frame: Some(frame),
+        stream_end: Some(stream_end),
+    };
+    let mut wrong_version = sink;
+    wrong_version.version += 1;
+    let mut no_frame = sink;
+    no_frame.frame = None;
+    // SAFETY: `engine` is live, every sink is readable, and the callbacks are
+    // plain functions that never unwind.
+    let codes = unsafe {
+        [
+            yakvc_set_voice_sink(engine, &wrong_version),
+            yakvc_set_voice_sink(engine, &no_frame),
+            yakvc_set_voice_sink(engine, &sink),
+        ]
+    };
+    assert_eq!(codes[0], YAKVC_ERR_INVALID_ARGUMENT, "wrong version");
+    assert_eq!(codes[1], YAKVC_ERR_INVALID_ARGUMENT, "null callback");
+    assert_eq!(codes[2], YAKVC_OK);
+
+    // The audio thread now asks the sink, not the speakers, for frames.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while ASKED.load(Ordering::Relaxed) == 0 {
+        assert!(Instant::now() < deadline, "the sink was never asked");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    // SAFETY: `engine` is live and not used after `yakvc_destroy`; null goes
+    // back to the speakers.
+    unsafe {
+        assert_eq!(yakvc_set_voice_sink(engine, ptr::null()), YAKVC_OK);
         yakvc_destroy(engine);
     }
 }

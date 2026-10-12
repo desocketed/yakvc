@@ -12,7 +12,7 @@ use yakvc_proto::{GroupId, IssuerKey, ProtocolId, TicketBody, TicketVerifier, Uu
 use crate::config::{Config, ConfigError};
 use crate::event::{self, Event, EventSender, Events, JoinId, PeerState, RendezvousState};
 use crate::net::{Identity, Net, Trust};
-use crate::voice::{AudioIo, AudioStats, GroupError, GroupInfo, Voice};
+use crate::voice::{AudioIo, AudioStats, GroupError, GroupInfo, Voice, VoiceSink};
 use crate::world::{Input, World, distance};
 
 /// A running voice engine. Dropping it shuts down gracefully, waiting at most
@@ -218,6 +218,13 @@ impl Engine {
     /// The game's Voice/Speech volume slider, `0.0..=1.0`.
     pub fn set_game_volume(&self, volume: f32) {
         self.voice.set_game_volume(volume);
+    }
+
+    /// Sends playable voice to `sink` instead of the speakers, for a mod that
+    /// renders voices itself; `None` goes back to the speakers. Takes effect
+    /// on the audio thread's next tick. See [`VoiceSink`] for what it gets.
+    pub fn set_voice_sink(&self, sink: Option<Box<dyn VoiceSink>>) {
+        self.voice.set_voice_sink(sink);
     }
 
     /// The name of the game's selected sound device (`None` for the system

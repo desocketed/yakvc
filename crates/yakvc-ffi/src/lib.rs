@@ -28,12 +28,13 @@
 mod events;
 mod guard;
 
+use std::ffi::c_void;
 use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 
 use yakvc_client::{
     Config, ConfigError, Engine, GroupError, GroupId, Input, JoinId, PeerAudio, Player, Pose, Room,
-    StartError, Uuid, Vec3, World,
+    StartError, Uuid, Vec3, VoiceFrame, VoiceSink, World,
 };
 
 use crate::events::EventQueue;
@@ -50,7 +51,12 @@ use crate::guard::{
 /// shared group state and kick votes; group-only voice in a group.
 /// 6: kick votes removed (`yakvc_vote_kick`, the kick vote event and notice).
 /// 7: `yakvc_join_group` takes the id length.
-pub const YAKVC_ABI_VERSION: u32 = 11;
+/// 8: `yakvc_push_world` takes each player's occlusion.
+/// 9: `yakvc_push_world` takes the room around the listener.
+/// 10: `yakvc_push_world` takes where each player is heard from.
+/// 11: `yakvc_push_world` takes the room's echo and echo delay.
+/// 12: `yakvc_set_voice_sink`.
+pub const YAKVC_ABI_VERSION: u32 = 12;
 
 pub const YAKVC_OK: i32 = 0;
 /// A null pointer, bad UUID, invalid UTF-8 or out-of-range value.
@@ -112,6 +118,14 @@ pub const YAKVC_PEER_RELAY_FULL: u8 = 3;
 pub const YAKVC_PEER_FAILED: u8 = 4;
 pub const YAKVC_PEER_GONE: u8 = 5;
 
+/// The `YakVcVoiceSink` layout this library takes.
+pub const YAKVC_VOICE_SINK_VERSION: u32 = 1;
+/// A `YakVcVoiceFrame` of group voice.
+pub const YAKVC_VOICE_GROUP: u32 = 1 << 0;
+/// A `YakVcVoiceFrame` that plays centred rather than from the speaker's
+/// place in the world: group voice and direct calls.
+pub const YAKVC_VOICE_UNPOSITIONED: u32 = 1 << 1;
+
 /// Opaque engine handle.
 #[derive(Debug)]
 pub struct YakVcEngine {
@@ -119,6 +133,51 @@ pub struct YakVcEngine {
     events: Mutex<EventQueue>,
     /// Set when a call panics; every later call except `yakvc_destroy` fails.
     poisoned: AtomicBool,
+}
+
+/// One speaker's 20 ms of voice for a [`YakVcVoiceSink`], valid only during
+/// the `frame` call.
+#[repr(C)]
+#[derive(Debug)]
+pub struct YakVcVoiceFrame {
+    /// The speaker.
+    pub uuid: [u8; 16],
+    /// `samples` floats of 48 kHz mono, as decoded.
+    pub pcm: *const f32,
+    pub samples: usize,
+    /// Counts play ticks: the frames played together share it.
+    pub tick: u64,
+    /// The player's volume setting, 0 to 2.
+    pub volume: f32,
+    /// The local voice range in blocks; 0 when unpositioned.
+    pub range: f32,
+    /// A combination of `YAKVC_VOICE_*`.
+    pub flags: u32,
+    /// Where the speakers would place the voice, `x, y, z`: the speaker's
+    /// eye, or the opening it comes round through. Zero when unpositioned.
+    pub heard_from: [f64; 3],
+    /// How much of the way the speakers would block, from 0 (open air) to 1;
+    /// 0 when unpositioned.
+    pub occlusion: f32,
+}
+
+/// A mod that plays the voices instead of the speakers: see
+/// [`yakvc_set_voice_sink`].
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct YakVcVoiceSink {
+    /// [`YAKVC_VOICE_SINK_VERSION`].
+    pub version: u32,
+    /// Passed back to every callback.
+    pub user: *mut c_void,
+    /// Whether the sink wants the next 20 ms of voice now. It paces playback,
+    /// as the speakers' clock does.
+    pub wants_frame: Option<unsafe extern "C" fn(user: *mut c_void) -> bool>,
+    /// One playable frame from one speaker.
+    pub frame: Option<unsafe extern "C" fn(user: *mut c_void, frame: *const YakVcVoiceFrame)>,
+    /// The speaker `uuid` (16 bytes) is gone: no more frames from it until
+    /// it comes back.
+    pub stream_end: Option<unsafe extern "C" fn(user: *mut c_void, uuid: *const u8)>,
 }
 
 /// Runs `f` on a live engine behind the panic barrier.
@@ -413,6 +472,123 @@ pub unsafe extern "C" fn yakvc_set_peer_volume(
     }
 }
 
+/// Sends playable voice to `sink` instead of the speakers, for a mod that
+/// renders voices itself; null goes back to the speakers. Takes effect on the
+/// audio thread's next tick.
+///
+/// The sink gets each frame the speakers would have played, as decoded:
+/// before panning, distance gain, occlusion, reverb, the game volume and the
+/// limiter, which the mod applies itself. Only the rules of who is heard
+/// (mute, deafen, groups, spectators, range) and the player's volume setting
+/// apply. While a sink is set the speakers are closed.
+///
+/// The struct is copied, but `user` and the callbacks must stay valid for the
+/// rest of the process: the audio thread may still call an old sink for a
+/// tick after a change, and a shutdown that abandons a stuck audio thread may
+/// call it later still. The callbacks run on the engine's audio thread: they
+/// must not block, must not unwind and must not call any `yakvc_*` function.
+///
+/// From Java, build the struct and any upcall stubs in `Arena.global()`: a
+/// confined or automatic arena can free them while the audio thread still
+/// calls them. A callback must never let an exception escape, which crashes
+/// the JVM, and shouldn't allocate or block, since it runs on the audio
+/// path; renderers usually write the callbacks natively and hand Java only
+/// the struct's address.
+///
+/// # Safety
+/// `engine` must be live; `sink` must be null or point to a `YakVcVoiceSink`
+/// whose `user` and callbacks keep that contract.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn yakvc_set_voice_sink(
+    engine: *mut YakVcEngine,
+    sink: *const YakVcVoiceSink,
+) -> i32 {
+    // SAFETY: the caller guarantees `engine` is live.
+    unsafe {
+        with_engine(engine, |e| {
+            // SAFETY: the caller guarantees `sink` is null or readable.
+            let sink = match sink.as_ref() {
+                Some(sink) => Some(Box::new(ForeignSink::new(sink)?) as Box<dyn VoiceSink>),
+                None => None,
+            };
+            e.engine.set_voice_sink(sink);
+            Ok(())
+        })
+    }
+}
+
+/// A [`YakVcVoiceSink`] as the engine's [`VoiceSink`].
+#[derive(Debug)]
+struct ForeignSink {
+    user: *mut c_void,
+    wants_frame: unsafe extern "C" fn(*mut c_void) -> bool,
+    frame: unsafe extern "C" fn(*mut c_void, *const YakVcVoiceFrame),
+    stream_end: unsafe extern "C" fn(*mut c_void, *const u8),
+}
+
+// SAFETY: `yakvc_set_voice_sink`'s contract: `user` and the callbacks may be
+// used from the engine's audio thread for the rest of the process.
+unsafe impl Send for ForeignSink {}
+
+impl ForeignSink {
+    fn new(sink: &YakVcVoiceSink) -> Result<ForeignSink, FfiError> {
+        if sink.version != YAKVC_VOICE_SINK_VERSION {
+            return Err(FfiError::invalid(format!(
+                "voice sink version {} is not {YAKVC_VOICE_SINK_VERSION}",
+                sink.version
+            )));
+        }
+        let (Some(wants_frame), Some(frame), Some(stream_end)) =
+            (sink.wants_frame, sink.frame, sink.stream_end)
+        else {
+            return Err(FfiError::invalid("a voice sink callback is null"));
+        };
+        Ok(ForeignSink {
+            user: sink.user,
+            wants_frame,
+            frame,
+            stream_end,
+        })
+    }
+}
+
+impl VoiceSink for ForeignSink {
+    fn wants_frame(&mut self) -> bool {
+        // SAFETY: `yakvc_set_voice_sink`'s contract.
+        unsafe { (self.wants_frame)(self.user) }
+    }
+
+    fn frame(&mut self, frame: &VoiceFrame<'_>) {
+        let mut flags = 0;
+        if frame.group {
+            flags |= YAKVC_VOICE_GROUP;
+        }
+        if !frame.positioned {
+            flags |= YAKVC_VOICE_UNPOSITIONED;
+        }
+        let frame = YakVcVoiceFrame {
+            uuid: *frame.uuid.as_bytes(),
+            pcm: frame.pcm.as_ptr(),
+            samples: frame.pcm.len(),
+            tick: frame.tick,
+            volume: frame.volume,
+            range: frame.range,
+            flags,
+            heard_from: [frame.heard_from.x, frame.heard_from.y, frame.heard_from.z],
+            occlusion: frame.occlusion,
+        };
+        // SAFETY: `yakvc_set_voice_sink`'s contract; `frame` and the samples
+        // it points to outlive the call.
+        unsafe { (self.frame)(self.user, &frame) }
+    }
+
+    fn stream_end(&mut self, uuid: Uuid) {
+        // SAFETY: `yakvc_set_voice_sink`'s contract; the 16 bytes outlive the
+        // call.
+        unsafe { (self.stream_end)(self.user, uuid.as_bytes().as_ptr()) }
+    }
+}
+
 /// Reports the result of `joinServer` for a `YAKVC_EVENT_JOIN_REQUEST`.
 ///
 /// # Safety
@@ -685,7 +861,8 @@ pub unsafe extern "C" fn yakvc_list_devices(
 ///
 /// - `endpoint_id`: our Iroh endpoint ID, hex
 /// - `voice_version`: the voice protocol version we speak
-/// - `audio`: `microphone_open`, `speakers_open`, `transmitting` (bools);
+/// - `audio`: `microphone_open`, `speakers_open`, `external_output` (voice
+///   goes to a voice sink), `transmitting` (bools);
 ///   `bitrate` (bit/s in use); `overruns`, `underruns` (counts since the
 ///   device opened)
 /// - `peers`: per connected peer, `uuid` (hyphenated), `rtt_ms` (number or
@@ -744,6 +921,7 @@ fn stats_json(engine: &Engine) -> serde_json::Value {
         "audio": {
             "microphone_open": audio.microphone_open,
             "speakers_open": audio.speakers_open,
+            "external_output": audio.external_output,
             "transmitting": audio.transmitting,
             "bitrate": audio.bitrate,
             "overruns": audio.overruns,

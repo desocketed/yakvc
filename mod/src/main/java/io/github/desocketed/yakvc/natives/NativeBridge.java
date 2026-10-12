@@ -34,7 +34,7 @@ import java.util.UUID;
  */
 public final class NativeBridge {
 	/** Must equal {@code YAKVC_ABI_VERSION} in {@code yakvc.h}. */
-	public static final int ABI_VERSION = 11;
+	public static final int ABI_VERSION = 12;
 
 	public static final int INPUT_PUSH_TO_TALK = 1;
 	public static final int INPUT_MUTED = 1 << 1;
@@ -59,6 +59,7 @@ public final class NativeBridge {
 	private final MethodHandle setGameVolume;
 	private final MethodHandle setGameDevice;
 	private final MethodHandle setPeerVolume;
+	private final MethodHandle setVoiceSink;
 	private final MethodHandle completeJoin;
 	private final MethodHandle pollEvents;
 	private final MethodHandle updateConfig;
@@ -94,6 +95,8 @@ public final class NativeBridge {
 				FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, SIZE_T));
 		setPeerVolume = linker.downcallHandle(find(library, "yakvc_set_peer_volume"),
 				FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_FLOAT, JAVA_BOOLEAN));
+		setVoiceSink = linker.downcallHandle(find(library, "yakvc_set_voice_sink"),
+				FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
 		completeJoin = linker.downcallHandle(find(library, "yakvc_complete_join"),
 				FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT, JAVA_BOOLEAN));
 		pollEvents = linker.downcallHandle(find(library, "yakvc_poll_events"),
@@ -199,6 +202,15 @@ public final class NativeBridge {
 			MemorySegment bytes = arena.allocateFrom(JAVA_BYTE, uuidBytes(List.of(uuid)));
 			check((int) invoke(setPeerVolume, engine, bytes, volume, muted));
 		}
+	}
+
+	/**
+	 * Sends playable voice to the {@code YakVcVoiceSink} at {@code sink} instead of the speakers, for a mod that renders
+	 * voices itself; {@link MemorySegment#NULL} goes back to the speakers. The sink must stay valid for the rest of the
+	 * process: {@code yakvc_set_voice_sink} in {@code yakvc.h} has the contract.
+	 */
+	public void setVoiceSink(MemorySegment engine, MemorySegment sink) {
+		check((int) invoke(setVoiceSink, engine, sink));
 	}
 
 	/** Reports the result of {@code joinServer} for a {@link EngineEvent.JoinRequest}. */
