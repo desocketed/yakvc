@@ -21,6 +21,11 @@ on:
         description: Deploy the relay
         type: boolean
         default: false
+      # One tap from the GitHub app: a prerelease for testers, from any branch.
+      dev_release:
+        description: Publish a dev build
+        type: boolean
+        default: false
 
 # Actions from outside GitHub's own `actions/` are pinned to a commit, since
 # a tag can be moved to other code; the comment names the release it was.
@@ -29,6 +34,9 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # A dev build's number: `cargo xtask` then versions everything it builds
+  # <version>.dev.<n> (see `version` in xtask/src/main.rs). Empty otherwise.
+  YAKVC_DEV_BUILD: ${{ inputs.dev_release && github.run_number || '' }}
 
 # A newer push to a pull request cancels its running checks. Pushes to main
 # and tag runs finish, since a cancelled tag run would publish half a release.
@@ -349,8 +357,10 @@ jobs:
   # On a version tag: the GitHub release (jar, launcher packs, yakvc-cli,
   # static yakvc-server, SHA256SUMS) and the image on GHCR. Nothing goes to
   # Modrinth or CurseForge (maintainer, 2026-10-11): releases live on GitHub.
+  # A manual run with "Publish a dev build" ticked publishes a prerelease
+  # instead, tagged and versioned as a dev build, without the image.
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.dev_release
     needs: [rust, mod, jar, server, nix]
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -361,7 +371,11 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
+      # History and tags for a dev build's notes: the commits since the last release.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
       - name: Install toolchain
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2

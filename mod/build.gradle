@@ -12,6 +12,11 @@ base {
 	archivesName = 'yakvc'
 }
 
+// A dev build's version (see `version` in xtask/src/main.rs), so CI can
+// publish one without committing a version bump.
+def devVersion = System.getenv('YAKVC_VERSION')
+if (devVersion) version = devVersion
+
 repositories {
 	maven {
 		name = 'TerraformersMC'

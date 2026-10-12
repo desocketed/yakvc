@@ -1,0 +1,38 @@
+name: Nightly
+
+# Each night, a dev build of `dev` when it has commits the newest dev build
+# lacks: this only checks, then starts the CI workflow on `dev` with
+# "Publish a dev build", so a quiet night costs seconds. GitHub runs
+# schedules from the default branch's copy of this file only.
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # A dispatch with the run's own token is the one event it may still start.
+  actions: write
+
+jobs:
+  dev-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: dev
+          fetch-depth: 0
+          fetch-tags: true
+      # A dev release tags the commit it built, so a dev tag on the tip
+      # means nothing is new.
+      - name: Publish a dev build if dev moved
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if git tag --points-at HEAD | grep -q 'dev\.'; then
+            echo "dev has nothing new since $(git tag --points-at HEAD | grep 'dev\.')"
+          else
+            gh workflow run ci.yml --ref dev -f dev_release=true
+          fi
