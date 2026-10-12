@@ -872,10 +872,13 @@ impl AudioLoop {
         }
         if transmitting
             && !state.input.deafened
+            // Until the player is known, the sink couldn't tell whose voice
+            // it is, so it gets none.
+            && let Some(me) = state.own_uuid
             && let Some(sink) = &mut self.voice_sink
             && sink.wants_own_voice()
         {
-            sink.own_voice(state.own_uuid.unwrap_or_default(), frame);
+            sink.own_voice(me, frame);
         }
         self.set_transmitting(transmitting, &state);
         self.ts = self.ts.wrapping_add(FRAME_SAMPLES as u32);
@@ -1508,6 +1511,11 @@ mod tests {
 
     /// A voice on a 440 Hz tone, with `sink` in place of the speakers.
     fn talking_into(sink: OwnVoiceSink) -> Voice {
+        talking_into_as(sink, Some(uuid(1)))
+    }
+
+    /// [`talking_into`], as `me` or an unknown player.
+    fn talking_into_as(sink: OwnVoiceSink, me: Option<Uuid>) -> Voice {
         let (events, _rx) = crate::event::channel();
         let io = AudioIo {
             source: Some(Box::new(yakvc_audio::ToneSource::new(440.0))),
@@ -1516,6 +1524,9 @@ mod tests {
             impairment: None,
         };
         let voice = Voice::start(&Config::default(), io, events);
+        if let Some(me) = me {
+            voice.set_own_uuid(me);
+        }
         voice.set_voice_sink(Some(Box::new(sink)));
         wait_for_output(&voice, true);
         voice
@@ -1571,6 +1582,23 @@ mod tests {
                 "own voice with {input:?}"
             );
         }
+        voice.stop();
+    }
+
+    #[test]
+    fn a_sink_hears_no_own_voice_before_the_player_is_known() {
+        let sink = OwnVoiceSink {
+            wants: true,
+            ..OwnVoiceSink::default()
+        };
+        let mut voice = talking_into_as(sink.clone(), None);
+        voice.set_input(Input {
+            push_to_talk: true,
+            ..Input::default()
+        });
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(voice.audio_stats().transmitting);
+        assert_eq!(*sink.frames.lock().unwrap(), 0);
         voice.stop();
     }
 
