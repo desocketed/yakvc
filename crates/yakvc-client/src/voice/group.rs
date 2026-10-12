@@ -191,6 +191,10 @@ impl VoiceState {
 
     /// Replaces the group mates, reporting who joined and left unless our
     /// own group just changed. Returns whether they changed.
+    ///
+    /// When the last mate leaves a group without a label, we leave it too:
+    /// an unnamed group is just the players in it, while a named one is a
+    /// place to come back to.
     pub(crate) fn update_mates(&mut self, mates: HashSet<Uuid>, events: &mut Vec<Event>) -> bool {
         let id = self.group.as_ref().map(OwnGroup::id);
         if self.mates_of.is_some() && self.mates_of == id {
@@ -199,6 +203,14 @@ impl VoiceState {
             }
             for &uuid in self.group_mates.difference(&mates) {
                 events.push(notice(GroupNoticeKind::Left, uuid, Uuid::nil()));
+            }
+            let unnamed = self
+                .group
+                .as_ref()
+                .is_some_and(|g| g.state.label.is_empty());
+            if unnamed && mates.is_empty() && !self.group_mates.is_empty() {
+                self.set_group(None);
+                return true;
             }
         }
         self.mates_of = id;
@@ -535,6 +547,43 @@ mod tests {
             events,
             [notice(GroupNoticeKind::Left, uuid(2), Uuid::nil())]
         );
+    }
+
+    #[test]
+    fn the_last_one_left_in_an_unnamed_group_leaves_it() {
+        let mut clients = group_of(3);
+        let carol = announce(&clients[2]);
+        let alice = &mut clients[0];
+
+        // Bob leaves: Carol is still there, so Alice stays.
+        alice.update_mates(alice.mates_among(&[carol]), &mut Vec::new());
+        assert!(alice.group.is_some());
+        // Carol leaves too: Alice is alone, so she leaves.
+        let mut events = Vec::new();
+        assert!(alice.update_mates(alice.mates_among(&[]), &mut events));
+        assert!(alice.group.is_none());
+        assert_eq!(
+            events,
+            vec![notice(GroupNoticeKind::Left, uuid(3), Uuid::nil())]
+        );
+
+        // A named group stays, even with nobody else in it.
+        let mut clients = group_of(2);
+        let alice = &mut clients[0];
+        alice
+            .change_group_state(|s| s.label = "Miners".into())
+            .unwrap();
+        alice.update_mates(HashSet::new(), &mut Vec::new());
+        assert!(alice.group.is_some());
+    }
+
+    #[test]
+    fn a_new_group_waiting_for_its_first_mate_is_kept() {
+        let mut alice = client(1);
+        start_group(&mut alice);
+        alice.update_mates(HashSet::new(), &mut Vec::new());
+        alice.update_mates(HashSet::new(), &mut Vec::new());
+        assert!(alice.group.is_some());
     }
 
     #[test]
