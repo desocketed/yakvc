@@ -399,9 +399,11 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		pressOptionButton(context, "yakvc.settings.input_device");
 		screenshotScreen(context, "voice-settings-microphone");
 		pressOptionButton(context, "yakvc.settings.input_device");
-		// The privacy settings are below the fold at the test's small window size.
-		scrollDown(context);
+		// The privacy settings are below the fold at the test's small window size, and start after the speakers.
+		scrollPast(context, "yakvc.settings.output_device");
 		screenshotScreen(context, "voice-settings-privacy");
+		scrollDown(context);
+		screenshotScreen(context, "voice-settings-developer");
 		context.clickScreenButton("gui.done");
 		context.waitForScreen(VoiceMenuScreen.class);
 		context.clickScreenButton("gui.done");
@@ -561,6 +563,20 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 	}
 
 	/** Scrolls the open screen's list to the end. */
+	/** Scrolls the options list until the option button {@code translationKey} has just gone out of view at the top. */
+	private static void scrollPast(ClientGameTestContext context, String translationKey) {
+		String caption = Component.translatable(translationKey).getString() + ":";
+		context.runOnClient(mc -> {
+			AbstractButton button = findButton(mc.gui.screen().children(), message -> message.startsWith(caption));
+			if (button == null) throw new AssertionError("no button " + translationKey + " in " + mc.gui.screen());
+			for (GuiEventListener widget : mc.gui.screen().children()) {
+				if (widget instanceof AbstractScrollArea list) {
+					list.setScrollAmount(list.scrollAmount() + button.getBottom() - list.getY());
+				}
+			}
+		});
+	}
+
 	private static void scrollDown(ClientGameTestContext context) {
 		context.runOnClient(mc -> {
 			for (GuiEventListener widget : mc.gui.screen().children()) {

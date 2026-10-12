@@ -160,10 +160,23 @@ Under **Account** the settings say whether your Minecraft account is verified (s
 
 - **Only Verified Players**: talk only with players whose Minecraft account is verified, the ones with the badge. Players without an account, as on offline-mode servers, can't hear you and you don't hear them. Off by default.
 
-Under **Troubleshooting**:
+![The developer settings](guide/voice-settings-developer.png)
+
+Under **Developer**, tools for testing Yak VC:
 
 - **Debug Overlay**: shows the [debug overlay](#the-debug-overlay). It switches on and off at once and isn't saved, so it is off again after a restart.
 - **Sound Tuning…**: opens [Sound Tuning](#sound-tuning).
+- **Test Sound**: plays a built-in test sound instead of your microphone, so you can hear how voices carry without talking. *Off* goes back to the microphone you picked.
+
+  | Test sound | What it is | Good for hearing |
+  | --- | --- | --- |
+  | Clicks | a sharp clap-like click a second | echo and reverb, in the quiet after each click |
+  | Noise Bursts | a short burst of hiss a second | which way a voice comes from, and how muffled it is |
+  | Sweep | a tone gliding from low to high | how much a wall muffles: the high end drops away |
+  | Beeps | short beeps rising in pitch | a bit of everything, easy on the ears |
+  | Tone | a steady tone | volume over distance |
+
+  They are sent like your voice, so set **Activation** to *Voice* or hold push to talk.
 
 ### Sound Tuning
 

@@ -54,7 +54,12 @@ const LIBRARIES: &[&str] = &[
     "xorg.libXext",
 ];
 
-pub(crate) fn session(names: &[String], join: bool) -> Result<()> {
+pub(crate) fn session(
+    names: &[String],
+    join: bool,
+    talkers: &[String],
+    talk_file: Option<&Path>,
+) -> Result<()> {
     let root = root();
     let dir = root.join("mod/run/dev");
     run(Command::new(root.join("mod/gradlew"))
@@ -62,6 +67,9 @@ pub(crate) fn session(names: &[String], join: bool) -> Result<()> {
         .args(["writeDevLaunchArgs", "--quiet"]))?;
     let launch = root.join("mod/build/devlaunch");
     let library_path = library_path(&root)?;
+    let talk_file = talk_file
+        .map(|file| fs::canonicalize(file).with_context(|| file.display().to_string()))
+        .transpose()?;
 
     let mut parts: Vec<(String, Child)> = Vec::new();
     let result = (|| {
@@ -82,9 +90,21 @@ pub(crate) fn session(names: &[String], join: bool) -> Result<()> {
             .context("no rendezvous yet: start a session without --join first")?;
         for name in names {
             let game_dir = dir.join(name);
+            let talk = match (talkers.contains(name), &talk_file) {
+                (false, _) => Talk::No,
+                (true, None) => Talk::Beeps,
+                (true, Some(file)) => Talk::File(file),
+            };
             parts.push((
                 name.clone(),
-                client(&game_dir, name, &client_config, &launch, &library_path)?,
+                client(
+                    &game_dir,
+                    name,
+                    &client_config,
+                    talk,
+                    &launch,
+                    &library_path,
+                )?,
             ));
         }
         wait_any(&mut parts)
@@ -134,11 +154,14 @@ fn client(
     dir: &Path,
     name: &str,
     client_config: &str,
+    talk: Talk,
     launch: &Path,
     library_path: &str,
 ) -> Result<Child> {
     // Written once, so each client's own settings survive between sessions.
-    write_once(&dir.join("config/yakvc/client.toml"), client_config)?;
+    let config = dir.join("config/yakvc/client.toml");
+    write_once(&config, client_config)?;
+    set_talking(&config, talk)?;
     write_once(
         &dir.join("options.txt"),
         "onboardAccessibility:false\nskipMultiplayerWarning:true\njoinedFirstServer:true\n",
@@ -227,10 +250,125 @@ fn exited(parts: &mut [(String, Child)]) -> Result<Option<String>> {
     Ok(None)
 }
 
+/// Whether a client talks on its own, and with what.
+#[derive(Clone, Copy)]
+enum Talk<'a> {
+    No,
+    /// The engine's built-in test input: beeps with quiet between them.
+    Beeps,
+    /// A WAV file, looping.
+    File(&'a Path),
+}
+
+/// The engine's built-in beeps, as a microphone id (`TEST_INPUTS` in yakvc-audio).
+const BEEPS: &str = "yakvc:test-beeps";
+
+/// Makes the client talk on its own, or stop: a talker picks the beeps as its
+/// microphone (or plays the file from `[dev]`) by voice activation, so nobody
+/// has to hold push-to-talk for it. Rewritten every session; the rest of the
+/// file is left as the player set it.
+fn set_talking(config: &Path, talk: Talk) -> Result<()> {
+    let text = fs::read_to_string(config)?;
+    let talking = !matches!(talk, Talk::No);
+    let mut audio = Vec::new();
+    if talking {
+        audio.push("activation = \"voice\"".to_owned());
+    }
+    if let Talk::Beeps = talk {
+        audio.push(format!("input_device = \"{BEEPS}\""));
+    }
+    let mut lines = Vec::new();
+    let mut table = String::new();
+    let mut has_audio = false;
+    for line in text.lines() {
+        let code = line.trim();
+        if code.starts_with('[') {
+            table = code.to_owned();
+        }
+        let ours = table == "[audio]"
+            && (talking && code.starts_with("activation")
+                || code.starts_with("input_device") && (talking || code.contains(BEEPS)));
+        if table == "[dev]" || ours {
+            continue;
+        }
+        lines.push(line.to_owned());
+        if code == "[audio]" {
+            has_audio = true;
+            lines.extend(audio.iter().cloned());
+        }
+    }
+    // The blank line before a dropped [dev] would otherwise pile up.
+    while lines.last().is_some_and(|line| line.trim().is_empty()) {
+        lines.pop();
+    }
+    if !has_audio && !audio.is_empty() {
+        lines.push(format!("\n[audio]\n{}", audio.join("\n")));
+    }
+    if let Talk::File(file) = talk {
+        // TOML strings escape backslashes, as in Windows paths.
+        let path = file.display().to_string().replace('\\', "\\\\");
+        lines.push(format!("\n[dev]\nwav = \"{path}\""));
+    }
+    fs::write(config, lines.join("\n") + "\n")?;
+    Ok(())
+}
+
 fn write_once(path: &Path, text: &str) -> Result<()> {
     if !path.exists() {
         fs::create_dir_all(path.parent().unwrap_or(&PathBuf::from(".")))?;
         fs::write(path, text)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn talking(before: &str, talk: Talk) -> String {
+        let dir = std::env::temp_dir().join(format!("yakvc-talk-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let config = dir.join(format!("client-{}.toml", before.len()));
+        fs::write(&config, before).unwrap();
+        set_talking(&config, talk).unwrap();
+        fs::read_to_string(&config).unwrap()
+    }
+
+    #[test]
+    fn a_talker_gets_voice_activation_and_the_beeps() {
+        let after = talking(
+            "dev_mode = true\n\n[audio]\nactivation = \"push_to_talk\"\ninput_device = \"hw:1\"\nbitrate = 24000\n",
+            Talk::Beeps,
+        );
+        assert_eq!(
+            after,
+            "dev_mode = true\n\n[audio]\nactivation = \"voice\"\ninput_device = \"yakvc:test-beeps\"\nbitrate = 24000\n"
+        );
+        // Talking again changes nothing.
+        assert_eq!(talking(&after, Talk::Beeps), after);
+        // Not talking puts the default microphone back, and keeps the activation.
+        assert_eq!(
+            talking(&after, Talk::No),
+            "dev_mode = true\n\n[audio]\nactivation = \"voice\"\nbitrate = 24000\n"
+        );
+    }
+
+    #[test]
+    fn a_talker_with_a_file_plays_it_from_dev() {
+        let after = talking("dev_mode = true\n", Talk::File(Path::new("/b.wav")));
+        assert_eq!(
+            after,
+            "dev_mode = true\n\n[audio]\nactivation = \"voice\"\n\n[dev]\nwav = \"/b.wav\"\n"
+        );
+        assert_eq!(
+            talking(&after, Talk::No),
+            "dev_mode = true\n\n[audio]\nactivation = \"voice\"\n"
+        );
+    }
+
+    #[test]
+    fn a_player_s_own_microphone_is_kept_when_not_talking() {
+        let before = "[audio]\ninput_device = \"hw:1\"\n";
+        assert_eq!(talking(before, Talk::No), before);
+    }
 }

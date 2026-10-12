@@ -128,6 +128,14 @@ enum Cmd {
         /// Only start these clients, joining a session that is already running.
         #[arg(long)]
         join: bool,
+        /// Players who talk on their own, with no microphone: they send a
+        /// looping clip, by voice activation. Repeat for more than one.
+        #[arg(long, value_name = "NAME")]
+        talk: Vec<String>,
+        /// What they say: a WAV file. Without it, the engine's built-in
+        /// test beeps, with gaps between so echoes and reverb can be heard.
+        #[arg(long, value_name = "WAV")]
+        talk_file: Option<PathBuf>,
     },
     /// Run a command against real audio devices: a private PipeWire session
     /// with a test microphone (playing a tone) and test speakers, reached
@@ -192,7 +200,12 @@ fn main() -> Result<()> {
             write_client_config,
             real_auth,
         } => dev::dev(port, dir, write_client_config, real_auth),
-        Cmd::Session { names, join } => session::session(&names, join),
+        Cmd::Session {
+            names,
+            join,
+            talk,
+            talk_file,
+        } => session::session(&names, join, &talk, talk_file.as_deref()),
         Cmd::WithPipewire { command } => std::process::exit(pipewire::with_pipewire(&command)?),
         Cmd::DeployRelay {
             flake,

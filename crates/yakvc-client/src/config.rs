@@ -123,6 +123,8 @@ impl Default for AcousticsConfig {
 pub struct DevConfig {
     /// Capture a sine tone of this frequency instead of the microphone.
     pub tone_hz: Option<f32>,
+    /// Capture this WAV file, looping, instead of the microphone.
+    pub wav: Option<std::path::PathBuf>,
     /// Discard the output instead of opening speakers.
     pub null_output: bool,
 }
@@ -213,6 +215,9 @@ impl Config {
             && !(1.0..=20_000.0).contains(&hz)
         {
             return invalid("dev.tone_hz must be between 1 and 20000");
+        }
+        if self.dev.tone_hz.is_some() && self.dev.wav.is_some() {
+            return invalid("dev.tone_hz and dev.wav can't both be set");
         }
         Ok(())
     }
@@ -400,6 +405,7 @@ mod tests {
             "[audio]\ninput_gain = -1.0",
             "[audio]\nvad_threshold_db = 3.0",
             "dev_mode = true\n[dev]\ntone_hz = 0.0",
+            "dev_mode = true\n[dev]\ntone_hz = 440.0\nwav = \"a.wav\"",
         ] {
             assert!(
                 matches!(Config::from_toml(toml), Err(ConfigError::Invalid(_))),
