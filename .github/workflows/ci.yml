@@ -1,9 +1,10 @@
 name: CI
 
-# The repository is public, so standard runners cost nothing. Pull requests
-# run the Linux checks; the merge queue runs everything on Linux, Windows and
-# macOS on the exact commit that lands on main, so the push to main that
-# follows has nothing left to build. A version tag also publishes the release.
+# The repository is public, so standard runners cost nothing: pull requests
+# build on Linux, Windows and macOS. A merge queue run, once the repository
+# can have one (it needs an organization), would test the exact commit that
+# lands, and the push to main then skips it.
+# A version tag also publishes the release.
 on:
   push:
     branches: [main]
@@ -136,10 +137,9 @@ jobs:
 
   # Each Mac architecture on its own runner, in parallel: one after the
   # other they were the slowest job. The `jar` job merges them.
-  # Windows and macOS build in the merge queue, not on every pull request push.
   natives:
     needs: changes
-    if: needs.changes.outputs.code == 'true' && github.event_name != 'pull_request'
+    if: needs.changes.outputs.code == 'true'
     strategy:
       fail-fast: false
       matrix:
