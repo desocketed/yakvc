@@ -19,9 +19,9 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use tokio::sync::watch;
 use yakvc_audio::{
-    AudioError, DeviceChoice, Encoder, FRAME_SAMPLES, FrameSink, FrameSource, InputConfig,
-    InputProcessor, JitterConfig, Microphone, Mixer, MonoFrame, Muffle, Packet, Pulled,
-    ReceiveStream, Speakers, StereoFrame, StreamStats, level_db,
+    AudioError, DeviceChoice, Encoder, FRAME_DURATION, FRAME_SAMPLES, FrameSink, FrameSource,
+    InputConfig, InputProcessor, JitterConfig, Microphone, Mixer, MonoFrame, Muffle, Packet,
+    Pulled, ReceiveStream, Speakers, StereoFrame, StreamStats, level_db,
 };
 use yakvc_proto::peer::CloseCode;
 use yakvc_proto::voice::{VERSION, VoiceHeader, VoiceMsg};
@@ -654,6 +654,9 @@ struct AudioLoop {
     sink: Device<Box<dyn FrameSink>>,
     /// Plays voice instead of `sink` while set.
     voice_sink: Option<Box<dyn VoiceSink>>,
+    /// When `voice_sink` may next get a frame: it is held to real time,
+    /// whatever its `wants_frame` says.
+    voice_sink_due: Instant,
     input: InputProcessor,
     input_config: InputConfig,
     encoder: Option<Encoder>,
@@ -704,6 +707,7 @@ impl AudioLoop {
             source: Device::new("microphone", io.source, state.input_device()),
             sink: Device::new("speakers", io.sink, state.output_device()),
             voice_sink: None,
+            voice_sink_due: Instant::now(),
             input: InputProcessor::new(input_config.clone()),
             input_config,
             encoder: None,
@@ -783,13 +787,36 @@ impl AudioLoop {
             self.sink.io = None;
             self.sink.retry_at = Instant::now();
         }
+        // The old output hears its streams end, and the new one starts
+        // fresh, from each voice's next frames rather than mid-stream.
+        for (uuid, remote) in std::mem::take(&mut self.remotes) {
+            if let Some(old) = &mut self.voice_sink {
+                old.stream_end(uuid);
+            }
+            if remote.talking {
+                self.talking(uuid, false);
+            }
+        }
         self.voice_sink = sink;
+        self.voice_sink_due = Instant::now();
     }
 
-    /// Whether the output in use wants another frame now.
+    /// Whether the output in use wants another frame now. A voice sink's
+    /// own pacing is trusted only up to real time: one that always says yes
+    /// would otherwise drain the jitter buffers early. It may catch up on
+    /// at most a tick's worth of frames it fell behind by.
     fn output_wants_frame(&mut self) -> bool {
         match &mut self.voice_sink {
-            Some(sink) => sink.wants_frame(),
+            Some(sink) => {
+                let now = Instant::now();
+                if self.voice_sink_due > now || !sink.wants_frame() {
+                    return false;
+                }
+                let catch_up = FRAME_DURATION * MAX_PLAYS_PER_TICK as u32;
+                let earliest = now.checked_sub(catch_up).unwrap_or(now);
+                self.voice_sink_due = self.voice_sink_due.max(earliest) + FRAME_DURATION;
+                true
+            }
             None => self.sink.io.as_ref().is_some_and(|sink| sink.wants_frame()),
         }
     }
@@ -845,10 +872,13 @@ impl AudioLoop {
         }
         if transmitting
             && !state.input.deafened
+            // Until the player is known, the sink couldn't tell whose voice
+            // it is, so it gets none.
+            && let Some(me) = state.own_uuid
             && let Some(sink) = &mut self.voice_sink
             && sink.wants_own_voice()
         {
-            sink.own_voice(state.own_uuid.unwrap_or_default(), frame);
+            sink.own_voice(me, frame);
         }
         self.set_transmitting(transmitting, &state);
         self.ts = self.ts.wrapping_add(FRAME_SAMPLES as u32);
@@ -1481,6 +1511,11 @@ mod tests {
 
     /// A voice on a 440 Hz tone, with `sink` in place of the speakers.
     fn talking_into(sink: OwnVoiceSink) -> Voice {
+        talking_into_as(sink, Some(uuid(1)))
+    }
+
+    /// [`talking_into`], as `me` or an unknown player.
+    fn talking_into_as(sink: OwnVoiceSink, me: Option<Uuid>) -> Voice {
         let (events, _rx) = crate::event::channel();
         let io = AudioIo {
             source: Some(Box::new(yakvc_audio::ToneSource::new(440.0))),
@@ -1489,6 +1524,9 @@ mod tests {
             impairment: None,
         };
         let voice = Voice::start(&Config::default(), io, events);
+        if let Some(me) = me {
+            voice.set_own_uuid(me);
+        }
         voice.set_voice_sink(Some(Box::new(sink)));
         wait_for_output(&voice, true);
         voice
@@ -1548,6 +1586,23 @@ mod tests {
     }
 
     #[test]
+    fn a_sink_hears_no_own_voice_before_the_player_is_known() {
+        let sink = OwnVoiceSink {
+            wants: true,
+            ..OwnVoiceSink::default()
+        };
+        let mut voice = talking_into_as(sink.clone(), None);
+        voice.set_input(Input {
+            push_to_talk: true,
+            ..Input::default()
+        });
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(voice.audio_stats().transmitting);
+        assert_eq!(*sink.frames.lock().unwrap(), 0);
+        voice.stop();
+    }
+
+    #[test]
     fn a_sink_hears_no_own_voice_unless_it_asks() {
         let sink = OwnVoiceSink::default();
         let mut voice = talking_into(sink.clone());
@@ -1561,11 +1616,14 @@ mod tests {
         voice.stop();
     }
 
-    /// Always wants another frame, as a buggy sink might.
-    struct Greedy;
+    /// Always wants another frame, as a buggy sink might, and counts how
+    /// often it is asked.
+    #[derive(Clone, Default)]
+    struct Greedy(Arc<Mutex<u32>>);
 
     impl VoiceSink for Greedy {
         fn wants_frame(&mut self) -> bool {
+            *self.0.lock().unwrap() += 1;
             true
         }
 
@@ -1584,13 +1642,103 @@ mod tests {
             impairment: None,
         };
         let mut voice = Voice::start(&Config::default(), io, events);
-        voice.set_voice_sink(Some(Box::new(Greedy)));
+        voice.set_voice_sink(Some(Box::new(Greedy::default())));
         // The stats are written after the play loop, so they only change if
         // the loop ends.
         wait_for_output(&voice, true);
         let start = Instant::now();
         voice.stop();
         assert!(start.elapsed() < STOP_TIMEOUT, "the audio thread was stuck");
+    }
+
+    #[test]
+    fn a_greedy_sink_plays_in_real_time() {
+        let (events, _rx) = crate::event::channel();
+        let io = AudioIo {
+            source: Some(Box::new(yakvc_audio::SilenceSource::new())),
+            sink: None,
+            #[cfg(feature = "sim")]
+            impairment: None,
+        };
+        let mut voice = Voice::start(&Config::default(), io, events);
+        let sink = Greedy::default();
+        voice.set_voice_sink(Some(Box::new(sink.clone())));
+        wait_for_output(&voice, true);
+        let start = *sink.0.lock().unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        let played = *sink.0.lock().unwrap() - start;
+        voice.stop();
+        // 25 frames in real time; unpaced it would be 1000. Leeway for a
+        // slow test machine.
+        assert!(
+            (15..=45).contains(&played),
+            "played {played} frames in 500 ms"
+        );
+    }
+
+    /// Records the streams it is told ended.
+    #[derive(Clone, Default)]
+    struct EndsSink(Arc<Mutex<Vec<Uuid>>>);
+
+    impl VoiceSink for EndsSink {
+        fn wants_frame(&mut self) -> bool {
+            false
+        }
+
+        fn frame(&mut self, _frame: &VoiceFrame<'_>) {}
+
+        fn stream_end(&mut self, uuid: Uuid) {
+            self.0.lock().unwrap().push(uuid);
+        }
+    }
+
+    /// An audio loop with no devices, not running, and a remote speaker
+    /// `uuid(2)` mid-stream.
+    fn loop_with_a_remote() -> AudioLoop {
+        let (events, _rx) = crate::event::channel();
+        let (to_audio, from_net) = std_mpsc::sync_channel(AUDIO_QUEUE);
+        let shared = Arc::new(Shared::new(
+            &Config::default(),
+            to_audio,
+            events,
+            #[cfg(feature = "sim")]
+            None,
+        ));
+        let io = AudioIo {
+            source: None,
+            sink: None,
+            #[cfg(feature = "sim")]
+            impairment: None,
+        };
+        let mut audio = AudioLoop::new(shared, from_net, io, Arc::new(AtomicBool::new(false)));
+        audio.remotes.insert(
+            uuid(2),
+            Remote {
+                link_id: 0,
+                stream: ReceiveStream::new(JitterConfig::default()),
+                muffle: Muffle::new(),
+                group: false,
+                talking: true,
+                silent_frames: 0,
+            },
+        );
+        audio
+    }
+
+    #[test]
+    fn a_replaced_sink_hears_its_streams_end_and_the_next_starts_fresh() {
+        for next in [
+            Some(Box::new(EndsSink::default()) as Box<dyn VoiceSink>),
+            None,
+        ] {
+            let mut audio = loop_with_a_remote();
+            let old = EndsSink::default();
+            audio.voice_sink = Some(Box::new(old.clone()));
+            *audio.shared.voice_sink.lock().unwrap() = Some(next);
+            audio.switch_output();
+            assert_eq!(*old.0.lock().unwrap(), [uuid(2)]);
+            assert!(audio.remotes.is_empty(), "the stream carried over");
+        }
     }
 
     #[test]

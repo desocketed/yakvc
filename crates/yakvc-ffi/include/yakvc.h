@@ -242,7 +242,8 @@ typedef struct YakVcVoiceSink {
   void (*frame)(void *user, const struct YakVcVoiceFrame *frame);
   /**
    * The speaker `uuid` (16 bytes) is gone: no more frames from it until
-   * it comes back.
+   * it comes back. Also sent for every stream when the sink is replaced
+   * or cleared.
    */
   void (*stream_end)(void *user, const uint8_t *uuid);
 } YakVcVoiceSink;
