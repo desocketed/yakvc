@@ -55,6 +55,11 @@ public record ClientConfig(String toml) {
 		return bool(value("", "setup_done"), false);
 	}
 
+	/** Whether to ask GitHub for a newer Yak VC at startup. Only the mod reads it. */
+	public boolean checkForUpdates() {
+		return bool(value("", "check_for_updates"), true);
+	}
+
 	/** Blocks; the engine's default when unset. */
 	public double voiceRange() {
 		return number(value("", "voice_range"), 48);
@@ -256,6 +261,10 @@ public record ClientConfig(String toml) {
 
 			# The voice menu shows a short setup card until it is dismissed. A modpack can ship this as true.
 			setup_done = false
+
+			# At startup, ask GitHub whether a newer Yak VC is out and say so on the title screen. Nothing about you
+			# is sent beyond the request itself.
+			check_for_updates = true
 
 			# Development against a local `yakvc-server` with `insecure_dev_auth = true`: uncomment these two lines
 			# and the [rendezvous] table below, filled in with the IDs the server prints at startup.

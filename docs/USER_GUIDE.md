@@ -153,6 +153,7 @@ Open the settings from **Options → Music & Sounds → Voice Chat…**, at the 
 - **Obey Chat Limits**: turns voice off while your Microsoft account or launcher disables chat. On by default.
 - **Mute Blocked**: players you block in Social Interactions can't hear you, and you don't hear them. On by default.
 - **Group Invites**: who may invite you to a [group](#groups): *Everyone* (the default) or *Nobody*. Setting `invites = "friends"` in the [config file](#the-config-file) allows only the players in `friends_only`, which is edited there too. Invites from anyone else are ignored.
+- **Check for Updates**: once at startup, asks GitHub whether a newer Yak VC is out, and if so names it in the title screen's top left corner; click it to open the release page. On by default; it takes effect after you restart the game.
 
 Under **Account** the settings say whether your Minecraft account is verified (see [Installing](#installing)).
 
@@ -181,6 +182,7 @@ Voices follow the world: walls and closed doors muffle them, a voice behind a wa
 - **The Yak VC server** learns which Yak VC players are on a server together and their IP addresses, but never hears what you say, and it keeps no record of who played with whom. Your game sends it the rest of the player list only as scrambled codes, but player IDs are public, so it could work out who is on your list.
 - **Chat restrictions.** If your Microsoft account (for example a child account) or your launcher turns chat off, Yak VC turns voice off too. **Obey Chat Limits** controls this.
 - **Blocked players.** Anyone you block in Social Interactions is muted both ways. **Mute Blocked** controls this.
+- **Update check.** Once at startup Yak VC asks GitHub for its list of releases, so GitHub sees your IP address and that you run Yak VC; nothing else is sent. **Check for Updates** turns it off.
 - **Server owners** can ask Yak VC to stay off: put `[no-yakvc]` anywhere in the server's MOTD, and Yak VC turns itself off for everyone on that server. Nothing enforces this; the mod simply honours it.
 
 ## When something goes wrong
@@ -236,6 +238,7 @@ The keys that the settings screen shows:
 | `respect_chat_restrictions` | `true` | Obey Chat Limits |
 | `mute_blocked_players` | `true` | Mute Blocked |
 | `verified_only` | `false` | Only Verified Players |
+| `check_for_updates` | `true` | Check for Updates |
 | `invites` | `"everyone"` | Group Invites (`"everyone"`, `"friends"` or `"nobody"`) |
 | `[audio]` `activation` | `"push_to_talk"` | Activation (`"push_to_talk"` or `"voice"`) |
 | `[audio]` `bitrate` | `24000` | Bitrate, in bits per second |
