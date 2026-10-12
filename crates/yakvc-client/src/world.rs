@@ -30,9 +30,13 @@ pub struct World {
 /// How the space around the listener rings, as the game estimates it.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Room {
-    /// How much of each positional voice goes to the reverb: 0 in open air,
-    /// up to 1 shut in.
+    /// How walled in the listener is, which scales every positional voice's
+    /// reverb send: 0 in open air, up to 1 shut in.
     pub reverb: f32,
+    /// Metres from the listener at which a voice's reverb is as loud as the
+    /// voice itself (the room's critical distance): nearer voices are mostly
+    /// direct sound, further ones mostly room.
+    pub critical_distance: f32,
     /// Seconds until the reverb fades by 60 dB: longer in bigger spaces.
     pub decay: f32,
     /// How loud the distinct echo off the far walls is, from 0: loud in a
@@ -120,6 +124,10 @@ pub(crate) fn interpolate(from: &World, to: &World, t: f64) -> World {
         .collect();
     let room = Room {
         reverb: lerp(f64::from(from.room.reverb), f64::from(to.room.reverb)) as f32,
+        critical_distance: lerp(
+            f64::from(from.room.critical_distance),
+            f64::from(to.room.critical_distance),
+        ) as f32,
         decay: lerp(f64::from(from.room.decay), f64::from(to.room.decay)) as f32,
         echo: lerp(f64::from(from.room.echo), f64::from(to.room.echo)) as f32,
         echo_delay: lerp(

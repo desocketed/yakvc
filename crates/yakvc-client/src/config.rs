@@ -109,7 +109,7 @@ impl Default for AcousticsConfig {
             distance_rolloff: 0.6,
             occlusion_attenuation: 0.75,
             muffled_cutoff_hz: 600.0,
-            reverb_level: 1.2,
+            reverb_level: 0.85,
             reverb_damping: 0.25,
             echo_feedback: 0.4,
         }

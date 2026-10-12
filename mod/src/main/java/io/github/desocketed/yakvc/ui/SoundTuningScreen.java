@@ -47,13 +47,11 @@ public final class SoundTuningScreen extends OptionsSubScreen {
 		slider("muffled_cutoff_hz", 2, 80, 50, 600, value -> label("hertz", "%.0f", value));
 		slider("path_bend", 0, 100, 0.01, mod.pathBend(), SoundTuningScreen::percent);
 		slider("path_per_block", 0, 100, 0.001, mod.pathPerBlock(), SoundTuningScreen::percent);
-		slider("reverb_max", 0, 100, 0.01, mod.reverbMax(), SoundTuningScreen::percent);
-		slider("reverb_level", 0, 400, 0.01, 1.2, SoundTuningScreen::percent);
+		slider("reverb_level", 0, 400, 0.01, 0.85, SoundTuningScreen::percent);
 		slider("reverb_damping", 0, 95, 0.01, 0.25, SoundTuningScreen::percent);
 		slider("room_reach", 8, 128, 1, mod.roomReach(), SoundTuningScreen::blocks);
-		slider("decay_small", 1, 30, 0.1, mod.decaySmall(), value -> label("seconds", "%.1f", value));
-		slider("decay_large", 5, 100, 0.1, mod.decayLarge(), value -> label("seconds", "%.1f", value));
-		slider("echo_level", 0, 100, 0.01, mod.echoLevel(), SoundTuningScreen::percent);
+		slider("furnishing", 0, 100, 0.01, mod.furnishing(), SoundTuningScreen::percent);
+		slider("max_decay", 5, 100, 0.1, mod.maxDecay(), value -> label("seconds", "%.1f", value));
 		slider("echo_feedback", 0, 90, 0.01, 0.4, SoundTuningScreen::percent);
 	}
 
@@ -74,11 +72,9 @@ public final class SoundTuningScreen extends OptionsSubScreen {
 		list.addSmall(option("occlusion_attenuation"), option("muffled_cutoff_hz"));
 		list.addSmall(option("path_bend"), option("path_per_block"));
 		list.addHeader(Component.translatable("yakvc.tuning.rooms"));
-		list.addSmall(option("reverb_max"), option("reverb_level"));
-		list.addSmall(option("reverb_damping"), option("room_reach"));
-		list.addSmall(option("decay_small"), option("decay_large"));
-		list.addHeader(Component.translatable("yakvc.tuning.echo"));
-		list.addSmall(option("echo_level"), option("echo_feedback"));
+		list.addSmall(option("reverb_level"), option("reverb_damping"));
+		list.addSmall(option("furnishing"), option("max_decay"));
+		list.addSmall(option("room_reach"), option("echo_feedback"));
 		list.addBig(Button.builder(Component.translatable("yakvc.tuning.reset"), button -> {
 			sliders.forEach(Slider::reset);
 			apply();

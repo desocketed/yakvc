@@ -437,7 +437,7 @@ public final class GameStateFeeder {
 		worldEmpty = true;
 		room = Room.OPEN_AIR;
 		detours.clear();
-		bridge.pushWorld(engine, new double[9], new byte[0], new double[0]);
+		bridge.pushWorld(engine, new double[10], new byte[0], new double[0]);
 	}
 
 	/**
@@ -470,8 +470,8 @@ public final class GameStateFeeder {
 		float yaw = camera.isInitialized() ? camera.yRot() : player.getYRot();
 		float pitch = camera.isInitialized() ? camera.xRot() : player.getXRot();
 		room = room.towards(Room.around(minecraft.level, eye, tuning));
-		double[] listener = {eye.x, eye.y, eye.z, yaw, pitch, room.reverb(), room.decay(), room.echo(),
-				room.echoDelay()};
+		double[] listener = {eye.x, eye.y, eye.z, yaw, pitch, room.reverb(),
+				room.criticalDistance(), room.decay(), room.echo(), room.echoDelay()};
 
 		List<UUID> uuids = new ArrayList<>();
 		List<double[]> players = new ArrayList<>();

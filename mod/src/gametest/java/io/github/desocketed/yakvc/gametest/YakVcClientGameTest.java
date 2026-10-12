@@ -281,18 +281,18 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		context.runOnClient(mc -> mc.gui.setScreen(new SoundTuningScreen(null, mc.options, feeder)));
 		context.waitTicks(2);
 		context.takeScreenshot(TestScreenshotOptions.of("sound-tuning").disableCounterPrefix());
-		context.runOnClient(mc -> ((SoundTuningScreen) mc.gui.screen()).option("echo_level").set(90));
-		if (context.computeOnClient(mc -> feeder.config().acoustics("echo_level", -1)) != 0.9) {
+		context.runOnClient(mc -> ((SoundTuningScreen) mc.gui.screen()).option("furnishing").set(90));
+		if (context.computeOnClient(mc -> feeder.config().acoustics("furnishing", -1)) != 0.9) {
 			throw new AssertionError("the tuning didn't reach the engine");
 		}
 		context.runOnClient(mc -> mc.gui.setScreen(null));
 		context.waitTicks(2);
-		if (!context.computeOnClient(mc -> feeder.config().toml()).contains("echo_level = 0.9")) {
+		if (!context.computeOnClient(mc -> feeder.config().toml()).contains("furnishing = 0.9")) {
 			throw new AssertionError("the tuning wasn't saved");
 		}
 		// Back to the defaults, so later runs start the same.
 		context.runOnClient(mc -> VoiceSettingsScreen.applyAndSave(feeder,
-				feeder.config().with("acoustics", "echo_level", null)));
+				feeder.config().with("acoustics", "furnishing", null)));
 	}
 
 	/** Two engine errors in a row both show, one after the other, rather than the second replacing the first. */
