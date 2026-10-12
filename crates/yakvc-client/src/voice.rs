@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use tokio::sync::watch;
 use yakvc_audio::{
-    AudioError, DeviceChoice, Encoder, FRAME_SAMPLES, FrameSink, FrameSource, InputConfig,
+    AudioError, DeviceChoice, Encoder, FRAME_DURATION, FRAME_SAMPLES, FrameSink, FrameSource, InputConfig,
     InputProcessor, JitterConfig, Microphone, Mixer, MonoFrame, Muffle, Packet, Pulled,
     ReceiveStream, Speakers, StereoFrame, StreamStats, level_db,
 };
@@ -654,6 +654,9 @@ struct AudioLoop {
     sink: Device<Box<dyn FrameSink>>,
     /// Plays voice instead of `sink` while set.
     voice_sink: Option<Box<dyn VoiceSink>>,
+    /// When `voice_sink` may next get a frame: it is held to real time,
+    /// whatever its `wants_frame` says.
+    voice_sink_due: Instant,
     input: InputProcessor,
     input_config: InputConfig,
     encoder: Option<Encoder>,
@@ -704,6 +707,7 @@ impl AudioLoop {
             source: Device::new("microphone", io.source, state.input_device()),
             sink: Device::new("speakers", io.sink, state.output_device()),
             voice_sink: None,
+            voice_sink_due: Instant::now(),
             input: InputProcessor::new(input_config.clone()),
             input_config,
             encoder: None,
@@ -794,12 +798,25 @@ impl AudioLoop {
             }
         }
         self.voice_sink = sink;
+        self.voice_sink_due = Instant::now();
     }
 
-    /// Whether the output in use wants another frame now.
+    /// Whether the output in use wants another frame now. A voice sink's
+    /// own pacing is trusted only up to real time: one that always says yes
+    /// would otherwise drain the jitter buffers early. It may catch up on
+    /// at most a tick's worth of frames it fell behind by.
     fn output_wants_frame(&mut self) -> bool {
         match &mut self.voice_sink {
-            Some(sink) => sink.wants_frame(),
+            Some(sink) => {
+                let now = Instant::now();
+                if self.voice_sink_due > now || !sink.wants_frame() {
+                    return false;
+                }
+                let catch_up = FRAME_DURATION * MAX_PLAYS_PER_TICK as u32;
+                let earliest = now.checked_sub(catch_up).unwrap_or(now);
+                self.voice_sink_due = self.voice_sink_due.max(earliest) + FRAME_DURATION;
+                true
+            }
             None => self.sink.io.as_ref().is_some_and(|sink| sink.wants_frame()),
         }
     }
@@ -1571,11 +1588,14 @@ mod tests {
         voice.stop();
     }
 
-    /// Always wants another frame, as a buggy sink might.
-    struct Greedy;
+    /// Always wants another frame, as a buggy sink might, and counts how
+    /// often it is asked.
+    #[derive(Clone, Default)]
+    struct Greedy(Arc<Mutex<u32>>);
 
     impl VoiceSink for Greedy {
         fn wants_frame(&mut self) -> bool {
+            *self.0.lock().unwrap() += 1;
             true
         }
 
@@ -1594,13 +1614,35 @@ mod tests {
             impairment: None,
         };
         let mut voice = Voice::start(&Config::default(), io, events);
-        voice.set_voice_sink(Some(Box::new(Greedy)));
+        voice.set_voice_sink(Some(Box::new(Greedy::default())));
         // The stats are written after the play loop, so they only change if
         // the loop ends.
         wait_for_output(&voice, true);
         let start = Instant::now();
         voice.stop();
         assert!(start.elapsed() < STOP_TIMEOUT, "the audio thread was stuck");
+    }
+
+    #[test]
+    fn a_greedy_sink_plays_in_real_time() {
+        let (events, _rx) = crate::event::channel();
+        let io = AudioIo {
+            source: Some(Box::new(yakvc_audio::SilenceSource::new())),
+            sink: None,
+            #[cfg(feature = "sim")]
+            impairment: None,
+        };
+        let mut voice = Voice::start(&Config::default(), io, events);
+        let sink = Greedy::default();
+        voice.set_voice_sink(Some(Box::new(sink.clone())));
+        wait_for_output(&voice, true);
+        let start = *sink.0.lock().unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        let played = *sink.0.lock().unwrap() - start;
+        voice.stop();
+        // 25 frames in real time; unpaced it would be 1000. Leeway for a
+        // slow test machine.
+        assert!((15..=45).contains(&played), "played {played} frames in 500 ms");
     }
 
     /// Records the streams it is told ended.
