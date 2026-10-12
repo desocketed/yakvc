@@ -753,6 +753,11 @@ impl AudioLoop {
         };
         let failure = self.source.io.as_ref().and_then(|source| source.failure());
         let problem = self.source.maintain(failure, &input, now, |choice| {
+            if let DeviceChoice::Id(id) = choice
+                && let Some(test) = yakvc_audio::open_test_input(id)
+            {
+                return Ok(test);
+            }
             Microphone::open(choice).map(|mic| Box::new(mic) as Box<dyn FrameSource>)
         });
         if let Some(problem) = problem {
