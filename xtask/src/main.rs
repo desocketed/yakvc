@@ -58,6 +58,10 @@ enum Cmd {
         /// host only.
         #[arg(long)]
         from: Option<PathBuf>,
+        /// Skip the mod's unit tests, for CI's release jar: another job
+        /// already ran them.
+        #[arg(long)]
+        skip_tests: bool,
     },
     /// Package a release jar as launcher packs (a Modrinth .mrpack and a Prism
     /// instance zip), each with Fabric API inside.
@@ -203,7 +207,7 @@ fn main() -> Result<()> {
         ),
         Cmd::Cli { target, out } => cli(&target, &out),
         Cmd::Header { check } => header(check),
-        Cmd::Dist { from } => dist(from.as_deref()),
+        Cmd::Dist { from, skip_tests } => dist(from.as_deref(), skip_tests),
         Cmd::ServerImage { save } => {
             server_image()?;
             match save {
@@ -577,8 +581,9 @@ fn sha256(path: &Path) -> Result<String> {
 }
 
 /// Packages the release jar from the staged natives and THIRD_PARTY_LICENSES
-/// with the Gradle build, which also runs the mod's unit tests.
-fn dist(from: Option<&Path>) -> Result<()> {
+/// with the Gradle build, which also runs the mod's unit tests unless
+/// `skip_tests`.
+fn dist(from: Option<&Path>, skip_tests: bool) -> Result<()> {
     let work = root().join("target/dist");
     let natives_dir = work.join("natives");
     if natives_dir.exists() {
@@ -614,11 +619,15 @@ fn dist(from: Option<&Path>) -> Result<()> {
     };
     let mut gradle = Command::new(root().join("mod").join(gradlew));
     pass_version(&mut gradle);
-    run(gradle
+    gradle
         .current_dir(root().join("mod"))
         .arg("build")
         .arg(format!("-Pyakvc.prebuiltNatives={}", natives_dir.display()))
-        .arg(format!("-Pyakvc.thirdPartyLicenses={}", licenses.display())))?;
+        .arg(format!("-Pyakvc.thirdPartyLicenses={}", licenses.display()));
+    if skip_tests {
+        gradle.args(["-x", "test"]);
+    }
+    run(&mut gradle)?;
 
     let jar = format!("yakvc-{}.jar", version());
     let dist = root().join("dist");
