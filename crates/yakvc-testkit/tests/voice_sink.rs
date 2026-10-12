@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::time::{Instant, sleep};
-use yakvc_client::{Event, PeerState, Uuid, Vec3, VoiceFrame, VoiceSink};
+use yakvc_client::{Event, MonoFrame, PeerState, Uuid, Vec3, VoiceFrame, VoiceSink};
 use yakvc_testkit::{TestClient, TestNet, see_each_other};
 
 /// Peak level above which a frame counts as audible: -60 dBFS.
@@ -32,6 +32,9 @@ struct Recorder {
     wanted: Arc<Mutex<u32>>,
     got: Arc<Mutex<Vec<Got>>>,
     ended: Arc<Mutex<Vec<Uuid>>>,
+    /// Asks for the player's own voice, and keeps whose audible frames came.
+    wants_own: bool,
+    own: Arc<Mutex<Vec<Uuid>>>,
 }
 
 impl Recorder {
@@ -41,7 +44,14 @@ impl Recorder {
             wanted: Arc::default(),
             got: Arc::default(),
             ended: Arc::default(),
+            wants_own: false,
+            own: Arc::default(),
         }
+    }
+
+    fn with_own_voice(mut self) -> Self {
+        self.wants_own = true;
+        self
     }
 
     /// The latest audible frame from `uuid`.
@@ -81,12 +91,25 @@ impl VoiceSink for Recorder {
     fn stream_end(&mut self, uuid: Uuid) {
         self.ended.lock().unwrap().push(uuid);
     }
+
+    fn wants_own_voice(&self) -> bool {
+        self.wants_own
+    }
+
+    fn own_voice(&mut self, uuid: Uuid, pcm: &MonoFrame) {
+        if pcm.iter().any(|s| s.abs() > AUDIBLE) {
+            self.own.lock().unwrap().push(uuid);
+        }
+    }
 }
 
 /// Puts a recorder in `client`'s place of its speakers, once the audio
 /// thread has switched.
 async fn record(client: &TestClient) -> Recorder {
-    let recorder = Recorder::new();
+    record_with(client, Recorder::new()).await
+}
+
+async fn record_with(client: &TestClient, recorder: Recorder) -> Recorder {
     client
         .engine()
         .set_voice_sink(Some(Box::new(recorder.clone())));
@@ -174,6 +197,36 @@ async fn a_sink_gets_nearby_voice_instead_of_the_speakers() {
         recorder.ended.lock().unwrap().contains(&uuid)
     })
     .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_sink_that_asks_gets_the_own_voice_while_talking() {
+    let net = TestNet::start().await;
+    let (alice, bob) = pair(&net).await;
+    let own = record_with(&alice, Recorder::new().with_own_voice()).await;
+    let others = record(&bob).await;
+    sleep(Duration::from_millis(300)).await;
+    assert!(
+        own.own.lock().unwrap().is_empty(),
+        "own voice before talking"
+    );
+
+    alice.talk(true);
+    eventually("alice's own voice", || own.own.lock().unwrap().len() >= 5).await;
+    assert!(own.own.lock().unwrap().iter().all(|&u| u == alice.uuid()));
+    // It is only her own: bob's sink never asked, and gets her as a voice.
+    voice_from(&others, alice.uuid()).await;
+    assert!(others.own.lock().unwrap().is_empty());
+
+    alice.talk(false);
+    sleep(Duration::from_millis(200)).await;
+    let settled = own.own.lock().unwrap().len();
+    sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        own.own.lock().unwrap().len(),
+        settled,
+        "own voice after talking"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
