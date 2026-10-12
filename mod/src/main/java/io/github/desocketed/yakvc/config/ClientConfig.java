@@ -70,6 +70,11 @@ public record ClientConfig(String toml) {
 		return number(value("acoustics", key), fallback);
 	}
 
+	/** Linear gain on the microphone, 1 being unchanged; the engine's default when unset. */
+	public double inputGain() {
+		return number(value("audio", "input_gain"), 1);
+	}
+
 	public boolean noiseSuppression() {
 		return bool(value("audio", "noise_suppression"), true);
 	}
@@ -276,6 +281,8 @@ public record ClientConfig(String toml) {
 			activation = "push_to_talk"
 			# Opus bitrate in bits per second (16000 to 64000).
 			bitrate = 24000
+			# Microphone volume, 1.0 being unchanged (0 to 10).
+			input_gain = 1.0
 			noise_suppression = true
 			# Device ids, as the voice settings or `yakvc audio devices` list them.
 			# Unset means the system default microphone, and speakers matching the game's sound device.
