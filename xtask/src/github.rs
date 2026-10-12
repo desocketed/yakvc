@@ -138,7 +138,7 @@ pub(crate) fn release() -> Result<()> {
             "--target",
             &env::var("GITHUB_SHA")?,
             "--notes",
-            &dev_notes()?,
+            &dev_notes(&tag, version)?,
         ]);
     } else {
         gh.arg("--generate-notes");
@@ -189,17 +189,19 @@ pub(crate) fn release() -> Result<()> {
 }
 
 /// A dev build's release notes, in the releases' usual shape: a short line
-/// for players, then the commits since the previous release (dev or not)
-/// collapsed under "Technical details", so testers can see what's in it.
-fn dev_notes() -> Result<String> {
+/// for players, the download links, then the commits since the previous
+/// release (dev or not) collapsed under "Technical details", so testers can
+/// see what's in it.
+fn dev_notes(tag: &str, version: &str) -> Result<String> {
     let sha = env::var("GITHUB_SHA")?;
     let branch = env::var("GITHUB_REF_NAME")?;
     let mut notes = String::from(
         "**Development build for playtesting.** Not a release: it may be broken, and \
          everyone you play with needs this same build. Please [report anything \
-         odd](https://github.com/desocketed/yakvc/issues).\n\n\
-         <details>\n<summary>Technical details</summary>\n\n",
+         odd](https://github.com/desocketed/yakvc/issues).\n\n",
     );
+    notes.push_str(&downloads(tag, version));
+    notes.push_str("\n\n<details>\n<summary>Technical details</summary>\n\n");
     writeln!(notes, "Built from `{branch}` at {sha}.\n")?;
     if let Ok(previous) = git(&["describe", "--tags", "--abbrev=0", "--match", "v*", "HEAD"]) {
         let log = git(&[
@@ -212,6 +214,18 @@ fn dev_notes() -> Result<String> {
     }
     notes.push_str("\n</details>\n\n<!-- claude -->\n");
     Ok(notes)
+}
+
+/// The notes' download line: which file is the mod, and the launcher packs,
+/// since players otherwise have to guess among the assets.
+fn downloads(tag: &str, version: &str) -> String {
+    let url =
+        format!("https://github.com/desocketed/yakvc/releases/download/{tag}/yakvc-{version}");
+    format!(
+        "**Download:** [the mod (`yakvc-{version}.jar`)]({url}.jar) for your `mods` folder \
+         (needs Fabric API), or a ready-made instance with Fabric API included: \
+         [Modrinth App (`.mrpack`)]({url}.mrpack) · [Prism Launcher (`.zip`)]({url}-prism.zip)."
+    )
 }
 
 /// Keeps only the newest few dev releases, deleting older ones with their
