@@ -23,3 +23,16 @@ fill 23 -59 20 24 -57 20 air
 
 # A pool, to talk underwater.
 fill 40 -61 20 46 -64 26 water
+
+# A stone cavern, 48 wide, 24 tall and 48 deep inside, with an open doorway:
+# a long tail and a distinct echo. Built in pieces, as one fill may change at
+# most 32768 blocks.
+fill 0 -60 50 49 -60 99 stone
+fill 0 -35 50 49 -35 99 stone
+fill 0 -59 50 49 -36 50 stone
+fill 0 -59 99 49 -36 99 stone
+fill 0 -59 51 0 -36 98 stone
+fill 49 -59 51 49 -36 98 stone
+fill 1 -59 51 48 -48 98 air
+fill 1 -47 51 48 -36 98 air
+fill 24 -59 50 25 -57 50 air
