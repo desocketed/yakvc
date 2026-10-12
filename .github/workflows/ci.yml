@@ -361,6 +361,10 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
+      - uses: actions/checkout@v7
+      - name: Install toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - uses: actions/download-artifact@v8
         with:
           name: yakvc-mod
@@ -374,39 +378,7 @@ jobs:
         with:
           name: server
           path: server
-      - name: Check the tag matches the version
-        run: |
-          version=${GITHUB_REF_NAME#v}
-          test -f "dist/yakvc-$version.jar" || { echo "tag $GITHUB_REF_NAME, but built $(ls dist)" >&2; exit 1; }
-          echo "VERSION=$version" >> "$GITHUB_ENV"
-          # Alphas are playtest builds: a GitHub prerelease with no server
-          # image.
-          if [[ $version == *-alpha* ]]; then echo "GITHUB_ONLY=true" >> "$GITHUB_ENV"; fi
-      - name: GitHub release
-        run: |
-          # A version like 0.2.0-beta.1 makes a prerelease.
-          flags=(--generate-notes)
-          if [[ $VERSION == *-* ]]; then flags+=(--prerelease); fi
-          cp "dist/yakvc-$VERSION.jar" "dist/yakvc-$VERSION.mrpack" "dist/yakvc-$VERSION-prism.zip" \
-            server/yakvc-server-linux-x86_64 release/
-          # Checksums let a download by version (the NixOS server's, for one)
-          # pin and check the file's hash.
-          (cd release && sha256sum -- * > SHA256SUMS)
-          gh release create "$GITHUB_REF_NAME" "${flags[@]}" release/*
-      - name: Server image to GHCR
-        if: env.GITHUB_ONLY != 'true'
-        run: |
-          image=ghcr.io/${GITHUB_REPOSITORY_OWNER}/yakvc-server
-          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          docker load < server/yakvc-server-image.tar.gz
-          # Only a full release moves `latest`: a beta must not become what
-          # an unpinned `docker pull` gets.
-          tags=("$VERSION")
-          if [[ $VERSION != *-* ]]; then tags+=(latest); fi
-          for tag in "${tags[@]}"; do
-            docker tag yakvc-server:latest "$image:$tag"
-            docker push "$image:$tag"
-          done
+      - run: cargo xtask release
 
   # Puts the release on the production relay with `cargo xtask deploy-relay`
   # (see xtask/src/relay.rs). A manual run with "Deploy the relay" ticked

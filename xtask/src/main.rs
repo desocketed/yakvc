@@ -113,6 +113,9 @@ enum Cmd {
         #[arg(long)]
         pipewire: bool,
     },
+    /// For CI's `release` job on a version tag: the GitHub release and
+    /// the server image on GHCR, from the run's downloaded artifacts.
+    Release,
     /// For CI's `changes` job: whether this run builds anything, written to
     /// `$GITHUB_OUTPUT` as `code=true` or `code=false`.
     Changes,
@@ -219,6 +222,7 @@ fn main() -> Result<()> {
             pipewire,
         ),
         Cmd::Changes => github::changes(),
+        Cmd::Release => github::release(),
         Cmd::CheckServerDeps => ci::check_server_deps(),
         Cmd::CheckJar { jar } => ci::check_jar(&jar),
         Cmd::ServerSmoke => ci::server_smoke(),
@@ -522,10 +526,7 @@ fn write_manifest(out: &Path) -> Result<()> {
         }
         for lib in fs::read_dir(platform.path())? {
             let lib = lib?;
-            let hash: String = Sha256::digest(fs::read(lib.path())?)
-                .iter()
-                .map(|b| format!("{b:02x}"))
-                .collect();
+            let hash = sha256(&lib.path())?;
             let rel = format!(
                 "{}/{}",
                 platform.file_name().to_string_lossy(),
@@ -541,6 +542,15 @@ fn write_manifest(out: &Path) -> Result<()> {
     }
     fs::write(out.join("natives.sha256"), manifest)?;
     Ok(())
+}
+
+/// A file's SHA-256, in hex as `sha256sum` prints it.
+fn sha256(path: &Path) -> Result<String> {
+    let bytes = fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    Ok(Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect())
 }
 
 /// Packages the release jar from the staged natives and THIRD_PARTY_LICENSES
