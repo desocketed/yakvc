@@ -278,9 +278,9 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
-      # ALSA for the JUnit tests' native load; LLVM for llvm-lipo.
+      # LLVM for llvm-lipo.
       - name: Install system libraries
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev llvm
+        run: sudo apt-get update && sudo apt-get install -y llvm
       - name: Install toolchain
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -303,8 +303,9 @@ jobs:
           path: maccli
           merge-multiple: true
       - run: cargo xtask merge-macos natives --cli maccli
+      # The `mod` job already ran the unit tests.
       - name: Build the jar
-        run: cargo xtask dist --from natives
+        run: cargo xtask dist --from natives --skip-tests
       - name: Build the launcher packs
         run: cargo xtask pack
       - name: Check the jar

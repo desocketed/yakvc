@@ -104,7 +104,7 @@ pub(crate) fn ci(fast: bool) -> Result<()> {
         step("server: no docker here; skipped the image");
     }
     step("mod: build (cargo xtask dist, host natives)");
-    crate::dist(None)?;
+    crate::dist(None, false)?;
     step("mod: jar manifest");
     check_jar_manifest(&dist_jar()?)?;
     step("mod: client gametest, and the user guide's screenshots");
