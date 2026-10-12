@@ -245,11 +245,7 @@ jobs:
       - uses: actions/checkout@v7
       # ALSA for the JUnit tests' native load; LLVM for llvm-lipo.
       - name: Install system libraries
-        run: |
-          sudo apt-get update && sudo apt-get install -y libasound2-dev llvm
-          # Ubuntu names LLVM's tools by version only on PATH (llvm-lipo-18);
-          # the plain names live in its versioned directory.
-          dirname "$(ls /usr/lib/llvm-*/bin/llvm-lipo | sort -V | tail -1)" >> "$GITHUB_PATH"
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev llvm
       - name: Install toolchain
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -266,7 +262,12 @@ jobs:
           pattern: natives-*
           path: natives
           merge-multiple: true
-      - run: cargo xtask merge-macos natives
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: maccli-*
+          path: maccli
+          merge-multiple: true
+      - run: cargo xtask merge-macos natives --cli maccli
       - name: Build the jar
         run: cargo xtask dist --from natives
       - name: Build the launcher packs
@@ -280,20 +281,10 @@ jobs:
             dist/*.jar
             dist/*.mrpack
             dist/*-prism.zip
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: maccli-*
-          path: maccli
-          merge-multiple: true
-      - name: Merge the Mac CLI
-        run: |
-          mkdir cli
-          llvm-lipo -create maccli/yakvc-cli-macos-x86_64 maccli/yakvc-cli-macos-aarch64 \
-            -output cli/yakvc-cli-macos-universal
       - uses: actions/upload-artifact@v7
         with:
           name: cli-macOS
-          path: cli/
+          path: maccli/
 
   server:
     needs: changes

@@ -88,7 +88,13 @@ enum Cmd {
     /// Merge the macOS natives built per architecture (`macos-x86_64` and
     /// `macos-aarch64` in a natives directory) into one universal library
     /// in `macos-universal`, with `lipo`, or `llvm-lipo` off macOS.
-    MergeMacos { natives: PathBuf },
+    MergeMacos {
+        natives: PathBuf,
+        /// Also merge `yakvc-cli-macos-x86_64` and `yakvc-cli-macos-aarch64`
+        /// in this directory into `yakvc-cli-macos-universal`.
+        #[arg(long)]
+        cli: Option<PathBuf>,
+    },
     /// The end-to-end check: a dev rendezvous, a local Minecraft server and
     /// two headless clients that must hear each other, and not while one is
     /// a spectator. About a minute.
@@ -192,7 +198,7 @@ fn main() -> Result<()> {
         Cmd::Dist { from } => dist(from.as_deref()),
         Cmd::ServerImage => server_image(),
         Cmd::Ci { fast } => ci::ci(fast),
-        Cmd::MergeMacos { natives } => merge_macos(&natives),
+        Cmd::MergeMacos { natives, cli } => merge_macos(&natives, cli.as_deref()),
         Cmd::Gametest { gradle_args } => headless::gametest(&gradle_args),
         Cmd::TwoClients {
             accept_eula,
@@ -389,18 +395,13 @@ fn fresh_dir(dir: &Path) -> Result<()> {
 /// Replaces `macos-x86_64` and `macos-aarch64` in `natives` with their
 /// universal merge in `macos-universal`, as `natives --target all` makes on
 /// a Mac. CI builds the two architectures in parallel and merges them here.
-fn merge_macos(natives: &Path) -> Result<()> {
+fn merge_macos(natives: &Path, cli: Option<&Path>) -> Result<()> {
     let lib = "libyakvc_ffi.dylib";
     let (x86, arm) = (natives.join("macos-x86_64"), natives.join("macos-aarch64"));
     let dir = natives.join("macos-universal");
     fresh_dir(&dir)?;
-    // Apple's lipo on a Mac; LLVM's, which reads and writes the same files, elsewhere.
-    let lipo = if Command::new("lipo").arg("-info").output().is_ok() {
-        "lipo"
-    } else {
-        "llvm-lipo"
-    };
-    run(Command::new(lipo)
+    let lipo = lipo()?;
+    run(Command::new(&lipo)
         .arg("-create")
         .arg(x86.join(lib))
         .arg(arm.join(lib))
@@ -409,7 +410,50 @@ fn merge_macos(natives: &Path) -> Result<()> {
     fs::remove_dir_all(&x86)?;
     fs::remove_dir_all(&arm)?;
     println!("staged {}", dir.join(lib).display());
-    write_manifest(natives)
+    write_manifest(natives)?;
+
+    // A Mac's half of the CLI isn't a release file, only their merge is.
+    if let Some(cli) = cli {
+        let (x86, arm) = (
+            cli.join("yakvc-cli-macos-x86_64"),
+            cli.join("yakvc-cli-macos-aarch64"),
+        );
+        let universal = cli.join("yakvc-cli-macos-universal");
+        run(Command::new(&lipo)
+            .arg("-create")
+            .arg(&x86)
+            .arg(&arm)
+            .arg("-output")
+            .arg(&universal))?;
+        fs::remove_file(&x86)?;
+        fs::remove_file(&arm)?;
+        println!("staged {}", universal.display());
+    }
+    Ok(())
+}
+
+/// Apple's lipo on a Mac; LLVM's, which reads and writes the same files,
+/// elsewhere. Ubuntu puts LLVM's tools on PATH only with a version suffix
+/// (llvm-lipo-18), so the newest of its versioned directories is used.
+fn lipo() -> Result<PathBuf> {
+    for tool in ["lipo", "llvm-lipo"] {
+        if Command::new(tool).arg("-version").output().is_ok() {
+            return Ok(tool.into());
+        }
+    }
+    let newest = fs::read_dir("/usr/lib")
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.ok()?.file_name().into_string().ok()?;
+            let version: u32 = name.strip_prefix("llvm-")?.parse().ok()?;
+            Some((version, name))
+        })
+        .max();
+    match newest {
+        Some((_, dir)) => Ok(Path::new("/usr/lib").join(dir).join("bin/llvm-lipo")),
+        None => bail!("no lipo or llvm-lipo found"),
+    }
 }
 
 fn parse_triple(triple: &str) -> Result<(&'static str, &'static str)> {
