@@ -217,7 +217,7 @@ tasks.named('runClientGameTest') {
 	}
 }
 
-// scripts/two-clients.sh runs a server and two clients at once, which one Gradle build can't. This writes the java
+// cargo xtask two-clients runs a server and two clients at once, which one Gradle build can't. This writes the java
 // command line of runClient and runServer, one argument per line, so the script can start them directly.
 tasks.register('writeDevLaunchArgs') {
 	dependsOn 'classes', 'configureLaunch', 'configureClientLaunch'
