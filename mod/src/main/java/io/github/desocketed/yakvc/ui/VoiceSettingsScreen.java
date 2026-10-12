@@ -7,6 +7,7 @@ import io.github.desocketed.yakvc.config.ClientConfig;
 import io.github.desocketed.yakvc.natives.EngineEvent;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -29,6 +30,11 @@ import org.jspecify.annotations.Nullable;
  */
 public final class VoiceSettingsScreen extends OptionsSubScreen {
 	private static final String PUSH_TO_TALK = "push_to_talk";
+	/** The ids of the engine's built-in test inputs ({@code TEST_INPUTS} in yakvc-audio). */
+	private static final String TEST_INPUT_PREFIX = "yakvc:test-";
+	/** The test inputs the Developer section offers, after "Off": all of {@code TEST_INPUTS}. */
+	private static final List<String> TEST_SOUNDS = List.of("clicks", "noise", "sweep", "beeps", "tone");
+	private static final String NO_TEST_SOUND = "";
 	private static final String VOICE = "voice";
 	/** Stands for an unset device: the system default microphone, or speakers that follow the game. */
 	private static final String DEFAULT_DEVICE = "";
@@ -43,6 +49,10 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	private final Dropdown outputDevice;
 	/** The device names, once listed: the listing runs on a worker thread while the screen shows "Loading…". */
 	private GameStateFeeder.@Nullable Devices devices;
+	/** Plays a test input instead of the microphone, for developers. */
+	private final Dropdown testSound;
+	/** The real microphone picked last, which turning the test sound off goes back to. */
+	private String realInput;
 	private final OptionInstance<Boolean> relayOnly;
 	private final OptionInstance<Boolean> respectChatRestrictions;
 	private final OptionInstance<Boolean> muteBlockedPlayers;
@@ -89,6 +99,19 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 				"yakvc.settings.input_device.default");
 		outputDevice = device("yakvc.settings.output_device", false, initial.outputDevice(),
 				"yakvc.settings.output_device.default");
+		String input = inputDevice.get();
+		realInput = input.startsWith(TEST_INPUT_PREFIX) ? DEFAULT_DEVICE : input;
+		List<String> testSounds = new ArrayList<>(List.of(NO_TEST_SOUND));
+		TEST_SOUNDS.forEach(sound -> testSounds.add(TEST_INPUT_PREFIX + sound));
+		testSound = new Dropdown(Component.translatable("yakvc.settings.test_sound"), testSounds,
+				testSounds.contains(input) ? input : NO_TEST_SOUND,
+				value -> Component.translatable(value.isEmpty() ? "yakvc.settings.test_sound.off"
+						: "yakvc.settings.test_sound." + value.substring(TEST_INPUT_PREFIX.length())));
+		testSound.onPick(sound -> useInput(sound.isEmpty() ? realInput : sound));
+		inputDevice.onPick(mic -> {
+			realInput = mic;
+			testSound.set(NO_TEST_SOUND);
+		});
 		relayOnly = OptionInstance.createBoolean("yakvc.settings.relay_only",
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.relay_only.tooltip")),
 				initial.relayOnly());
@@ -173,10 +196,26 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		return values;
 	}
 
+	/**
+	 * The microphones to offer, and {@code selected}. The engine's built-in test inputs are picked under Test Sound
+	 * instead, so the list shows one only while it is in use.
+	 */
+	private List<String> inputValues(String selected) {
+		Map<String, String> real = new LinkedHashMap<>(devices == null ? Map.of() : devices.inputs());
+		real.keySet().removeIf(id -> id.startsWith(TEST_INPUT_PREFIX));
+		return values(real, selected);
+	}
+
+	/** Switches the microphone picker to {@code id}, a real microphone or a test input. */
+	private void useInput(String id) {
+		inputDevice.setValues(inputValues(id));
+		inputDevice.set(id);
+	}
+
 	/** On the client thread, possibly after the screen closed, which is harmless. */
 	private void fillDevices(GameStateFeeder.Devices listed) {
 		devices = listed;
-		inputDevice.setValues(values(listed.inputs(), initial.inputDevice()));
+		inputDevice.setValues(inputValues(inputDevice.get()));
 		outputDevice.setValues(values(listed.outputs(), initial.outputDevice()));
 		inputDevice.active = true;
 		outputDevice.active = true;
@@ -205,9 +244,18 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		accountText = new MultiLineTextWidget(shownAccountState, font).setMaxWidth(310).setCentered(true);
 		list.addBig(accountText);
 		list.addSmall(verifiedOnly);
-		list.addHeader(Component.translatable("yakvc.settings.troubleshooting"));
+		addDeveloperSection();
+	}
+
+	/**
+	 * Debug tools that players don't need, kept in one section so it can be hidden as a whole. The test sound is
+	 * applied with the other settings when the screen closes, since it is the microphone setting underneath.
+	 */
+	private void addDeveloperSection() {
+		list.addHeader(Component.translatable("yakvc.settings.developer"));
 		list.addSmall(debugOverlay.createButton(options), Button.builder(Component.translatable("yakvc.tuning.open"),
 				button -> minecraft.gui.setScreen(new SoundTuningScreen(this, options, feeder))).build());
+		list.addBig(testSound);
 	}
 
 	@Override
@@ -235,6 +283,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float a) {
 		super.extractRenderState(graphics, mouseX, mouseY, a);
 		inputDevice.extractList(graphics, mouseX, mouseY);
+		testSound.extractList(graphics, mouseX, mouseY);
 		outputDevice.extractList(graphics, mouseX, mouseY);
 	}
 
@@ -242,21 +291,24 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
 		return inputDevice.listClicked(event.x(), event.y(), height)
 				|| outputDevice.listClicked(event.x(), event.y(), height)
+				|| testSound.listClicked(event.x(), event.y(), height)
 				|| super.mouseClicked(event, doubleClick);
 	}
 
 	@Override
 	public boolean mouseScrolled(double x, double y, double scrollX, double scrollY) {
 		return inputDevice.listScrolled(scrollY) || outputDevice.listScrolled(scrollY)
+				|| testSound.listScrolled(scrollY)
 				|| super.mouseScrolled(x, y, scrollX, scrollY);
 	}
 
 	@Override
 	public boolean keyPressed(KeyEvent event) {
 		// Escape closes an open list rather than the screen.
-		if (event.isEscape() && (inputDevice.isOpen() || outputDevice.isOpen())) {
+		if (event.isEscape() && (inputDevice.isOpen() || outputDevice.isOpen() || testSound.isOpen())) {
 			inputDevice.close();
 			outputDevice.close();
+			testSound.close();
 			return true;
 		}
 		return super.keyPressed(event);

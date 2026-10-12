@@ -164,6 +164,157 @@ impl FrameSource for ToneSource {
     }
 }
 
+/// A generated test sound, each suited to hearing some effect clearly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestSignal {
+    /// A sharp clap-like click a second: its echo and reverb tail stand out
+    /// in the quiet after it.
+    Clicks,
+    /// A short burst of hiss a second: every pitch at once, so direction
+    /// and muffling are easy to hear.
+    NoiseBursts,
+    /// A tone gliding from low to high, then a pause: a muffled one loses
+    /// its top end.
+    Sweep,
+    /// Short beeps a second apart, rising through four pitches.
+    Beeps,
+    /// A steady 440 Hz sine.
+    Tone,
+}
+
+/// Built-in inputs listed beside the real microphones, for testing without
+/// one: id, name and sound.
+pub const TEST_INPUTS: [(&str, &str, TestSignal); 5] = [
+    ("yakvc:test-clicks", "Test: Clicks", TestSignal::Clicks),
+    (
+        "yakvc:test-noise",
+        "Test: Noise Bursts",
+        TestSignal::NoiseBursts,
+    ),
+    ("yakvc:test-sweep", "Test: Sweep", TestSignal::Sweep),
+    ("yakvc:test-beeps", "Test: Beeps", TestSignal::Beeps),
+    ("yakvc:test-tone", "Test: Tone", TestSignal::Tone),
+];
+
+/// The built-in input with this id, if it is one of [`TEST_INPUTS`].
+pub fn open_test_input(id: &str) -> Option<Box<dyn FrameSource>> {
+    let (_, _, signal) = TEST_INPUTS.iter().find(|(test, _, _)| *test == id)?;
+    Some(Box::new(TestSource::new(*signal)))
+}
+
+/// A [`TestSignal`] as a source, paced in real time and looping.
+#[derive(Debug)]
+pub struct TestSource {
+    signal: TestSignal,
+    /// Samples since the loop began.
+    position: usize,
+    /// The sweep's phase, in radians.
+    phase: f32,
+    /// A xorshift generator's state, for the noise: the same every run.
+    noise: u32,
+    clock: Clock,
+}
+
+const SECOND: usize = SAMPLE_RATE as usize;
+
+impl TestSource {
+    pub fn new(signal: TestSignal) -> Self {
+        TestSource {
+            signal,
+            position: 0,
+            phase: 0.0,
+            noise: 0x9e37_79b9,
+            clock: Clock::default(),
+        }
+    }
+
+    fn next_sample(&mut self) -> f32 {
+        let at = self.position;
+        let (sample, period) = match self.signal {
+            TestSignal::Clicks => {
+                let into = at % SECOND;
+                // About 10 ms of hiss falling off fast, like a clap.
+                let decay = (-(into as f32) / (SAMPLE_RATE as f32 * 0.002)).exp();
+                let sample = if into < SECOND / 100 {
+                    self.white() * decay * 0.8
+                } else {
+                    0.0
+                };
+                (sample, SECOND)
+            }
+            TestSignal::NoiseBursts => {
+                let into = at % SECOND;
+                let length = SECOND / 5;
+                let sample = if into < length {
+                    self.white() * fade(into, length) * 0.3
+                } else {
+                    0.0
+                };
+                (sample, SECOND)
+            }
+            TestSignal::Sweep => {
+                // Two seconds from 100 Hz to 8 kHz, evenly in pitch, then one of quiet.
+                let length = 2 * SECOND;
+                let sample = if at < length {
+                    let t = at as f32 / length as f32;
+                    let hz = 100.0 * 80f32.powf(t);
+                    self.phase = (self.phase + TAU * hz / SAMPLE_RATE as f32) % TAU;
+                    self.phase.sin() * fade(at, length) * TONE_AMPLITUDE
+                } else {
+                    self.phase = 0.0;
+                    0.0
+                };
+                (sample, 3 * SECOND)
+            }
+            TestSignal::Beeps => {
+                const PITCHES_HZ: [f32; 4] = [330.0, 440.0, 550.0, 660.0];
+                let into = at % SECOND;
+                let length = SECOND * 15 / 100;
+                let sample = if into < length {
+                    let hz = PITCHES_HZ[at / SECOND];
+                    let t = into as f32 / SAMPLE_RATE as f32;
+                    (TAU * hz * t).sin() * fade(into, length) * TONE_AMPLITUDE
+                } else {
+                    0.0
+                };
+                (sample, SECOND * PITCHES_HZ.len())
+            }
+            TestSignal::Tone => {
+                let t = at as f32 / SAMPLE_RATE as f32;
+                ((TAU * 440.0 * t).sin() * TONE_AMPLITUDE, SECOND)
+            }
+        };
+        self.position = (at + 1) % period;
+        sample
+    }
+
+    /// White noise from -1 to 1.
+    fn white(&mut self) -> f32 {
+        self.noise ^= self.noise << 13;
+        self.noise ^= self.noise >> 17;
+        self.noise ^= self.noise << 5;
+        self.noise as f32 / u32::MAX as f32 * 2.0 - 1.0
+    }
+}
+
+/// Fades the edges of a `length`-sample sound over 10 ms, so it doesn't click.
+fn fade(into: usize, length: usize) -> f32 {
+    (into.min(length - into) as f32 / (SAMPLE_RATE as f32 / 100.0)).min(1.0)
+}
+
+impl FrameSource for TestSource {
+    fn read(&mut self, frame: &mut MonoFrame) -> bool {
+        if !self.clock.due() {
+            return false;
+        }
+        self.clock.tick();
+        for sample in frame.iter_mut() {
+            *sample = self.next_sample();
+        }
+        true
+    }
+}
+
 /// Silence, paced in real time: a player who never speaks.
 #[derive(Debug, Default)]
 pub struct SilenceSource {
@@ -454,6 +605,61 @@ mod tests {
         let n = source.samples.len();
         assert!((peak(&source.samples[..edge]) - 0.5).abs() < 0.05);
         assert!((peak(&source.samples[n - edge..]) - 0.5).abs() < 0.05);
+    }
+
+    /// The peak of each of the first `frames` frames of `signal`.
+    fn peaks(signal: TestSignal, frames: usize) -> Vec<f32> {
+        let mut source = TestSource::new(signal);
+        (0..frames)
+            .map(|_| {
+                let mut frame = [0.0; FRAME_SAMPLES];
+                skip_pacing(&mut source.clock);
+                assert!(source.read(&mut frame));
+                frame.iter().fold(0.0f32, |peak, s| peak.max(s.abs()))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn bursts_sound_then_go_quiet() {
+        // A second is 50 frames: each sound is at the start, then quiet.
+        for (signal, loud) in [
+            (TestSignal::Clicks, 1),
+            (TestSignal::NoiseBursts, 10),
+            (TestSignal::Beeps, 7),
+        ] {
+            let peaks = peaks(signal, 50);
+            assert!(
+                peaks[..loud].iter().all(|&p| p > 0.05),
+                "{signal:?} {peaks:?}"
+            );
+            assert!(
+                peaks[loud + 1..].iter().all(|&p| p == 0.0),
+                "{signal:?} {peaks:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_sweep_plays_two_seconds_then_pauses() {
+        let peaks = peaks(TestSignal::Sweep, 150);
+        assert!(peaks[1..99].iter().all(|&p| p > 0.05));
+        assert!(peaks[101..150].iter().all(|&p| p == 0.0));
+    }
+
+    #[test]
+    fn signals_stay_in_range() {
+        for (_, _, signal) in TEST_INPUTS {
+            assert!(peaks(signal, 200).iter().all(|&p| p <= 1.0), "{signal:?}");
+        }
+    }
+
+    #[test]
+    fn test_inputs_open_by_id() {
+        for (id, _, _) in TEST_INPUTS {
+            assert!(open_test_input(id).is_some(), "{id}");
+        }
+        assert!(open_test_input("hw:0").is_none());
     }
 
     #[test]
