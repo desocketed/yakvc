@@ -157,6 +157,10 @@ jobs:
           - { os: macos-latest, target: aarch64-apple-darwin, cli: aarch64-apple-darwin, name: macos-aarch64 }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
+    # Rust's bundled lld links Windows binaries faster than MSVC's link.exe
+    # (only the Windows target reads it).
+    env:
+      CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER: rust-lld
     steps:
       - uses: actions/checkout@v7
       - name: Install toolchain
@@ -191,6 +195,10 @@ jobs:
           - { os: macos-latest, name: macos-aarch64 }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
+    # Rust's bundled lld links Windows binaries faster than MSVC's link.exe
+    # (only the Windows target reads it).
+    env:
+      CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER: rust-lld
     steps:
       - uses: actions/checkout@v7
       - name: Install toolchain
