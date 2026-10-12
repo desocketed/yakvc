@@ -26,7 +26,7 @@ Open work, exit checks and decisions are tracked as issues under the milestones 
 
 Real Mojang authentication can't run in CI: it needs a signed-in Minecraft account. On a Linux machine with a launcher that runs Fabric 26.3 (Fabric API `0.161.0+26.3`):
 
-1. Run `scripts/real-auth-rendezvous.sh` and leave it running. It starts a local `yakvc-server` without dev auth, and prints the mod jar path (built for this host only) and a `client.toml`.
+1. Run `cargo xtask dev --real-auth` and leave it running. It starts a local `yakvc-server` without dev auth, and prints the mod jar path (built for this host only) and a `client.toml`.
 2. In the Fabric instance, put the jar in `mods/`, write the printed text to `config/yakvc/client.toml` (replacing the whole file), and delete `config/yakvc/ticket.bin` if it exists.
 3. Launch signed in to your account and stay on the title screen. `logs/latest.log` shows `Voice sign-in: joined the Mojang session`, then `Rendezvous REGISTERED`. Without `dev_mode` the client rejects dev tickets, so this is a real one (`dev: false`). The server's counters (the `curl` command it printed) show `yakvc_auth_ok_total 1` and `yakvc_mojang_calls_total 1`.
 4. Quit and launch again. The log shows `Rendezvous REGISTERED` with no new `Voice sign-in` line, and the counters show `yakvc_auth_cached_total 1` with `yakvc_mojang_calls_total` still 1: the cached ticket was reused without `joinServer`.

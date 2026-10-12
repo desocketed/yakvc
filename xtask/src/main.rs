@@ -108,6 +108,11 @@ enum Cmd {
         /// (mod/run/config/yakvc/client.toml).
         #[arg(long)]
         write_client_config: bool,
+        /// Check accounts with Mojang instead of taking dev tickets, for the
+        /// manual real-account check; also builds the mod jar, serves
+        /// counters on 127.0.0.1:9187 and defaults to target/real-auth.
+        #[arg(long)]
+        real_auth: bool,
     },
     /// A dev session on your own machine: a local rendezvous, an offline dev
     /// Minecraft server and one client window per name, joining it by
@@ -180,7 +185,8 @@ fn main() -> Result<()> {
             port,
             dir,
             write_client_config,
-        } => dev::dev(port, dir, write_client_config),
+            real_auth,
+        } => dev::dev(port, dir, write_client_config, real_auth),
         Cmd::Session { names, join } => session::session(&names, join),
         Cmd::WithPipewire { command } => std::process::exit(pipewire::with_pipewire(&command)?),
         Cmd::DeployRelay {

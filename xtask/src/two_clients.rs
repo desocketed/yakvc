@@ -60,7 +60,7 @@ pub(crate) fn two_clients(accept_eula: bool, pipewire: bool) -> Result<()> {
 
     let rdv_port = free_port()?;
     step(&format!("start the dev rendezvous on 127.0.0.1:{rdv_port}"));
-    let rendezvous = dev::prepare(rdv_port, &work.join("rdv"))?;
+    let rendezvous = dev::prepare(rdv_port, &work.join("rdv"), false)?;
     parts.0.push(Part::new(
         Command::new(&rendezvous.server)
             .arg("run")
