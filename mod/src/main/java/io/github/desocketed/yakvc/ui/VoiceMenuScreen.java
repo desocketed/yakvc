@@ -3,8 +3,8 @@ package io.github.desocketed.yakvc.ui;
 import io.github.desocketed.yakvc.GameStateFeeder;
 import io.github.desocketed.yakvc.VoiceSession;
 import io.github.desocketed.yakvc.YakVcClient;
-import io.github.desocketed.yakvc.config.ClientConfig;
 import io.github.desocketed.yakvc.config.PlayerVolumes;
+import io.github.desocketed.yakvc.config.Settings;
 import io.github.desocketed.yakvc.input.VoiceKeys;
 import io.github.desocketed.yakvc.natives.EngineEvent;
 import java.io.IOException;
@@ -72,7 +72,7 @@ public final class VoiceMenuScreen extends Screen {
 
 		list = layout.addToContents(new PlayerList(minecraft));
 		// The first-run card sits at the top of the list, so it scrolls away with the players.
-		if (!feeder.config().setupDone()) list.add(new SetupRow(), SETUP_HEIGHT);
+		if (!feeder.settings().setupDone()) list.add(new SetupRow(), SETUP_HEIGHT);
 		shown = players();
 		for (UUID uuid : shown) list.add(new PlayerRow(uuid), ROW_HEIGHT);
 
@@ -190,22 +190,22 @@ public final class VoiceMenuScreen extends Screen {
 		private final OptionInstance<String> invitesOption;
 
 		SetupRow() {
-			ClientConfig config = feeder.config();
+			Settings settings = feeder.settings();
 			// Each choice applies at once, as in the settings.
-			activationOption = VoiceSettingsScreen.activationOption(config, value -> applyChoices());
-			invitesOption = VoiceSettingsScreen.invitesOption(config, value -> applyChoices());
+			activationOption = VoiceSettingsScreen.activationOption(settings, value -> applyChoices());
+			invitesOption = VoiceSettingsScreen.invitesOption(settings, value -> applyChoices());
 			activation = activationOption.createButton(minecraft.options, 0, 0, 125);
 			invites = invitesOption.createButton(minecraft.options, 0, 0, 125);
 			gotIt = Button.builder(Component.translatable("yakvc.setup.ok"), button -> {
-				VoiceSettingsScreen.applyAndSave(feeder, feeder.config().with("", "setup_done", "true"));
+				VoiceSettingsScreen.applyAndSave(feeder, feeder.settings().withSetupDone(true));
 				rebuildWidgets();
 			}).width(52).build();
 		}
 
 		/** A rejected choice rebuilds the card from what is in effect. */
 		private void applyChoices() {
-			ClientConfig current = feeder.config();
-			ClientConfig changed = VoiceSettingsScreen.withActivationAndInvites(current, activationOption, invitesOption);
+			Settings current = feeder.settings();
+			Settings changed = VoiceSettingsScreen.withActivationAndInvites(current, activationOption, invitesOption);
 			if (!changed.equals(current) && !VoiceSettingsScreen.applyAndSave(feeder, changed)) rebuildWidgets();
 		}
 

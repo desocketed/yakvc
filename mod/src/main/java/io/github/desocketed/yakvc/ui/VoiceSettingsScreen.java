@@ -4,7 +4,7 @@ import com.mojang.serialization.Codec;
 import io.github.desocketed.yakvc.GameStateFeeder;
 import io.github.desocketed.yakvc.UpdateCheck;
 import io.github.desocketed.yakvc.YakVcClient;
-import io.github.desocketed.yakvc.config.ClientConfig;
+import io.github.desocketed.yakvc.config.Settings;
 import io.github.desocketed.yakvc.config.SpatialAudio;
 import io.github.desocketed.yakvc.natives.EngineEvent;
 import java.io.IOException;
@@ -13,7 +13,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.function.Consumer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.OptionInstance;
@@ -32,10 +31,9 @@ import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
 import org.jspecify.annotations.Nullable;
 /**
- * The settings in {@code client.toml} that players are expected to change. Like the game's own options, a change
- * applies at once: changed values are written into the file text, checked and applied by the engine with
- * {@code yakvc_update_config}, and only then saved. A change the engine rejects puts the controls back to what is in
- * effect.
+ * The settings in {@code settings.json} that players are expected to change. Like the game's own options, a change
+ * applies at once: the changed settings are checked and applied by the engine with {@code yakvc_update_config}, and
+ * only then saved. A change the engine rejects puts the controls back to what is in effect.
  */
 public final class VoiceSettingsScreen extends OptionsSubScreen {
 	private static final String PUSH_TO_TALK = "push_to_talk";
@@ -54,7 +52,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	private static final int MAX_INPUT_GAIN_PERCENT = 400;
 
 	private final GameStateFeeder feeder;
-	private final ClientConfig initial;
+	private final Settings initial;
 	private final ApplyThrottle throttle = new ApplyThrottle();
 	private final OptionInstance<String> activation;
 	private final OptionInstance<Integer> range;
@@ -99,7 +97,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	public VoiceSettingsScreen(@Nullable Screen lastScreen, Options options, GameStateFeeder feeder) {
 		super(lastScreen, options, Component.translatable("yakvc.settings.title"));
 		this.feeder = feeder;
-		this.initial = feeder.config();
+		this.initial = feeder.settings();
 		activation = activationOption(initial, value -> throttle.changed());
 		invites = invitesOption(initial, value -> throttle.changed());
 		int maxRange = options.renderDistance().get() * 16;
@@ -111,10 +109,11 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		bitrateKbps = new OptionInstance<>("yakvc.settings.bitrate",
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.bitrate.tooltip")),
 				(caption, value) -> Options.genericValueLabel(caption, Component.translatable("yakvc.settings.bitrate.kbps", value)),
-				new OptionInstance.IntRange(16, 64), Math.clamp(initial.bitrate() / 1000, 16, 64), value -> throttle.changed());
+				new OptionInstance.IntRange(16, 64), Math.clamp(initial.audio().bitrate() / 1000, 16, 64),
+				value -> throttle.changed());
 		noiseSuppression = OptionInstance.createBoolean("yakvc.settings.noise_suppression",
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.noise_suppression.tooltip")),
-				initial.noiseSuppression(), value -> throttle.changed());
+				initial.audio().noiseSuppression(), value -> throttle.changed());
 		spatialAudio = new OptionInstance<>("yakvc.settings.spatial_audio",
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.spatial_audio.tooltip")),
 				(caption, value) -> Component.translatable("yakvc.settings.spatial_audio." + value.key()),
@@ -124,9 +123,9 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.input_gain.tooltip")),
 				(caption, value) -> Options.genericValueLabel(caption, Component.translatable("yakvc.tuning.percent", value)),
 				new OptionInstance.IntRange(0, MAX_INPUT_GAIN_PERCENT), inputGainPercent(initial), value -> throttle.changed());
-		inputDevice = device("yakvc.settings.input_device", true, initial.inputDevice(),
+		inputDevice = device("yakvc.settings.input_device", true, initial.audio().inputDevice(),
 				"yakvc.settings.input_device.default");
-		outputDevice = device("yakvc.settings.output_device", false, initial.outputDevice(),
+		outputDevice = device("yakvc.settings.output_device", false, initial.audio().outputDevice(),
 				"yakvc.settings.output_device.default");
 		String input = inputDevice.get();
 		realInput = input.startsWith(TEST_INPUT_PREFIX) ? DEFAULT_DEVICE : input;
@@ -174,39 +173,33 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	}
 
 	/** Push to talk or voice activation. Shared with the voice menu's setup card. */
-	static OptionInstance<String> activationOption(ClientConfig config, Consumer<String> onChange) {
+	static OptionInstance<String> activationOption(Settings settings, Consumer<String> onChange) {
 		return new OptionInstance<>("yakvc.settings.activation", OptionInstance.noTooltip(),
 				// Cycle buttons put the caption in front themselves; sliders (below) show only this text.
 				(caption, value) -> Component.translatable("yakvc.settings.activation." + value),
 				new OptionInstance.Enum<>(List.of(PUSH_TO_TALK, VOICE), Codec.STRING),
-				config.voiceActivation() ? VOICE : PUSH_TO_TALK, onChange::accept);
+				settings.audio().voiceActivation() ? VOICE : PUSH_TO_TALK, onChange::accept);
 	}
 
 	/**
 	 * Who may invite us to a group. Shared with the voice menu's setup card. "friends" is left out because no screen
-	 * edits the friends list, so picking it here would mean nobody; a hand-edited config may still say it, and shows
+	 * edits the friends list, so picking it here would mean nobody; a hand-edited file may still say it, and shows
 	 * as "Friends" until the player picks something else.
 	 */
-	static OptionInstance<String> invitesOption(ClientConfig config, Consumer<String> onChange) {
+	static OptionInstance<String> invitesOption(Settings settings, Consumer<String> onChange) {
 		List<String> values = new ArrayList<>(List.of("everyone", "nobody"));
-		if (config.invites().equals("friends")) values.add("friends");
+		if (settings.invites().equals("friends")) values.add("friends");
 		return new OptionInstance<>("yakvc.settings.invites",
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.invites.tooltip")),
 				(caption, value) -> Component.translatable("yakvc.settings.invites." + value),
 				new OptionInstance.Enum<>(values, Codec.STRING),
-				values.contains(config.invites()) ? config.invites() : "everyone", onChange::accept);
+				values.contains(settings.invites()) ? settings.invites() : "everyone", onChange::accept);
 	}
 
-	/** {@code config} with the activation and invites options' values, changing only what differs. */
-	static ClientConfig withActivationAndInvites(ClientConfig config, OptionInstance<String> activation,
+	/** {@code settings} with the activation and invites options' values. */
+	static Settings withActivationAndInvites(Settings settings, OptionInstance<String> activation,
 			OptionInstance<String> invites) {
-		if (activation.get().equals(VOICE) != config.voiceActivation()) {
-			config = config.with("audio", "activation", ClientConfig.quote(activation.get()));
-		}
-		if (!invites.get().equals(config.invites())) {
-			config = config.with("", "invites", ClientConfig.quote(invites.get()));
-		}
-		return config;
+		return settings.withActivation(activation.get()).withInvites(invites.get());
 	}
 
 	/**
@@ -254,7 +247,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	private void fillDevices(GameStateFeeder.Devices listed) {
 		devices = listed;
 		inputDevice.setValues(inputValues(inputDevice.get()));
-		outputDevice.setValues(values(listed.outputs(), initial.outputDevice()));
+		outputDevice.setValues(values(listed.outputs(), initial.audio().outputDevice()));
 		inputDevice.active = true;
 		outputDevice.active = true;
 	}
@@ -270,7 +263,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		list.addSmall(bitrateKbps, noiseSuppression);
 		list.addBig(inputDevice);
 		list.addBig(inputGainPercent);
-		list.addBig(new MicLevelMeter(feeder::micLevelDb, initial.vadThresholdDb()));
+		list.addBig(new MicLevelMeter(feeder::micLevelDb, initial.audio().vadThresholdDb()));
 		list.addBig(outputDevice);
 		list.addSmall(spatialAudio);
 		list.addHeader(Component.translatable("yakvc.settings.privacy"));
@@ -380,53 +373,31 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		if (throttle.takePending()) apply();
 	}
 
-	private double shownRange(ClientConfig config) {
-		return ClientConfig.effectiveVoiceRange(config.voiceRange(), options.renderDistance().get());
+	private double shownRange(Settings settings) {
+		return Settings.effectiveVoiceRange(settings.voiceRange(), options.renderDistance().get());
 	}
 
-	/** Applies and saves what differs from the settings in effect; false if the engine rejected it. */
+	/**
+	 * Applies and saves what differs from the settings in effect; false if the engine rejected it. The sliders show
+	 * rounded values, so each is only written when it moved, or a hand-edited value would be rewritten on every close.
+	 */
 	private boolean apply() {
-		ClientConfig current = feeder.config();
-		// Only what the player changed is written, so the rest of the file keeps its exact text.
-		ClientConfig changed = current;
+		Settings current = feeder.settings();
+		Settings changed = withActivationAndInvites(current, activation, invites)
+				.withRelayOnly(relayOnly.get())
+				.withRespectChatRestrictions(respectChatRestrictions.get())
+				.withMuteBlockedPlayers(muteBlockedPlayers.get())
+				.withVerifiedOnly(verifiedOnly.get())
+				.withCheckForUpdates(checkForUpdates.get())
+				.withSpatialAudio(spatialAudio.get())
+				.withNoiseSuppression(noiseSuppression.get())
+				.withInputDevice(deviceValue(inputDevice.get()))
+				.withOutputDevice(deviceValue(outputDevice.get()));
 		// Against the capped range, so a saved range past the render distance stays saved unless moved.
-		if (range.get() != Math.round(shownRange(current))) {
-			changed = changed.with("", "voice_range", String.valueOf((double) range.get()));
-		}
-		if (relayOnly.get() != current.relayOnly()) {
-			changed = changed.with("", "relay_only", String.valueOf(relayOnly.get()));
-		}
-		if (respectChatRestrictions.get() != current.respectChatRestrictions()) {
-			changed = changed.with("", "respect_chat_restrictions", String.valueOf(respectChatRestrictions.get()));
-		}
-		if (muteBlockedPlayers.get() != current.muteBlockedPlayers()) {
-			changed = changed.with("", "mute_blocked_players", String.valueOf(muteBlockedPlayers.get()));
-		}
-		if (verifiedOnly.get() != current.verifiedOnly()) {
-			changed = changed.with("", "verified_only", String.valueOf(verifiedOnly.get()));
-		}
-		if (checkForUpdates.get() != current.checkForUpdates()) {
-			changed = changed.with("", "check_for_updates", String.valueOf(checkForUpdates.get()));
-		}
-		if (spatialAudio.get() != current.spatialAudio()) {
-			changed = changed.with("", "spatial_audio", ClientConfig.quote(spatialAudio.get().key()));
-		}
-		changed = withActivationAndInvites(changed, activation, invites);
-		// In kbps: a hand-edited bitrate that isn't a whole kbps would otherwise be rewritten on every close.
-		if (bitrateKbps.get() != current.bitrate() / 1000) {
-			changed = changed.with("audio", "bitrate", String.valueOf(bitrateKbps.get() * 1000));
-		}
+		if (range.get() != Math.round(shownRange(current))) changed = changed.withVoiceRange(range.get());
+		if (bitrateKbps.get() != current.audio().bitrate() / 1000) changed = changed.withBitrate(bitrateKbps.get() * 1000);
 		if (inputGainPercent.get() != inputGainPercent(current)) {
-			changed = changed.with("audio", "input_gain", String.valueOf(inputGainPercent.get() / 100.0));
-		}
-		if (noiseSuppression.get() != current.noiseSuppression()) {
-			changed = changed.with("audio", "noise_suppression", String.valueOf(noiseSuppression.get()));
-		}
-		if (!inputDevice.get().equals(Objects.requireNonNullElse(current.inputDevice(), DEFAULT_DEVICE))) {
-			changed = changed.with("audio", "input_device", deviceValue(inputDevice.get()));
-		}
-		if (!outputDevice.get().equals(Objects.requireNonNullElse(current.outputDevice(), DEFAULT_DEVICE))) {
-			changed = changed.with("audio", "output_device", deviceValue(outputDevice.get()));
+			changed = changed.withInputGain(inputGainPercent.get() / 100.0);
 		}
 		return changed.equals(current) || applyAndSave(feeder, changed);
 	}
@@ -435,8 +406,8 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	 * Has the engine check and apply {@code changed}, and saves it if it took it; says so if anything failed. False if
 	 * the engine rejected it.
 	 */
-	public static boolean applyAndSave(GameStateFeeder feeder, ClientConfig changed) {
-		String error = feeder.applyConfig(changed);
+	public static boolean applyAndSave(GameStateFeeder feeder, Settings changed) {
+		String error = feeder.applySettings(changed);
 		if (error != null) {
 			VoiceToasts.show(Component.translatable("yakvc.toast.settings_rejected", error));
 			return false;
@@ -450,12 +421,12 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		return true;
 	}
 
-	/** The config's microphone gain as the slider shows it, so an untouched slider never rewrites it. */
-	private static int inputGainPercent(ClientConfig config) {
-		return (int) Math.clamp(Math.round(config.inputGain() * 100), 0, MAX_INPUT_GAIN_PERCENT);
+	/** The saved microphone gain as the slider shows it, so an untouched slider never rewrites it. */
+	private static int inputGainPercent(Settings settings) {
+		return (int) Math.clamp(Math.round(settings.audio().inputGain() * 100), 0, MAX_INPUT_GAIN_PERCENT);
 	}
 
 	private static @Nullable String deviceValue(String id) {
-		return id.equals(DEFAULT_DEVICE) ? null : ClientConfig.quote(id);
+		return id.equals(DEFAULT_DEVICE) ? null : id;
 	}
 }

@@ -1,8 +1,8 @@
 package io.github.desocketed.yakvc;
 
 import com.mojang.authlib.exceptions.AuthenticationException;
-import io.github.desocketed.yakvc.config.ClientConfig;
 import io.github.desocketed.yakvc.config.PlayerVolumes;
+import io.github.desocketed.yakvc.config.Settings;
 import io.github.desocketed.yakvc.input.VoiceKeys;
 import io.github.desocketed.yakvc.natives.NativeBridge;
 import io.github.desocketed.yakvc.natives.NativeLoader;
@@ -14,6 +14,7 @@ import io.github.desocketed.yakvc.ui.UpdateNotice;
 import io.github.desocketed.yakvc.ui.VoiceHud;
 import io.github.desocketed.yakvc.ui.VoiceToasts;
 import java.lang.foreign.MemorySegment;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
@@ -53,7 +54,18 @@ public final class YakVcClient implements ClientModInitializer {
 		SoundOptionsButton.register();
 		PauseMenuButton.register();
 		Path configDir = configDir();
-		checkForUpdate(configDir);
+		Settings settings;
+		try {
+			settings = Settings.load(configDir);
+		} catch (Exception e) {
+			disable("could not read the settings", e, Component.translatable("yakvc.toast.start_failed", e.getMessage()));
+			return;
+		}
+		// Pre-1.0, so the old file isn't migrated, just pointed out.
+		if (Files.exists(configDir.resolve("client.toml"))) {
+			LOGGER.info("client.toml is no longer read: settings now live in config/yakvc/{}", Settings.FILE_NAME);
+		}
+		checkForUpdate(settings);
 		NativeBridge bridge;
 		try {
 			bridge = new NativeBridge(NativeLoader.load(configDir));
@@ -71,26 +83,24 @@ public final class YakVcClient implements ClientModInitializer {
 			return;
 		}
 
-		ClientConfig config;
 		MemorySegment engine;
 		try {
-			config = ClientConfig.load(configDir);
-			engine = bridge.create(configDir.toString(), config.toml());
+			engine = bridge.create(configDir.toString(), settings.engineToml(0));
 		} catch (Exception e) {
 			disable("could not start the engine", e, Component.translatable("yakvc.toast.start_failed", e.getMessage()));
 			return;
 		}
 		LOGGER.info("Started native engine (ABI version {})", abi);
-		// The dev test audio is easy to leave behind in a copied config, and it looks exactly like a silent
+		// The dev test audio is easy to leave behind in copied settings, and it looks exactly like a silent
 		// microphone and silent speakers otherwise.
-		if (config.value("dev", "tone_hz") != null) {
-			LOGGER.warn("[dev] tone_hz is set in client.toml: a test tone replaces the microphone");
+		if (settings.dev().toneHz() != null) {
+			LOGGER.warn("dev.tone_hz is set in settings.json: a test tone replaces the microphone");
 		}
-		if (config.value("dev", "wav") != null) {
-			LOGGER.warn("[dev] wav is set in client.toml: a looping WAV file replaces the microphone");
+		if (settings.dev().wav() != null) {
+			LOGGER.warn("dev.wav is set in settings.json: a looping WAV file replaces the microphone");
 		}
-		if ("true".equals(config.value("dev", "null_output"))) {
-			LOGGER.warn("[dev] null_output is set in client.toml: nothing is played");
+		if (settings.dev().nullOutput()) {
+			LOGGER.warn("dev.null_output is set in settings.json: nothing is played");
 		}
 
 		SessionJoiner joiner = new SessionJoiner(new SessionJoiner.Mojang() {
@@ -115,7 +125,7 @@ public final class YakVcClient implements ClientModInitializer {
 		ClientLoginConnectionEvents.DISCONNECT.register((handler, minecraft) -> joiner.loginEnded());
 		ClientConfigurationConnectionEvents.INIT.register((handler, minecraft) -> joiner.loginEnded());
 
-		GameStateFeeder feeder = new GameStateFeeder(bridge, engine, config, VoiceKeys.register(), joiner,
+		GameStateFeeder feeder = new GameStateFeeder(bridge, engine, settings, VoiceKeys.register(), joiner,
 				PlayerVolumes.load(configDir));
 		YakVcClient.feeder = feeder;
 		// The engine is up, so another mod's voice sink can be taken: say which versions.
@@ -134,15 +144,9 @@ public final class YakVcClient implements ClientModInitializer {
 	 * Starts the update check unless it is turned off. Before the engine, so a player whose voice fails to start
 	 * still hears about the release that may fix it.
 	 */
-	private static void checkForUpdate(Path configDir) {
-		FabricLoader loader = FabricLoader.getInstance();
+	private static void checkForUpdate(Settings settings) {
 		// A dev build's version says nothing about which release it is.
-		if (loader.isDevelopmentEnvironment()) return;
-		try {
-			if (!ClientConfig.load(configDir).checkForUpdates()) return;
-		} catch (Exception e) {
-			return; // The engine start below reports the broken config.
-		}
+		if (FabricLoader.getInstance().isDevelopmentEnvironment() || !settings.checkForUpdates()) return;
 		UpdateNotice.register();
 		UpdateCheck.start(version()).thenAccept(release -> {
 			if (release != null) Minecraft.getInstance().execute(() -> UpdateNotice.show(release));
