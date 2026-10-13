@@ -73,7 +73,7 @@ class SettingsTest {
 		assertEquals(List.of("abc"), loaded.trustedIssuers());
 		assertEquals(new Settings.Rendezvous("def", List.of("127.0.0.1:4433"), "https://relay.example/"),
 				loaded.rendezvous());
-		assertEquals(new Settings.Dev(440.0, null, true), loaded.dev());
+		assertEquals(new Settings.Dev(440.0, null, true, null), loaded.dev());
 		assertEquals("yakvc1:a:b:https://relay.example/", loaded.server());
 		assertNull(loaded.withServer(null).server());
 		assertEquals("Mic \"USB\" \\ 2", loaded.audio().outputDevice());
