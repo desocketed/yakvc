@@ -51,12 +51,20 @@ class RoomTest {
 		List<Room.Ray> rays = new ArrayList<>();
 		for (Vec3 d : Room.directions(48)) {
 			double ground = d.y < 0 ? EYE / -d.y : Double.MAX_VALUE;
-			rays.add(ground <= TUNING.roomReach() ? new Room.Ray(d.y <= -0.3, true, ground, -d.y, STONE)
+			rays.add(ground <= TUNING.roomReach() ? new Room.Ray(d.y <= -0.3, true, ground, -d.y, STONE, true)
 					: Room.Ray.miss(d.y <= -0.3));
 		}
 		Room room = Room.of(rays, TUNING);
 		// Only the ground near the horizon counts, a little.
 		assertTrue(room.reverb() < 0.15, "reverb " + room.reverb());
+		assertEquals(0, room.echo());
+	}
+
+	/** Flat ground, then stepping up a block every 2 m east and west from 8 m away: the steps' faces look back at the listener, but are too low to echo. */
+	@Test
+	void steppedGroundDoesNotEcho() {
+		Terrain hills = (x, y, z) -> y < Math.floorDiv(Math.max(0, Math.abs(x) - 8), 2);
+		Room room = Room.of(hills.rays(new Vec3(0.5, 1.62, 0.5), Room.directions(48), TUNING.roomReach()), TUNING);
 		assertEquals(0, room.echo());
 	}
 
@@ -91,7 +99,7 @@ class RoomTest {
 					incidence = Math.abs(v[axis]);
 				}
 			}
-			rays.add(new Room.Ray(d.y <= -0.3, true, nearest, incidence, absorption));
+			rays.add(new Room.Ray(d.y <= -0.3, true, nearest, incidence, absorption, true));
 		}
 		return rays;
 	}

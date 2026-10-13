@@ -3,6 +3,8 @@ package io.github.desocketed.yakvc;
 import io.github.desocketed.yakvc.config.SoundTuning;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.IntPredicate;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.world.level.BlockGetter;
@@ -40,6 +42,8 @@ public record Room(float reverb, float criticalDistance, float decay, float echo
 	private static final double ECHO_LEVEL = 0.2;
 	/** Metres past {@link #ECHO_MIN_DISTANCE} over which the echo fades in: only big spaces echo in full. */
 	private static final double ECHO_FADE = 8;
+	/** Blocks a side face must stand bare to echo, so stepped ground and lone fence posts don't. */
+	static final int ECHO_HEIGHT = 4;
 	/** A voice is louder in front of the talker than behind; Q = 2 widens the critical distance by √2. */
 	private static final double VOICE_DIRECTIVITY = 2;
 	/** Air absorbs sound too, m in Sabine's 4mV: per metre, around 1 kHz at 50 % humidity. It matters only in big spaces. */
@@ -62,10 +66,12 @@ public record Room(float reverb, float criticalDistance, float decay, float echo
 	 * @param distance   metres to the surface
 	 * @param incidence  the cosine of the angle between the ray and the surface's normal
 	 * @param absorption the share of sound the surface absorbs, from 0 to 1
+	 * @param tall       whether the surface stands tall enough to echo ({@link #tall})
 	 */
-	public record Ray(boolean floor, boolean hit, double distance, double incidence, double absorption) {
+	public record Ray(boolean floor, boolean hit, double distance, double incidence, double absorption,
+			boolean tall) {
 		static Ray miss(boolean floor) {
-			return new Ray(floor, false, 0, 1, 1);
+			return new Ray(floor, false, 0, 1, 1, false);
 		}
 	}
 
@@ -83,7 +89,7 @@ public record Room(float reverb, float criticalDistance, float decay, float echo
 			double incidence = Math.abs(direction.x * face.getStepX() + direction.y * face.getStepY()
 					+ direction.z * face.getStepZ());
 			rays.add(new Ray(floor, true, hit.getLocation().distanceTo(eye), incidence,
-					absorption(level.getBlockState(hit.getBlockPos()))));
+					absorption(level.getBlockState(hit.getBlockPos())), tall(level, hit.getBlockPos(), face)));
 		}
 		return of(rays, tuning);
 	}
@@ -117,7 +123,7 @@ public record Room(float reverb, float criticalDistance, float decay, float echo
 			walls++;
 			wallDistance += ray.distance;
 			// Further walls echo apart, each from its own direction: FarEchoes.
-			if (ray.incidence < FACING || ray.distance > FarEchoes.MIN_DISTANCE) continue;
+			if (!ray.tall || ray.incidence < FACING || ray.distance > FarEchoes.MIN_DISTANCE) continue;
 			facing++;
 			facingDistance += ray.distance;
 			facingAbsorption += absorption;
@@ -168,6 +174,30 @@ public record Room(float reverb, float criticalDistance, float decay, float echo
 				|| sound == SoundType.POLISHED_DEEPSLATE || sound == SoundType.TUFF || sound == SoundType.NETHER_BRICKS
 				|| sound == SoundType.CALCITE) return 0.02;
 		return 0.05;
+	}
+
+	/**
+	 * Whether the face a ray hit, on the block at {@code pos}, is part of something tall enough to echo: a wall or a
+	 * cliff, not the one-block step of rolling ground. A side face counts once it stands bare (solid, with open air in
+	 * front of it) for {@link #ECHO_HEIGHT} blocks, counting up and down from the hit; a ceiling or floor always does.
+	 */
+	static boolean tall(BlockGetter level, BlockPos pos, Direction face) {
+		return face.getAxis() == Direction.Axis.Y || tall(up -> bare(level, pos.above(up), face));
+	}
+
+	/** Whether a side face is tall enough to echo, {@code bareAt} telling whether it stands bare so many blocks up. */
+	static boolean tall(IntPredicate bareAt) {
+		int height = 1;
+		for (int way : new int[] {1, -1}) {
+			for (int up = way; height < ECHO_HEIGHT && bareAt.test(up); up += way) height++;
+		}
+		return height >= ECHO_HEIGHT;
+	}
+
+	private static boolean bare(BlockGetter level, BlockPos pos, Direction face) {
+		BlockPos front = pos.relative(face);
+		return !level.getBlockState(pos).getCollisionShape(level, pos).isEmpty()
+				&& level.getBlockState(front).getCollisionShape(level, front).isEmpty();
 	}
 
 	/** One tick's step from this room towards {@code target}. */
