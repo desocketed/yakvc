@@ -34,9 +34,9 @@ class FarEchoesTest {
 	void nearWallsAndGroundStretchingAwayAreLeftOut() {
 		List<FarEchoes.Hit> hits = new ArrayList<>(cliff(1, 12));
 		// Ground met at a glance, far away.
-		hits.add(new FarEchoes.Hit(new Vec3(0, -0.05, 1).normalize(), 32, 0.05, 0.15));
+		hits.add(new FarEchoes.Hit(new Vec3(0, -0.05, 1).normalize(), 32, 0.05, 0.15, true));
 		// A far wall facing away.
-		hits.add(new FarEchoes.Hit(new Vec3(0, 0, -1), 60, -1, STONE));
+		hits.add(new FarEchoes.Hit(new Vec3(0, 0, -1), 60, -1, STONE, true));
 		assertEquals(List.of(), FarEchoes.pick(hits, RAYS));
 	}
 
@@ -54,11 +54,47 @@ class FarEchoesTest {
 	}
 
 	@Test
-	void aLonePillarEchoesLessThanABroadWall() {
-		double pillar = FarEchoes.pick(List.of(new FarEchoes.Hit(new Vec3(1, 0, 0), 40, 1, STONE)), RAYS).getFirst()
-				.gain();
+	void aLonePillarDoesNotEchoAndANarrowWallEchoesLess() {
+		FarEchoes.Hit pillar = new FarEchoes.Hit(new Vec3(1, 0, 0), 40, 1, STONE, true);
+		assertEquals(List.of(), FarEchoes.pick(List.of(pillar), RAYS));
+		List<FarEchoes.Hit> narrow = cliff(1, 40).stream().filter(hit -> Math.abs(hit.direction().z) < 0.01).toList();
+		double outcrop = FarEchoes.pick(narrow, RAYS).getFirst().gain();
 		double wall = FarEchoes.pick(cliff(1, 40), RAYS).getFirst().gain();
-		assertTrue(pillar < wall / 2, "pillar " + pillar + ", wall " + wall);
+		assertTrue(outcrop < wall, "outcrop " + outcrop + ", wall " + wall);
+	}
+
+	/**
+	 * Rolling plains: flat, then stepping up a block every 2 m east and west from 20 m away, the steps' faces looking back
+	 * at the listener, with a few lone trees about. Nothing there is tall enough to echo.
+	 */
+	@Test
+	void steppedPlainsAndLoneTreesDoNotEcho() {
+		Terrain plains = (x, y, z) -> y < ground(x, z) || tree(x, y, z);
+		Vec3 eye = new Vec3(0.5, 1.62, 0.5);
+		assertEquals(List.of(), FarEchoes.pick(plains.hits(eye, Room.directions(RAYS), 200), RAYS));
+	}
+
+	private static int ground(int x, int z) {
+		return Math.floorDiv(Math.max(0, Math.abs(x) - 20), 2);
+	}
+
+	private static boolean tree(int x, int y, int z) {
+		int[][] trees = {{22, 5}, {-30, 41}, {55, -12}, {-8, -70}};
+		for (int[] tree : trees) {
+			int ground = ground(tree[0], tree[1]);
+			if (x == tree[0] && z == tree[1] && y >= ground && y < ground + 6) return true;
+		}
+		return false;
+	}
+
+	/** The test world's canyon as blocks, cast at like the game does: it still echoes off both cliffs. */
+	@Test
+	void aCanyonOfBlocksEchoes() {
+		Terrain canyon = (x, y, z) -> y < 0 || (Math.abs(z) < 40 && y < 30 && (x < -35 || x > 34));
+		List<FarEchoes.Echo> echoes = FarEchoes.pick(canyon.hits(new Vec3(0.5, 1.62, 0.5), Room.directions(RAYS), 200),
+				RAYS);
+		assertTrue(echoes.stream().anyMatch(echo -> echo.direction().x < -0.9), echoes.toString());
+		assertTrue(echoes.stream().anyMatch(echo -> echo.direction().x > 0.9), echoes.toString());
 	}
 
 	private static List<FarEchoes.Hit> cliff(double side, double distance) {
@@ -77,7 +113,7 @@ class FarEchoesTest {
 				Vec3 direction = toward.add(side.scale(Math.tan(Math.toRadians(15 * across))))
 						.add(0, Math.tan(Math.toRadians(20 * up)), 0).normalize();
 				double incidence = direction.dot(toward);
-				hits.add(new FarEchoes.Hit(direction, distance / incidence, incidence, STONE));
+				hits.add(new FarEchoes.Hit(direction, distance / incidence, incidence, STONE, true));
 			}
 		}
 		return hits;
