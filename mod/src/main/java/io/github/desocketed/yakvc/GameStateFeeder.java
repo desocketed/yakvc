@@ -88,6 +88,8 @@ public final class GameStateFeeder {
 	private final PlayerVolumes volumes;
 	private final byte[] eventBuffer = new byte[EVENT_BUFFER_BYTES];
 	private ClientConfig config;
+	/** The render distance the engine's voice range was last capped to, 0 before the first tick. */
+	private int rangeRenderChunks;
 
 	/** Volatile because Fabric may fire DISCONNECT off the client thread. */
 	private volatile @Nullable VoiceSession session;
@@ -232,6 +234,21 @@ public final class GameStateFeeder {
 		step(() -> feedInput(active ? inputFlags(player) : 0));
 		step(() -> feedVolume(minecraft.options.getFinalSoundSourceVolume(SoundSource.VOICE)));
 		step(() -> feedDevice(minecraft.options.soundDevice().get()));
+		step(() -> feedRenderDistance(minecraft.options.renderDistance().get()));
+	}
+
+	private void feedRenderDistance(int renderChunks) {
+		if (renderChunks == rangeRenderChunks) return;
+		bridge.updateConfig(engine, engineToml(config, renderChunks));
+		rangeRenderChunks = renderChunks;
+	}
+
+	/** The config as the engine gets it: the saved one, with the voice range capped by the render distance. */
+	private static String engineToml(ClientConfig config, int renderChunks) {
+		if (renderChunks == 0) return config.toml();
+		double range = ClientConfig.effectiveVoiceRange(config.voiceRange(), renderChunks);
+		if (range == config.voiceRange()) return config.toml();
+		return config.with("", "voice_range", String.valueOf(range)).toml();
 	}
 
 	/**
@@ -266,7 +283,7 @@ public final class GameStateFeeder {
 	public @Nullable String applyConfig(ClientConfig newConfig) {
 		if (closed) return "the voice engine is stopped";
 		try {
-			bridge.updateConfig(engine, newConfig.toml());
+			bridge.updateConfig(engine, engineToml(newConfig, rangeRenderChunks));
 		} catch (YakVcException e) {
 			fail(e);
 			return e.getMessage();

@@ -74,6 +74,7 @@
 	"yakvc.settings.activation.voice": "Voice",
 	"yakvc.settings.range": "Range",
 	"yakvc.settings.range.blocks": "%s blocks",
+	"yakvc.settings.range.tooltip": "How far away players can hear you, limited by your render distance.",
 	"yakvc.settings.bitrate": "Bitrate",
 	"yakvc.settings.bitrate.kbps": "%s kbit/s",
 	"yakvc.settings.bitrate.tooltip": "Higher sounds better and uses more data. 24 kbit/s is plenty for speech.",

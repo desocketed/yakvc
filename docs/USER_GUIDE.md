@@ -139,7 +139,7 @@ Open the settings from **Options → Music & Sounds → Voice Chat…**, at the 
 ![The voice settings](guide/voice-settings.png)
 
 - **Activation**: *Push to Talk* sends your voice only while you hold the key. *Voice* sends it whenever the microphone hears you speak.
-- **Range**: how far away players can hear you and you can hear them, from 1 to 256 blocks (256 by default). Between two players, the shorter of their ranges applies.
+- **Range**: how far away players can hear you and you can hear them, from 1 block up to your render distance (16 blocks per chunk, so 512 at most), 256 by default. Players past your render distance aren't shown, so a range set further is limited while it lasts and comes back when you raise the render distance. Between two players, the shorter of their ranges applies.
 - **Bitrate**: the sound quality of your voice, from 16 to 64 kbit/s. Higher sounds better and uses more data; 24 kbit/s is plenty for speech.
 - **Noise Filter**: filters fans, hum and room noise out of your microphone. On by default; turn it off if it makes your voice sound choppy or robotic, or if your microphone is already clean.
 - **Microphone**: which microphone to use. Click it for a list of your microphones and pick one; scroll the list if it is long. *System Default* follows your system's setting.

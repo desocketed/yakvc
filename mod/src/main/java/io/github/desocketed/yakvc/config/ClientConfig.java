@@ -65,6 +65,14 @@ public record ClientConfig(String toml) {
 		return number(value("", "voice_range"), 256);
 	}
 
+	/**
+	 * The voice range in effect: never past the render distance, because players beyond it aren't tracked. Only the
+	 * engine gets the capped range, so lowering the render distance for a while keeps the saved one.
+	 */
+	public static double effectiveVoiceRange(double voiceRange, int renderChunks) {
+		return Math.min(voiceRange, renderChunks * 16);
+	}
+
 	/** How much of the world's acoustics to hear. Only the mod reads it; the engine ignores unknown keys. */
 	public SpatialAudio spatialAudio() {
 		return SpatialAudio.of(string(value("", "spatial_audio")));
@@ -249,7 +257,7 @@ public record ClientConfig(String toml) {
 			# Yak VC client settings. The voice menu's settings screen edits this file too; relay_only and the
 			# [rendezvous] table apply on the next game start, everything else at once.
 
-			# Voice range in blocks (1 to 256). Between two players the shorter range applies.
+			# Voice range in blocks (1 to 512), limited by the render distance. Between two players the shorter range applies.
 			voice_range = 256.0
 
 			# Spatial audio: "off" (distance and left/right only), "simple" (walls muffle voices, which come round
