@@ -163,3 +163,8 @@ setblock 148 -60 25 oak_sign[rotation=4]{front_text:{messages:["Hill","18 tall, 
 
 # ---- Open plain: beyond z 140 the flat world goes on.
 setblock 20 -60 142 oak_sign[rotation=0]{front_text:{messages:["Open plain","nothing to echo off","flat all the way",""]}}
+
+# Animals that came with the chunks, and the items the rebuild dropped, go
+# (twice: the second gets the animals' drops).
+kill @e[type=!player]
+kill @e[type=!player]
