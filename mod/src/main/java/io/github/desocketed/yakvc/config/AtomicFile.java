@@ -6,7 +6,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 
 /**
- * Saves a file so that a crash mid-write leaves the old contents, not a truncated file: a truncated {@code client.toml}
+ * Saves a file so that a crash mid-write leaves the old contents, not a truncated file: a truncated {@code settings.json}
  * stops voice from starting, and a truncated {@code players.json} loads as empty and the next save loses every mute.
  */
 final class AtomicFile {

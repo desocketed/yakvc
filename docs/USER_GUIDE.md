@@ -144,7 +144,7 @@ Open the settings from **Options → Music & Sounds → Voice Chat…**, at the 
 - **Noise Filter**: filters fans, hum and room noise out of your microphone. On by default; turn it off if it makes your voice sound choppy or robotic, or if your microphone is already clean.
 - **Microphone**: which microphone to use. Click it for a list of your microphones and pick one; scroll the list if it is long. *System Default* follows your system's setting.
 - **Mic Volume**: how loud your microphone is, from 0 to 400% (100% by default). The level meter below shows the result, so set it by eye: talk normally and aim for the bar to cross the white mark comfortably. It also changes when *Voice* activation starts sending.
-- **Microphone Level**: shows live how loud your microphone hears you, so you can check it works without joining a world or holding the talk key. The bar turns green above the white mark, the level at which *Voice* activation starts sending (`vad_threshold_db` in the [config file](#the-config-file)). It shows the microphone in use, so after picking another one, leave and reopen the settings to see it.
+- **Microphone Level**: shows live how loud your microphone hears you, so you can check it works without joining a world or holding the talk key. The bar turns green above the white mark, the level at which *Voice* activation starts sending (`audio.vad_threshold_db` in the [settings file](#the-settings-file)). It shows the microphone in use, so after picking another one, leave and reopen the settings to see it.
 - **Speakers**: where voices play. Click it to pick from a list, like the microphone. *Same as Game* uses the game's sound device (Options → Music & Sounds → Device).
 - **Spatial Audio**: how voices sound in the world. *Off*: they only get quieter with distance and come from the left or right. *Simple* (the default): walls and closed doors also muffle them, and a voice behind a wall comes round through the nearest opening. *Full*: caves, halls and canyons also ring with reverb and echo, and far cliffs echo voices back. Lower levels also spare your computer the work of tracing the sound.
 
@@ -155,7 +155,7 @@ Open the settings from **Options → Music & Sounds → Voice Chat…**, at the 
 - **Relay Only**: sends all voice through the Yak VC relay, so other players don't learn your IP address (see [privacy](#privacy)). Off by default. It takes effect after you restart the game, and until then the button says **On after restart** or **Off after restart**.
 - **Obey Chat Limits**: turns voice off while your Microsoft account or launcher disables chat. On by default.
 - **Mute Blocked**: players you block in Social Interactions can't hear you, and you don't hear them. On by default.
-- **Group Invites**: who may invite you to a [group](#groups): *Everyone* (the default) or *Nobody*. Setting `invites = "friends"` in the [config file](#the-config-file) allows only the players in `friends_only`, which is edited there too. Invites from anyone else are ignored.
+- **Group Invites**: who may invite you to a [group](#groups): *Everyone* (the default) or *Nobody*. Setting `"invites": "friends"` in the [settings file](#the-settings-file) allows only the players in `friends_only`, which is edited there too. Invites from anyone else are ignored.
 - **Check for Updates**: once at startup, asks GitHub whether a newer Yak VC is out, and if so names it in the title screen's top left corner; click it to open the release page. On by default; it takes effect after you restart the game.
 - **Releases**: opens Yak VC's [releases page](https://github.com/desocketed/yakvc/releases), and shows which version you run. When the update check found a newer one, it says **Update to** that version and opens its release.
 
@@ -211,10 +211,10 @@ Yak VC shows a message in the top-right corner when voice, or a part of it, stop
 | --- | --- |
 | Voice chat doesn't support this system yet. | Your system isn't one of those listed under [Installing](#installing). |
 | Voice chat couldn't load its engine. See the game log. | Download the Yak VC jar again and replace the old one. Antivirus software can also block the library Yak VC unpacks into `config/yakvc/natives/`. |
-| Voice chat couldn't start: … | Usually a mistake in `config/yakvc/client.toml`; the message says which. Fix it, or delete the file to get the defaults back. |
+| Voice chat couldn't start: … | Usually a mistake in `config/yakvc/settings.json`; the message says which. Fix it, or delete the file to get the defaults back. |
 | Voice chat crashed and is off until you restart the game. | Restart the game. If it keeps happening, report it with your game log. |
 | Settings not applied: … | A setting was refused; the message says why. Nothing was changed. |
-| Settings applied but not saved. See the game log. | The settings work until you quit, but Yak VC couldn't write its config file, for example because it is read-only. |
+| Settings applied but not saved. See the game log. | The settings work until you quit, but Yak VC couldn't write its settings file, for example because it is read-only. |
 | Cannot open the microphone: … or The microphone stopped working: … | Check that the microphone is plugged in, not used by another program, and allowed for Java in your system's privacy settings, or pick another one under **Microphone** in the settings. Yak VC keeps trying, and the HUD's microphone turns white again once it works. |
 | Cannot open the speakers: … or The speakers stopped working: … | The same for your speakers or headphones, under **Speakers**. You can still talk. |
 | Voice chat sign-in failed: … | The Yak VC server didn't accept your Minecraft account; the message says why. Yak VC tries again by itself. |
@@ -241,9 +241,9 @@ For testing, or to attach to a bug report, the debug overlay shows what Yak VC i
 | Overruns, underruns | Glitches since the device opened: microphone audio Yak VC was too slow to pick up, and moments the speakers ran dry. A count that keeps rising means crackling. |
 | Peers | One line per Yak VC player you are connected to: `direct` or `relayed` (or `connecting`, `failed`, `relay full`), `verified` if their account is, `voice v3` (for example) if their Yak VC speaks another voice version than yours, in which case talking with them may not work until you both run the same version, the round trip time (`rtt`), the share of their voice lost on the way (`loss`), packets that came too late to play (`late`), and how much audio is held back to smooth out uneven arrival (`buffer`). Loss and late appear once they have talked. |
 
-## The config file
+## The settings file
 
-Settings live in `config/yakvc/client.toml` in your game folder. Yak VC writes it with comments the first time it starts, and the settings screen edits it in place, so your own comments survive. The game reads the file when it starts, so edit it by hand only while the game is closed.
+Settings live in `config/yakvc/settings.json` in your game folder. Yak VC writes it with every key the first time it starts, and writes the whole file again whenever a setting changes. The game reads the file when it starts, so edit it by hand only while the game is closed. A key you leave out takes its default, and a key Yak VC doesn't know is dropped on the next save.
 
 The keys that the settings screen shows:
 
@@ -257,20 +257,34 @@ The keys that the settings screen shows:
 | `verified_only` | `false` | Only Verified Players |
 | `check_for_updates` | `true` | Check for Updates |
 | `invites` | `"everyone"` | Group Invites (`"everyone"`, `"friends"` or `"nobody"`) |
-| `[audio]` `activation` | `"push_to_talk"` | Activation (`"push_to_talk"` or `"voice"`) |
-| `[audio]` `bitrate` | `24000` | Bitrate, in bits per second |
-| `[audio]` `noise_suppression` | `true` | Noise Filter |
-| `[audio]` `input_device` | unset | Microphone, by device id |
-| `[audio]` `output_device` | unset | Speakers, by device id |
+| `audio.activation` | `"push_to_talk"` | Activation (`"push_to_talk"` or `"voice"`) |
+| `audio.bitrate` | `24000` | Bitrate, in bits per second |
+| `audio.noise_suppression` | `true` | Noise Filter |
+| `audio.input_gain` | `1.0` | Mic Volume, from 0 to 10 (the slider goes up to 4.0, 400%) |
+| `audio.input_device` | `null` | Microphone, by device id |
+| `audio.output_device` | `null` | Speakers, by device id |
+| `acoustics` | | The Sound Tuning values, under the settings' Developer section |
 
 A few more are only in the file:
 
 | Key | Default | What it does |
 | --- | --- | --- |
-| `friends_only` | unset | A list of player UUIDs, like `["11111111-2222-3333-4444-555555555555"]`. When set, you hear and talk to only these players. |
+| `friends_only` | `null` | A list of player UUIDs, like `["11111111-2222-3333-4444-555555555555"]`. When set, you hear and talk to only these players. |
 | `setup_done` | `false` | Set once the voice menu's first-run card is dismissed, so it shows only once. |
-| `[audio]` `input_gain` | `1.0` | Mic Volume, from 0 to 10 (the settings go up to 4.0, 400%). |
-| `[audio]` `vad_threshold_db` | `-45.0` | How loud you must be for *Voice* activation to send, from -100 (everything) to 0 (very loud only). |
-| `[rendezvous]` | the Yak VC server | Another voice server, for those who [run their own](../deploy/README.md). |
+| `audio.vad_threshold_db` | `-45.0` | How loud you must be for *Voice* activation to send, from -100 (everything) to 0 (very loud only). |
+| `rendezvous`, `trusted_issuers` | the Yak VC server | Another voice server, for those who [run their own](../deploy/README.md). |
+
+`audio.activation` means the `activation` key inside the `audio` object:
+
+```json
+{
+  "voice_range": 64.0,
+  "audio": {"activation": "voice"}
+}
+```
+
+### Modpack presets
+
+A modpack can ship a `config/yakvc/settings.json` with only the keys it wants to preset, and players get the defaults for everything else. The file above is a complete preset. A pack that wants to skip the first-run card and the update check ships `{"setup_done": true, "check_for_updates": false}`.
 
 The same folder holds `players.json`, the volume and mute you set for each player, and `node.key`, the private key that identifies your game to other players. Keep it to yourself; if you delete it, Yak VC makes a new one.

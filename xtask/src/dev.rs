@@ -7,22 +7,24 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result, ensure};
+use serde_json::{Value, json};
 
 use crate::{cargo, output, root};
 
 /// A dev rendezvous ready to start: its server binary, its config and the
-/// client config that points at it.
+/// mod settings that point at it (a partial `settings.json`, as a modpack's
+/// preset is: the rest takes the defaults).
 pub(crate) struct DevServer {
     pub(crate) server: PathBuf,
     pub(crate) config: PathBuf,
-    pub(crate) client: String,
+    pub(crate) client: Value,
 }
 
 /// Where `--real-auth` serves its counters.
 const METRICS: &str = "127.0.0.1:9187";
 
 /// Builds yakvc-server, creates keys in `dir` (kept across runs, so the
-/// printed client config stays valid), writes `dir/client.toml` and runs the
+/// printed settings stay valid), writes `dir/settings.json` and runs the
 /// server in the foreground until Ctrl-C. With `real_auth` it also builds
 /// the mod jar to try it with.
 pub fn dev(
@@ -57,12 +59,15 @@ pub fn dev(
         println!("Server counters: curl -s http://{METRICS}/metrics | grep -E 'auth|mojang'\n");
     }
     if write_client_config {
-        let target = root.join("mod/run/config/yakvc/client.toml");
+        let target = root.join("mod/run/config/yakvc/settings.json");
         fs::create_dir_all(target.parent().unwrap())?;
-        fs::write(&target, &client)?;
+        fs::write(&target, settings_json(&client))?;
         println!("Wrote {}", target.display());
     }
-    println!("Client config (config/yakvc/client.toml):\n\n{client}");
+    println!(
+        "Client settings (config/yakvc/settings.json):\n\n{}",
+        settings_json(&client)
+    );
     let kind = if real_auth { "Real-auth" } else { "Dev" };
     println!("{kind} yakvc-server on 127.0.0.1:{port}, Ctrl-C to stop.");
 
@@ -72,10 +77,10 @@ pub fn dev(
         .arg(&config))
 }
 
-/// Builds yakvc-server and writes the keys, its config and `dir/client.toml`.
+/// Builds yakvc-server and writes the keys, its config and `dir/settings.json`.
 /// Without `real_auth` the server takes dev tickets and the client accepts
 /// them; with it, clients prove their account with Mojang, and the client
-/// config leaves out `dev_mode`, so it only accepts a real ticket.
+/// settings leave out `dev_mode`, so it only accepts a real ticket.
 pub(crate) fn prepare(port: u16, dir: &Path, real_auth: bool) -> Result<DevServer> {
     let root = root();
     fs::create_dir_all(dir)?;
@@ -117,17 +122,24 @@ pub(crate) fn prepare(port: u16, dir: &Path, real_auth: bool) -> Result<DevServe
         ),
     )?;
 
-    let dev_mode = if real_auth { "" } else { "dev_mode = true\n" };
-    let client = format!(
-        "{dev_mode}trusted_issuers = [\"{issuer_id}\"]\n\n\
-         [rendezvous]\nendpoint_id = \"{endpoint_id}\"\naddrs = [\"127.0.0.1:{port}\"]\n"
-    );
-    fs::write(dir.join("client.toml"), &client)?;
+    let mut client = json!({
+        "trusted_issuers": [issuer_id],
+        "rendezvous": {"endpoint_id": endpoint_id, "addrs": [format!("127.0.0.1:{port}")]},
+    });
+    if !real_auth {
+        client["dev_mode"] = json!(true);
+    }
+    fs::write(dir.join("settings.json"), settings_json(&client))?;
     Ok(DevServer {
         server,
         config,
         client,
     })
+}
+
+/// `settings.json` text for the mod.
+pub(crate) fn settings_json(settings: &Value) -> String {
+    serde_json::to_string_pretty(settings).expect("JSON values serialize") + "\n"
 }
 
 /// A TOML basic string for a path: backslashes (Windows) and quotes escaped.

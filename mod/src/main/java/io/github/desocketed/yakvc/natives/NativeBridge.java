@@ -229,7 +229,7 @@ public final class NativeBridge {
 		return (int) written[0];
 	}
 
-	/** Applies a new {@code client.toml}. */
+	/** Applies new settings, as {@code Settings.engineToml} gives them. */
 	public void updateConfig(MemorySegment engine, String toml) {
 		try (Arena arena = Arena.ofConfined()) {
 			MemorySegment bytes = utf8(arena, toml);

@@ -131,16 +131,16 @@ enum Cmd {
     /// Start the yakvc-server image twice, as the service does: the first
     /// start must create its keys in a fresh volume, the second keep them.
     ServerSmoke,
-    /// Start a dev-mode yakvc-server and print the client config for it.
+    /// Start a dev-mode yakvc-server and print the client settings for it.
     Dev {
         /// Port on 127.0.0.1.
         #[arg(long, default_value_t = 7843)]
         port: u16,
-        /// Keys, server config and client.toml (default target/dev-server).
+        /// Keys, server config and settings.json (default target/dev-server).
         #[arg(long)]
         dir: Option<PathBuf>,
-        /// Also write the client config into runClient's game directory
-        /// (mod/run/config/yakvc/client.toml).
+        /// Also write the client settings into runClient's game directory
+        /// (mod/run/config/yakvc/settings.json).
         #[arg(long)]
         write_client_config: bool,
         /// Check accounts with Mojang instead of taking dev tickets, for the
