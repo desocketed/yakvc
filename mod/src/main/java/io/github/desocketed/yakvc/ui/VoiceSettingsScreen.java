@@ -2,11 +2,13 @@ package io.github.desocketed.yakvc.ui;
 
 import com.mojang.serialization.Codec;
 import io.github.desocketed.yakvc.GameStateFeeder;
+import io.github.desocketed.yakvc.UpdateCheck;
 import io.github.desocketed.yakvc.YakVcClient;
 import io.github.desocketed.yakvc.config.ClientConfig;
 import io.github.desocketed.yakvc.config.SpatialAudio;
 import io.github.desocketed.yakvc.natives.EngineEvent;
 import java.io.IOException;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -19,6 +21,8 @@ import net.minecraft.client.Options;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.MultiLineTextWidget;
+import net.minecraft.client.gui.components.Tooltip;
+import net.minecraft.client.gui.screens.ConfirmLinkScreen;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.client.gui.screens.AlertScreen;
@@ -274,13 +278,27 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 				.setMaxWidth(310).setCentered(true));
 		list.addSmall(relayOnly, respectChatRestrictions);
 		list.addSmall(muteBlockedPlayers, invites);
-		list.addSmall(checkForUpdates);
+		list.addSmall(checkForUpdates.createButton(options), releasesButton());
 		list.addHeader(Component.translatable("yakvc.settings.account"));
 		shownAccountState = accountState();
 		accountText = new MultiLineTextWidget(shownAccountState, font).setMaxWidth(310).setCentered(true);
 		list.addBig(accountText);
 		list.addSmall(verifiedOnly);
 		addDeveloperSection();
+	}
+
+	/**
+	 * Opens the releases page (after the game's usual link warning), naming the running version, or the newer one if
+	 * the update check found it.
+	 */
+	private Button releasesButton() {
+		String running = YakVcClient.version();
+		UpdateCheck.Release newer = UpdateNotice.newer();
+		Component label = newer == null ? Component.translatable("yakvc.settings.releases", running)
+				: Component.translatable("yakvc.settings.releases.update", newer.version());
+		URI page = newer == null ? UpdateCheck.RELEASES_PAGE : newer.page();
+		return Button.builder(label, button -> ConfirmLinkScreen.confirmLinkNow(this, page))
+				.tooltip(Tooltip.create(Component.translatable("yakvc.settings.releases.tooltip", running))).build();
 	}
 
 	/**
