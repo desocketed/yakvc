@@ -67,3 +67,18 @@ Agents don't negotiate with each other directly; all coordination goes through t
 
 - Keep DESIGN.md current: when the implementation deviates, update it in the same commit.
 - Update the status table above when a step finishes.
+
+## Issues
+
+Anyone may open an issue; the forms (bug report, feature request) ask for what a first look needs, and a blank issue is fine too. The `Issues` workflow labels every new one `status: needs-triage`, and Claude's session triages it from there:
+
+1. **Assess** it: is it a real problem or a gap, does the user guide or an existing issue already cover it, does it fit the client-only rule, and is it worth doing before 1.0 (check the milestones and `docs/DESIGN.md`).
+2. **Consider alternatives**: a setting that already exists, a smaller change, or a different design that solves the underlying problem; say which was picked and why.
+3. **Sketch the implementation**: which crates or mod classes it touches, roughly how big it is, and what would need a playtest.
+4. **Comment** the assessment on the issue (short: a paragraph or a few bullets), set the type (`bug`, `enhancement`, …) and `area:` labels and a milestone, and swap `status: needs-triage` for the outcome:
+   - `status: triaged`: understood and agreed, ready to be built; it waits in its milestone.
+   - `status: needs-maintainer`: a design tradeoff, cost or legal question; ask the maintainer in chat when they are there and record the answer.
+   - closed, with the reason: a duplicate, already covered, or out of scope (client-only, or rejected before).
+5. When a fix lands on `dev`, swap to `status: needs-testing`: it needs a playtest before the issue closes. What exactly to check goes on the issue; the pinned #128 keeps only the big end-to-end items.
+
+`scripts/issue-inbox.sh` lists issues still marked `status: needs-triage` on every run, so none is forgotten.
