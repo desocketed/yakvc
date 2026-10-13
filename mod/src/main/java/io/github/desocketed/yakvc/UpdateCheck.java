@@ -18,6 +18,8 @@ import org.jspecify.annotations.Nullable;
  * nothing about the player is sent, and any failure only means no notice.
  */
 public final class UpdateCheck {
+	/** Where players download Yak VC. */
+	public static final URI RELEASES_PAGE = URI.create("https://github.com/desocketed/yakvc/releases");
 	private static final URI RELEASES = URI.create("https://api.github.com/repos/desocketed/yakvc/releases?per_page=10");
 	private static final Duration TIMEOUT = Duration.ofSeconds(10);
 

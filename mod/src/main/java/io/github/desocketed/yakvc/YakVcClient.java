@@ -143,11 +143,16 @@ public final class YakVcClient implements ClientModInitializer {
 		} catch (Exception e) {
 			return; // The engine start below reports the broken config.
 		}
-		String running = loader.getModContainer("yakvc").orElseThrow().getMetadata().getVersion().getFriendlyString();
 		UpdateNotice.register();
-		UpdateCheck.start(running).thenAccept(release -> {
+		UpdateCheck.start(version()).thenAccept(release -> {
 			if (release != null) Minecraft.getInstance().execute(() -> UpdateNotice.show(release));
 		});
+	}
+
+	/** The running Yak VC's version, as in its mod metadata. */
+	public static String version() {
+		return FabricLoader.getInstance().getModContainer("yakvc").orElseThrow().getMetadata().getVersion()
+				.getFriendlyString();
 	}
 
 	/** Logs why voice is off for this game and tells the player once the title screen is up. */
