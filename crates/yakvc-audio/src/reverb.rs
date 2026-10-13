@@ -7,8 +7,9 @@ const ALLPASS_DELAYS: [usize; 2] = [556, 441];
 /// The right channel's delays are this much longer, so the tail is wide.
 const STEREO_SPREAD: usize = 23;
 const ALLPASS_FEEDBACK: f32 = 0.5;
-/// The combs add up, so their sum is scaled back down.
-const OUTPUT_GAIN: f32 = 0.25;
+/// The four combs add up in energy, and each channel carries half of it, so
+/// a send comes out of the pair as loud as it went in: 1/√(4 × 2).
+const OUTPUT_GAIN: f32 = 0.353_553_4;
 /// The shortest and longest tail, in seconds until it fades by 60 dB.
 const MIN_DECAY: f32 = 0.1;
 const MAX_DECAY: f32 = 10.0;
@@ -35,6 +36,10 @@ struct Bank {
 struct Comb {
     delay: Delay,
     feedback: f32,
+    /// Scales its output so its ringing is as loud as its input whatever
+    /// the decay: √(1 − feedback²). How loud a room is next to the voice is
+    /// for the sends to say, not the tail length.
+    normalise: f32,
     /// The last output, low-passed: the damping filter's state.
     filtered: f32,
 }
@@ -53,6 +58,7 @@ impl Reverb {
                 .map(|&d| Comb {
                     delay: Delay::new(scaled(d + spread)),
                     feedback: 0.0,
+                    normalise: 1.0,
                     filtered: 0.0,
                 })
                 .collect(),
@@ -81,6 +87,7 @@ impl Reverb {
             for comb in &mut bank.combs {
                 let delay = comb.delay.buffer.len() as f32 / SAMPLE_RATE as f32;
                 comb.feedback = 10f32.powf(-3.0 * delay / seconds);
+                comb.normalise = (1.0 - comb.feedback * comb.feedback).sqrt();
             }
         }
     }
@@ -117,7 +124,7 @@ impl Bank {
             let delayed = comb.delay.read();
             comb.filtered = delayed * (1.0 - damping) + comb.filtered * damping;
             comb.delay.write(input + comb.filtered * comb.feedback);
-            sum += delayed;
+            sum += delayed * comb.normalise;
         }
         for allpass in &mut self.allpasses {
             let delayed = allpass.read();
