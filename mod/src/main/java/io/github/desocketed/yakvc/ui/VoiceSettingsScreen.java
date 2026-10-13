@@ -13,12 +13,14 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.Consumer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.OptionInstance;
 import net.minecraft.client.Options;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.MultiLineTextWidget;
 import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.ConfirmLinkScreen;
@@ -50,6 +52,8 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	 * hand-edited higher gain shows as 400% and is left alone until the slider moves.
 	 */
 	private static final int MAX_INPUT_GAIN_PERCENT = 400;
+	/** A server code is about 170 characters; room for a longer relay hostname. */
+	private static final int MAX_SERVER_CODE_CHARS = 400;
 
 	private final GameStateFeeder feeder;
 	private final Settings initial;
@@ -79,6 +83,8 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	/** The account line, which follows the rendezvous state while the screen is open. */
 	private @Nullable MultiLineTextWidget accountText;
 	private Component shownAccountState = Component.empty();
+	/** The Voice Server code, read when the screen closes. */
+	private @Nullable EditBox server;
 
 	/**
 	 * The settings over {@code parent}, or an alert if the engine isn't running: the settings need it to check and
@@ -277,7 +283,35 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		accountText = new MultiLineTextWidget(shownAccountState, font).setMaxWidth(310).setCentered(true);
 		list.addBig(accountText);
 		list.addSmall(verifiedOnly);
+		addVoiceServer();
 		addDeveloperSection();
+	}
+
+	/**
+	 * The Voice Server code, applied when the screen closes rather than as it is typed: a half-typed code is no
+	 * server, and a change only takes effect after a restart anyway (the engine builds its endpoint once).
+	 */
+	private void addVoiceServer() {
+		EditBox box = new EditBox(font, 0, 0, 150, 20, Component.translatable("yakvc.settings.server"));
+		box.setMaxLength(MAX_SERVER_CODE_CHARS);
+		box.setHint(Component.translatable("yakvc.settings.server.default"));
+		box.setValue(initial.server() == null ? "" : initial.server());
+		box.setTooltip(Tooltip.create(Component.translatable("yakvc.settings.server.tooltip")));
+		server = box;
+		list.addSmall(box, Button.builder(Component.translatable("yakvc.settings.server.reset"),
+				button -> box.setValue("")).build());
+		list.addBig(new MultiLineTextWidget(Component.translatable("yakvc.settings.server.note"), font)
+				.setMaxWidth(310).setCentered(true));
+	}
+
+	/** The typed server code, or null for the default (preset or built-in) server. */
+	private @Nullable String serverValue() {
+		String typed = server == null ? "" : server.getValue().trim();
+		return typed.isEmpty() ? null : typed;
+	}
+
+	private boolean serverChanged() {
+		return !Objects.equals(serverValue(), feeder.settings().server());
 	}
 
 	/**
@@ -308,7 +342,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	@Override
 	public void tick() {
 		super.tick();
-		if (throttle.tick() && !apply()) {
+		if (throttle.tick() && !apply(false)) {
 			// Reopened from what is in effect, so no control shows a value the engine refused.
 			minecraft.gui.setScreen(new VoiceSettingsScreen(lastScreen, options, feeder));
 			return;
@@ -370,7 +404,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	@Override
 	public void removed() {
 		super.removed();
-		if (throttle.takePending()) apply();
+		if (throttle.takePending() || serverChanged()) apply(true);
 	}
 
 	private double shownRange(Settings settings) {
@@ -381,7 +415,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	 * Applies and saves what differs from the settings in effect; false if the engine rejected it. The sliders show
 	 * rounded values, so each is only written when it moved, or a hand-edited value would be rewritten on every close.
 	 */
-	private boolean apply() {
+	private boolean apply(boolean withServer) {
 		Settings current = feeder.settings();
 		Settings changed = withActivationAndInvites(current, activation, invites)
 				.withRelayOnly(relayOnly.get())
@@ -393,6 +427,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 				.withNoiseSuppression(noiseSuppression.get())
 				.withInputDevice(deviceValue(inputDevice.get()))
 				.withOutputDevice(deviceValue(outputDevice.get()));
+		if (withServer) changed = changed.withServer(serverValue());
 		// Against the capped range, so a saved range past the render distance stays saved unless moved.
 		if (range.get() != Math.round(shownRange(current))) changed = changed.withVoiceRange(range.get());
 		if (bitrateKbps.get() != current.audio().bitrate() / 1000) changed = changed.withBitrate(bitrateKbps.get() * 1000);
