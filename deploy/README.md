@@ -102,7 +102,7 @@ services.yakvc-server = {
 };
 ```
 
-**3. Rebuild** (`sudo nixos-rebuild switch`), then `journalctl -u yakvc-server` prints the endpoint id, issuer id and (with a relay) the relay URL, for clients' `client.toml` (see "Pointing clients at the server" below).
+**3. Rebuild** (`sudo nixos-rebuild switch`), then `journalctl -u yakvc-server` prints the endpoint id, issuer id and (with a relay) the relay URL, for clients' `settings.json` (see "Pointing clients at the server" below).
 
 ## Without Docker
 
@@ -121,15 +121,17 @@ On first start the server creates its two keys in `/var/lib/yakvc` (really `/var
 
 ## Pointing clients at the server
 
-Clients use the project's default server unless their `config/yakvc/client.toml` names another. With the ids the server printed:
+Clients use the project's default server unless their `config/yakvc/settings.json` names another. With the ids the server printed, add these keys to the file (a modpack can ship them on their own, and players get the defaults for everything else):
 
-```toml
-trusted_issuers = ["<issuer id>"]
-
-[rendezvous]
-endpoint_id = "<endpoint id>"
-addrs = ["<server public IPv4>:7843", "[<server public IPv6>]:7843"]
-relay = "https://relay.example.com/"
+```json
+{
+  "trusted_issuers": ["<issuer id>"],
+  "rendezvous": {
+    "endpoint_id": "<endpoint id>",
+    "addrs": ["<server public IPv4>:7843", "[<server public IPv6>]:7843"],
+    "relay": "https://relay.example.com/"
+  }
+}
 ```
 
 List both addresses so that clients on IPv6-only networks can reach the rendezvous directly; one alone works too.
