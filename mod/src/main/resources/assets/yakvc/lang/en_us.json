@@ -84,6 +84,7 @@
 	"yakvc.tuning.walls": "Walls",
 	"yakvc.tuning.rooms": "Rooms",
 	"yakvc.tuning.reset": "Reset to Defaults",
+	"yakvc.tuning.reset.tooltip": "Puts every slider back. Right-click a slider to reset just that one.",
 	"yakvc.tuning.percent": "%s%%",
 	"yakvc.tuning.times": "×%s",
 	"yakvc.tuning.hertz": "%s Hz",
