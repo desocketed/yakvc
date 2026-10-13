@@ -83,9 +83,10 @@ public final class YakVcClient implements ClientModInitializer {
 			return;
 		}
 
+		PlayerVolumes volumes = PlayerVolumes.load(configDir);
 		MemorySegment engine;
 		try {
-			engine = bridge.create(configDir.toString(), settings.engineToml(0));
+			engine = bridge.create(configDir.toString(), settings.engineToml(0, volumes.friends()));
 		} catch (Exception e) {
 			disable("could not start the engine", e, Component.translatable("yakvc.toast.start_failed", e.getMessage()));
 			return;
@@ -125,8 +126,7 @@ public final class YakVcClient implements ClientModInitializer {
 		ClientLoginConnectionEvents.DISCONNECT.register((handler, minecraft) -> joiner.loginEnded());
 		ClientConfigurationConnectionEvents.INIT.register((handler, minecraft) -> joiner.loginEnded());
 
-		GameStateFeeder feeder = new GameStateFeeder(bridge, engine, settings, VoiceKeys.register(), joiner,
-				PlayerVolumes.load(configDir));
+		GameStateFeeder feeder = new GameStateFeeder(bridge, engine, settings, VoiceKeys.register(), joiner, volumes);
 		YakVcClient.feeder = feeder;
 		// The engine is up, so another mod's voice sink can be taken: say which versions.
 		FabricLoader.getInstance().getObjectShare().put(GameStateFeeder.VOICE_SINK_VERSION_KEY,

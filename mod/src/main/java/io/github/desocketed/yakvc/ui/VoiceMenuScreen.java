@@ -21,9 +21,11 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractSliderButton;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.Checkbox;
 import net.minecraft.client.gui.components.ContainerObjectSelectionList;
 import net.minecraft.client.gui.components.PlayerFaceExtractor;
 import net.minecraft.client.gui.components.StringWidget;
+import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.components.events.GuiEventListener;
 import net.minecraft.client.gui.layouts.HeaderAndFooterLayout;
 import net.minecraft.client.gui.layouts.LinearLayout;
@@ -35,8 +37,8 @@ import net.minecraft.network.chat.Component;
 import org.jspecify.annotations.Nullable;
 
 /**
- * The voice menu: voice status, mute and deafen, every other player on the server with their voice connection and a
- * volume slider and mute button, saved by UUID, and the way to the settings screen.
+ * The voice menu: voice status, mute and deafen, every other player on the server with their voice connection, a
+ * friend mark, a volume slider and a mute button, saved by UUID, and the way to the settings screen.
  */
 public final class VoiceMenuScreen extends Screen {
 	private static final int ROW_HEIGHT = 28;
@@ -238,22 +240,31 @@ public final class VoiceMenuScreen extends Screen {
 		}
 	}
 
-	/** Face, name, verified badge, talking icon and voice connection on the left; volume and mute on the right. */
+	/**
+	 * Face, name, verified badge, talking icon and voice connection on the left; the friend mark, volume and mute on
+	 * the right.
+	 */
 	private final class PlayerRow extends Row {
 		private final UUID uuid;
 		private final VolumeSlider volume;
 		private final Button mute;
+		private final Checkbox friend;
 
 		PlayerRow(UUID uuid) {
 			this.uuid = uuid;
-			PlayerVolumes.Setting setting = feeder.volumes().get(uuid);
-			volume = new VolumeSlider(setting.volume(), v -> feeder.volumes().set(uuid,
-					new PlayerVolumes.Setting(v, feeder.volumes().get(uuid).muted())));
+			PlayerVolumes volumes = feeder.volumes();
+			PlayerVolumes.Setting setting = volumes.get(uuid);
+			volume = new VolumeSlider(setting.volume(), v -> volumes.set(uuid, volumes.get(uuid).withVolume(v)));
 			mute = Button.builder(playerMuteLabel(setting.muted()), button -> {
-				PlayerVolumes.Setting now = feeder.volumes().get(uuid);
-				feeder.volumes().set(uuid, new PlayerVolumes.Setting(now.volume(), !now.muted()));
+				PlayerVolumes.Setting now = volumes.get(uuid);
+				volumes.set(uuid, now.withMuted(!now.muted()));
 				button.setMessage(playerMuteLabel(!now.muted()));
 			}).width(56).build();
+			friend = Checkbox.builder(Component.translatable("yakvc.menu.friend"), font)
+					.selected(setting.friend())
+					.tooltip(Tooltip.create(Component.translatable("yakvc.menu.friend.tooltip")))
+					.onValueChange((box, on) -> volumes.set(uuid, volumes.get(uuid).withFriend(on)))
+					.build();
 		}
 
 		@Override
@@ -285,10 +296,12 @@ public final class VoiceMenuScreen extends Screen {
 
 			mute.setPosition(getContentRight() - mute.getWidth(), y + 2);
 			volume.setPosition(mute.getX() - 4 - volume.getWidth(), y + 2);
+			friend.setPosition(volume.getX() - 4 - friend.getWidth(), y + 2);
 			volume.active = !feeder.blocked(uuid);
 			mute.active = !feeder.blocked(uuid);
 			volume.extractRenderState(graphics, mouseX, mouseY, a);
 			mute.extractRenderState(graphics, mouseX, mouseY, a);
+			friend.extractRenderState(graphics, mouseX, mouseY, a);
 		}
 
 		private Component connection() {
@@ -300,12 +313,12 @@ public final class VoiceMenuScreen extends Screen {
 
 		@Override
 		public List<? extends GuiEventListener> children() {
-			return List.of(volume, mute);
+			return List.of(friend, volume, mute);
 		}
 
 		@Override
 		public List<? extends NarratableEntry> narratables() {
-			return List.of(volume, mute);
+			return List.of(friend, volume, mute);
 		}
 	}
 
@@ -318,7 +331,8 @@ public final class VoiceMenuScreen extends Screen {
 		private final Consumer<Float> onChange;
 
 		VolumeSlider(float volume, Consumer<Float> onChange) {
-			super(0, 0, 100, 20, Component.empty(), volume / 2.0);
+			// 80 wide, so the friend mark fits before it without crowding a long name.
+			super(0, 0, 80, 20, Component.empty(), volume / 2.0);
 			this.onChange = onChange;
 			updateMessage();
 		}

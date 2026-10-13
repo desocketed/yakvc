@@ -101,7 +101,7 @@ Each row shows the player's face and name, the verified badge if their Minecraft
 | Different version | They run another version of Yak VC, so you can't hear each other. Hover over it to see who needs to update; you also get a notice the first time it happens. |
 | Blocked: muted both ways | You blocked them in Social Interactions. |
 
-**Volume** goes from 0 to 200 % and **Mute** silences just that player; they also stop sending you their voice. Both are remembered for that player, on every server.
+**Volume** goes from 0 to 200 % and **Mute** silences just that player; they also stop sending you their voice. **Friend** marks the player as a friend, which only matters with **Friends Only** or **Group Invites** from friends in the [settings](#settings). All three are remembered for that player, on every server.
 
 At the bottom: **Mute Mic**, **Deafen**, **Groups…**, **Settings…** and **Done**.
 
@@ -157,7 +157,8 @@ Open the settings from **Options → Music & Sounds → Voice Chat…**, at the 
 - **Relay Only**: sends all voice through the Yak VC relay, so other players don't learn your IP address (see [privacy](#privacy)). Off by default. It takes effect after you restart the game, and until then the button says **On after restart** or **Off after restart**.
 - **Obey Chat Limits**: turns voice off while your Microsoft account or launcher disables chat. On by default.
 - **Mute Blocked**: players you block in Social Interactions can't hear you, and you don't hear them. On by default.
-- **Group Invites**: who may invite you to a [group](#groups): *Everyone* (the default) or *Nobody*. Setting `"invites": "friends"` in the [settings file](#the-settings-file) allows only the players in `friends_only`, which is edited there too. Invites from anyone else are ignored.
+- **Group Invites**: who may invite you to a [group](#groups): *Everyone* (the default), *Friends* (the players you marked in the [voice menu](#the-voice-menu)) or *Nobody*. Invites from anyone else are ignored.
+- **Friends Only**: hear and talk to only the players you marked as friends in the voice menu. Off by default.
 - **Check for Updates**: once at startup, asks GitHub whether a newer Yak VC is out, and if so names it in the title screen's top left corner; click it to open the release page. On by default; it takes effect after you restart the game.
 - **Releases**: opens Yak VC's [releases page](https://github.com/desocketed/yakvc/releases), and shows which version you run. When the update check found a newer one, it says **Update to** that version and opens its release.
 
@@ -270,6 +271,7 @@ The keys that the settings screen shows:
 | `verified_only` | `false` | Only Verified Players |
 | `check_for_updates` | `true` | Check for Updates |
 | `invites` | `"everyone"` | Group Invites (`"everyone"`, `"friends"` or `"nobody"`) |
+| `friends_only` | `false` | Friends Only |
 | `audio.activation` | `"push_to_talk"` | Activation (`"push_to_talk"` or `"voice"`) |
 | `audio.vad_threshold_db` | `-45.0` | Voice Activation Threshold, from -100 (everything) to 0 (very loud only) |
 | `audio.bitrate` | `24000` | Bitrate, in bits per second |
@@ -285,7 +287,6 @@ A few more are only in the file:
 
 | Key | Default | What it does |
 | --- | --- | --- |
-| `friends_only` | `null` | A list of player UUIDs, like `["11111111-2222-3333-4444-555555555555"]`. When set, you hear and talk to only these players. |
 | `setup_done` | `false` | Set once the voice menu's first-run card is dismissed, so it shows only once. |
 | `server` | `null` | Voice Server: a code from `yakvc-server code`, for [another voice server](#using-another-voice-server). |
 | `rendezvous`, `trusted_issuers` | the Yak VC server | Another voice server, spelled out for those who [run their own](../deploy/README.md) without a relay. A `server` code beats them. |
@@ -303,4 +304,4 @@ A few more are only in the file:
 
 A modpack can ship a `config/yakvc/settings.json` with only the keys it wants to preset, and players get the defaults for everything else. The file above is a complete preset. A pack that wants to skip the first-run card and the update check ships `{"setup_done": true, "check_for_updates": false}`. A pack for a group with [its own voice server](#using-another-voice-server) ships `{"server": "yakvc1:…"}`.
 
-The same folder holds `players.json`, the volume and mute you set for each player, and `node.key`, the private key that identifies your game to other players. Keep it to yourself; if you delete it, Yak VC makes a new one.
+The same folder holds `players.json`, the volume, mute and friend mark you set for each player, and `node.key`, the private key that identifies your game to other players. Keep it to yourself; if you delete it, Yak VC makes a new one.

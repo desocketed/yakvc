@@ -30,8 +30,10 @@ pub struct Config {
     pub relay_only: bool,
     /// Voice range in blocks.
     pub voice_range: f32,
-    /// When set, only these players are heard and sent to.
-    pub friends_only: Option<Vec<Uuid>>,
+    /// Players marked as friends: who `friends_only` and `invites = "friends"` allow.
+    pub friends: Vec<Uuid>,
+    /// Only `friends` are heard and sent to.
+    pub friends_only: bool,
     /// Who may invite us to a group.
     pub invites: InvitesFrom,
     pub audio: AudioConfig,
@@ -141,7 +143,7 @@ pub struct DevConfig {
 #[serde(rename_all = "snake_case")]
 pub enum InvitesFrom {
     Everyone,
-    /// Only players on the `friends_only` list; nobody when it is unset.
+    /// Only players on the `friends` list.
     Friends,
     Nobody,
 }
@@ -284,7 +286,8 @@ impl Default for Config {
             verified_only: false,
             relay_only: false,
             voice_range: 256.0,
-            friends_only: None,
+            friends: Vec::new(),
+            friends_only: false,
             invites: InvitesFrom::Everyone,
             audio: AudioConfig::default(),
             acoustics: AcousticsConfig::default(),
@@ -336,7 +339,8 @@ mod tests {
             voice_range = 32.0
             relay_only = true
             dev_mode = true
-            friends_only = ["00000000-0000-0000-0000-000000000001"]
+            friends = ["00000000-0000-0000-0000-000000000001"]
+            friends_only = true
             invites = "friends"
             # Java's own settings live in the same file.
             show_talking_indicator = true
@@ -352,7 +356,8 @@ mod tests {
         .unwrap();
         assert_eq!(config.voice_range, 32.0);
         assert!(config.relay_only && config.dev_mode);
-        assert_eq!(config.friends_only, Some(vec![Uuid::from_u128(1)]));
+        assert_eq!(config.friends, vec![Uuid::from_u128(1)]);
+        assert!(config.friends_only);
         assert_eq!(config.invites, InvitesFrom::Friends);
         assert_eq!(config.audio.activation, Activation::Voice);
         assert_eq!(config.audio.bitrate, 32_000);
