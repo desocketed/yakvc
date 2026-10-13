@@ -1442,6 +1442,11 @@ mod tests {
             }
         }
         assert_eq!(talking, [true, false]);
+        // The event goes out mid-tick; the stats are published at its end.
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while voice.audio_stats().transmitting && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
         assert!(!voice.audio_stats().transmitting);
         voice.stop();
     }
