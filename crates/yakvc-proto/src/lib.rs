@@ -9,6 +9,7 @@ pub mod group;
 pub mod pair;
 pub mod peer;
 pub mod rdv;
+pub mod server_code;
 pub mod ticket;
 pub mod voice;
 pub mod wire;
@@ -19,6 +20,7 @@ pub use uuid::Uuid;
 pub use crate::auth::{is_offline_player, offline_uuid};
 pub use crate::group::{GroupAnnounce, GroupId, GroupKey, GroupState, PublicGroup};
 pub use crate::pair::PairToken;
+pub use crate::server_code::{ServerCode, ServerCodeError};
 pub use crate::ticket::{
     IssuerId, IssuerKey, MAX_TICKET_LIFETIME, SignedTicket, Ticket, TicketBody, TicketError,
     TicketVerifier,

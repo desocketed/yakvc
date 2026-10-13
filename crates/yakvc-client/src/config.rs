@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 
 use serde::{Deserialize, Serialize};
-use yakvc_proto::{EndpointAddr, EndpointId, IssuerId, RelayUrl, Uuid};
+use yakvc_proto::{EndpointAddr, EndpointId, IssuerId, RelayUrl, ServerCode, Uuid};
 
 /// Engine configuration, parsed from the engine's keys in
 /// `client.toml`. Unknown keys are ignored, because the Java side keeps its
@@ -9,6 +9,10 @@ use yakvc_proto::{EndpointAddr, EndpointId, IssuerId, RelayUrl, Uuid};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    /// A server code (`yakvc-server code`) naming another rendezvous and its
+    /// issuer. It beats `rendezvous`, so what a player pastes in the settings
+    /// wins over a modpack's preset, and clearing it goes back to that preset.
+    pub server: Option<String>,
     /// The rendezvous to register with. Left out of `client.toml`, it is the
     /// built-in server ([`built_in_rendezvous`]), except in `dev_mode`, which
     /// then runs without one (voice only in direct calls).
@@ -160,6 +164,19 @@ pub enum ConfigError {
 impl Config {
     pub fn from_toml(toml: &str) -> Result<Config, ConfigError> {
         let mut config: Config = toml::from_str(toml)?;
+        if let Some(code) = &config.server {
+            let code: ServerCode = code
+                .parse()
+                .map_err(|e: yakvc_proto::ServerCodeError| ConfigError::Invalid(e.to_string()))?;
+            config.rendezvous = Some(RendezvousConfig {
+                endpoint_id: code.endpoint_id,
+                addrs: Vec::new(),
+                relay: Some(code.relay),
+            });
+            if !config.trusted_issuers.contains(&code.issuer_id) {
+                config.trusted_issuers.push(code.issuer_id);
+            }
+        }
         if config.rendezvous.is_none() && !config.dev_mode {
             let (rendezvous, issuer) = built_in_rendezvous();
             config.rendezvous = Some(rendezvous);
@@ -260,6 +277,7 @@ const MAX_INPUT_GAIN: f32 = 10.0;
 impl Default for Config {
     fn default() -> Self {
         Config {
+            server: None,
             rendezvous: None,
             trusted_issuers: Vec::new(),
             dev_mode: false,
@@ -361,6 +379,40 @@ mod tests {
         assert_eq!(rendezvous.endpoint_id, id);
         assert_eq!(rendezvous.addrs, vec!["127.0.0.1:4433".parse().unwrap()]);
         assert!(rendezvous.relay.is_some());
+    }
+
+    #[test]
+    fn a_server_code_sets_the_rendezvous_and_its_issuer() {
+        let code = ServerCode {
+            endpoint_id: iroh::SecretKey::generate().public(),
+            issuer_id: yakvc_proto::IssuerKey::generate().id(),
+            relay: "https://relay.example.com/".parse().unwrap(),
+        };
+        let other = iroh::SecretKey::generate().public();
+        let config = Config::from_toml(&format!(
+            r#"
+            server = "{code}"
+
+            [rendezvous]
+            endpoint_id = "{other}"
+            addrs = ["127.0.0.1:4433"]
+            "#
+        ))
+        .unwrap();
+        assert_eq!(
+            config.rendezvous,
+            Some(RendezvousConfig {
+                endpoint_id: code.endpoint_id,
+                addrs: Vec::new(),
+                relay: Some(code.relay),
+            }),
+            "the code beats the rendezvous section"
+        );
+        assert_eq!(config.trusted_issuers, vec![code.issuer_id]);
+        assert!(matches!(
+            Config::from_toml("server = \"yakvc1:nope\""),
+            Err(ConfigError::Invalid(_))
+        ));
     }
 
     #[test]
