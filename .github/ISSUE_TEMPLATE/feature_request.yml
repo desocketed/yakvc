@@ -1,0 +1,16 @@
+name: Feature request
+description: Something Yak VC should do, or do differently
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What would this solve?
+      description: The situation in play where you miss it. The problem matters more than the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How could it work?
+      description: Your idea, if you have one. Note that Yak VC is client-only, so nothing may need a Minecraft server plugin or setting.
