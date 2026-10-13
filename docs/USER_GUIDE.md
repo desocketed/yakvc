@@ -184,7 +184,7 @@ Under **Developer**, tools for testing Yak VC:
 
 ![The Sound Tuning screen](guide/sound-tuning.png)
 
-Voices follow the world: walls and closed doors muffle them, a voice behind a wall comes round through the nearest opening, and caves, halls and canyons ring with reverb and echo, the bigger the longer. The Rooms sliders only matter with **Spatial Audio** set to *Full*, and the Walls sliders not with it *Off*. Sound Tuning lets you adjust all of that by ear. Every slider applies as you drag it, so have someone talk while you tune, and is saved when you close the screen. **Reset to Defaults** puts every slider back.
+Voices follow the world: walls and closed doors muffle them, a voice behind a wall comes round through the nearest opening, and caves, halls and canyons ring with reverb and echo, the bigger the longer. The Rooms sliders only matter with **Spatial Audio** set to *Full*, and the Walls sliders not with it *Off*. Sound Tuning lets you adjust all of that by ear. Every slider applies as you drag it, so have someone talk while you tune, and is saved when you close the screen. **Reset to Defaults** puts every slider back; right-click a slider to reset just that one.
 
 - **Distance**: how close a voice must be to play at full volume, and how it fades towards the voice range. Below ×1, distant voices stay louder for longer.
 - **Walls**: how much quieter and more muffled a voice behind walls is, and how muffled a voice coming round a corner or through a doorway is, plus a little more for each block of the way round.
