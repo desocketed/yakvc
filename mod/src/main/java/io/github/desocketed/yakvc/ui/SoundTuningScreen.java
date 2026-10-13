@@ -8,7 +8,10 @@ import java.util.List;
 import java.util.function.DoubleFunction;
 import net.minecraft.client.OptionInstance;
 import net.minecraft.client.Options;
+import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.Tooltip;
+import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.options.OptionsSubScreen;
 import net.minecraft.network.chat.Component;
@@ -20,6 +23,8 @@ import org.jspecify.annotations.Nullable;
  * {@code client.toml} when the screen closes. Reached from the settings' Troubleshooting section.
  */
 public final class SoundTuningScreen extends OptionsSubScreen {
+	private static final int RIGHT_BUTTON = 1;
+
 	private final GameStateFeeder feeder;
 	private final ClientConfig initial;
 	private final List<Slider> sliders = new ArrayList<>();
@@ -81,8 +86,32 @@ public final class SoundTuningScreen extends OptionsSubScreen {
 		list.addBig(Button.builder(Component.translatable("yakvc.tuning.reset"), button -> {
 			sliders.forEach(Slider::reset);
 			apply();
-			rebuildWidgets();
-		}).build());
+			showValues();
+		}).tooltip(Tooltip.create(Component.translatable("yakvc.tuning.reset.tooltip"))).build());
+	}
+
+	/** A right click on a slider puts just that one back to its default. */
+	@Override
+	public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+		if (event.button() == RIGHT_BUTTON) {
+			for (Slider slider : sliders) {
+				AbstractWidget widget = list.findOption(slider.option());
+				if (widget != null && widget.isMouseOver(event.x(), event.y())) {
+					slider.reset();
+					apply();
+					showValues();
+					return true;
+				}
+			}
+		}
+		return super.mouseClicked(event, doubleClick);
+	}
+
+	/** Rebuilds the sliders, which only read their option when made, keeping the list where it was scrolled to. */
+	private void showValues() {
+		double scroll = list.scrollAmount();
+		rebuildWidgets();
+		list.setScrollAmount(scroll);
 	}
 
 	/** The slider for an {@code [acoustics]} key. Public for the client gametest. */
