@@ -65,6 +65,11 @@ public record ClientConfig(String toml) {
 		return number(value("", "voice_range"), 256);
 	}
 
+	/** How much of the world's acoustics to hear. Only the mod reads it; the engine ignores unknown keys. */
+	public SpatialAudio spatialAudio() {
+		return SpatialAudio.of(string(value("", "spatial_audio")));
+	}
+
 	/** A number from the {@code [acoustics]} section, or {@code fallback} when unset. */
 	public double acoustics(String key, double fallback) {
 		return number(value("acoustics", key), fallback);
@@ -246,6 +251,10 @@ public record ClientConfig(String toml) {
 
 			# Voice range in blocks (1 to 256). Between two players the shorter range applies.
 			voice_range = 256.0
+
+			# Spatial audio: "off" (distance and left/right only), "simple" (walls muffle voices, which come round
+			# them through doorways) or "full" (also the room's reverb and echoes off far cliffs).
+			spatial_audio = "simple"
 
 			# Never use direct connections: all voice goes through the relay, so peers don't learn your IP address.
 			relay_only = false

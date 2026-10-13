@@ -8,6 +8,7 @@ import com.mojang.authlib.GameProfile;
 import io.github.desocketed.yakvc.config.ClientConfig;
 import io.github.desocketed.yakvc.config.PlayerVolumes;
 import io.github.desocketed.yakvc.config.SoundTuning;
+import io.github.desocketed.yakvc.config.SpatialAudio;
 import io.github.desocketed.yakvc.input.VoiceKeys;
 import io.github.desocketed.yakvc.natives.EngineEvent;
 import io.github.desocketed.yakvc.natives.NativeBridge;
@@ -114,6 +115,8 @@ public final class GameStateFeeder {
 	private final FarEchoes farEchoes = new FarEchoes();
 	/** The mod's half of the {@code [acoustics]} tuning, read again whenever the config changes. */
 	private SoundTuning tuning;
+	/** How much of the acoustics to work out each tick, read again whenever the config changes. */
+	private SpatialAudio spatialAudio;
 	/** Each occluded player's way around, if any: see {@link #heard}. */
 	private final Map<UUID, Optional<SoundPath>> detours = new HashMap<>();
 	private static final int DETOUR_TICKS = 10;
@@ -164,6 +167,7 @@ public final class GameStateFeeder {
 		this.config = config;
 		this.startedRelayOnly = config.relayOnly();
 		this.tuning = SoundTuning.of(config);
+		this.spatialAudio = config.spatialAudio();
 		this.keys = keys;
 		this.joiner = joiner;
 		this.volumes = volumes;
@@ -269,6 +273,7 @@ public final class GameStateFeeder {
 		}
 		config = newConfig;
 		tuning = SoundTuning.of(newConfig);
+		spatialAudio = newConfig.spatialAudio();
 		ticksUntilBlockedRefresh = 0;
 		return null;
 	}
@@ -474,12 +479,19 @@ public final class GameStateFeeder {
 		Vec3 eye = camera.isInitialized() ? camera.position() : player.getEyePosition();
 		float yaw = camera.isInitialized() ? camera.yRot() : player.getYRot();
 		float pitch = camera.isInitialized() ? camera.xRot() : player.getXRot();
-		room = room.towards(Room.around(minecraft.level, eye, tuning));
+		// Below Full the rooms and far echoes aren't cast at all: open air and no echoes leave the engine's mix dry.
+		List<FarEchoes.Echo> echoes = List.of();
+		if (spatialAudio == SpatialAudio.FULL) {
+			room = room.towards(Room.around(minecraft.level, eye, tuning));
+			echoes = farEchoes.update(minecraft.level, eye, tuning);
+		} else {
+			room = Room.OPEN_AIR;
+			farEchoes.clear();
+		}
 		double[] listener = new double[NativeBridge.LISTENER_LENGTH];
 		System.arraycopy(new double[] {eye.x, eye.y, eye.z, yaw, pitch, room.reverb(), room.criticalDistance(),
 				room.decay(), room.echo(), room.echoDelay()}, 0, listener, 0, 10);
 		// Unused slots stay zero: silent. The engine glides each echo from tick to tick.
-		List<FarEchoes.Echo> echoes = farEchoes.update(minecraft.level, eye, tuning);
 		for (int i = 0; i < echoes.size(); i++) {
 			FarEchoes.Echo echo = echoes.get(i);
 			System.arraycopy(new double[] {echo.direction().x, echo.direction().y, echo.direction().z, echo.delay(),
@@ -494,7 +506,9 @@ public final class GameStateFeeder {
 			if (blocked.contains(other.getUUID())) continue;
 			Vec3 pos = other.getEyePosition();
 			uuids.add(other.getUUID());
-			SoundPath heard = heard(minecraft.level, eye, other);
+			// Off hears everyone straight from where they stand, as if no walls were in the way.
+			SoundPath heard = spatialAudio == SpatialAudio.OFF ? new SoundPath(pos, 0)
+					: heard(minecraft.level, eye, other);
 			players.add(new double[] {pos.x, pos.y, pos.z, heard.occlusion(), heard.heardFrom().x,
 					heard.heardFrom().y, heard.heardFrom().z});
 		}
@@ -734,6 +748,11 @@ public final class GameStateFeeder {
 	/** The last {@code NativeBridge.INPUT_*} flags sent. For tests. */
 	public int inputFlags() {
 		return inputFlags;
+	}
+
+	/** The listener's surroundings as last sent. For tests. */
+	public Room room() {
+		return room;
 	}
 
 	public boolean debugOverlay() {
