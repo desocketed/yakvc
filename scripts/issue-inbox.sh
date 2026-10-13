@@ -45,3 +45,6 @@ gh api --paginate "repos/$repo/pulls/comments?since=$since&per_page=100" --jq ".
 	\"REVIEW COMMENT by $who: \(.html_url)\""
 gh api --paginate "repos/$repo/actions/runs?branch=main&status=failure&created=>$since" --jq '.workflow_runs[] |
 	"FAILED RUN \(.name) on \(.head_sha[0:7]): \(.html_url)"'
+# Issues waiting for triage are listed every time until the label changes.
+gh issue list -R "$repo" --label "status: needs-triage" --json number,title,author --jq '.[] |
+	"NEEDS TRIAGE #\(.number) \(.title) by \(.author.login)"'
