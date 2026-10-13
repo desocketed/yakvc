@@ -157,6 +157,7 @@ Open the settings from **Options → Music & Sounds → Voice Chat…**, at the 
 - **Mute Blocked**: players you block in Social Interactions can't hear you, and you don't hear them. On by default.
 - **Group Invites**: who may invite you to a [group](#groups): *Everyone* (the default) or *Nobody*. Setting `invites = "friends"` in the [config file](#the-config-file) allows only the players in `friends_only`, which is edited there too. Invites from anyone else are ignored.
 - **Check for Updates**: once at startup, asks GitHub whether a newer Yak VC is out, and if so names it in the title screen's top left corner; click it to open the release page. On by default; it takes effect after you restart the game.
+- **Releases**: opens Yak VC's [releases page](https://github.com/desocketed/yakvc/releases), and shows which version you run. When the update check found a newer one, it says **Update to** that version and opens its release.
 
 Under **Account** the settings say whether your Minecraft account is verified (see [Installing](#installing)).
 
