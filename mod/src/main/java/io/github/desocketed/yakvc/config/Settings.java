@@ -9,6 +9,8 @@ import com.google.gson.JsonParser;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import static java.util.stream.Collectors.joining;
+
 import java.util.List;
 import java.util.Map;
 import org.jspecify.annotations.Nullable;
@@ -131,6 +133,91 @@ public record Settings(double voiceRange, SpatialAudio spatialAudio, boolean rel
 	 */
 	public static double effectiveVoiceRange(double voiceRange, int renderChunks) {
 		return Math.min(voiceRange, renderChunks * 16);
+	}
+
+	/**
+	 * The settings as the engine takes them ({@code yakvc_create}, {@code yakvc_update_config}): TOML text of the keys
+	 * it reads, with the voice range capped by the render distance ({@code renderChunks}; 0 before the first tick, so
+	 * uncapped). The engine would ignore the mod's own keys, but leaving them out keeps the text to what it checks.
+	 */
+	public String engineToml(int renderChunks) {
+		StringBuilder toml = new StringBuilder();
+		key(toml, "voice_range", renderChunks == 0 ? voiceRange : effectiveVoiceRange(voiceRange, renderChunks));
+		key(toml, "relay_only", relayOnly);
+		key(toml, "verified_only", verifiedOnly);
+		key(toml, "invites", invites);
+		key(toml, "dev_mode", devMode);
+		key(toml, "trusted_issuers", trustedIssuers);
+		if (friendsOnly != null) key(toml, "friends_only", friendsOnly);
+
+		toml.append("\n[audio]\n");
+		if (audio.inputDevice() != null) key(toml, "input_device", audio.inputDevice());
+		if (audio.outputDevice() != null) key(toml, "output_device", audio.outputDevice());
+		key(toml, "activation", audio.activation());
+		key(toml, "bitrate", audio.bitrate());
+		key(toml, "noise_suppression", audio.noiseSuppression());
+		key(toml, "input_gain", audio.inputGain());
+		key(toml, "vad_threshold_db", audio.vadThresholdDb());
+
+		toml.append("\n[acoustics]\n");
+		key(toml, "full_volume_distance", acoustics.fullVolumeDistance());
+		key(toml, "distance_rolloff", acoustics.distanceRolloff());
+		key(toml, "occlusion_attenuation", acoustics.occlusionAttenuation());
+		key(toml, "muffled_cutoff_hz", acoustics.muffledCutoffHz());
+		key(toml, "reverb_level", acoustics.reverbLevel());
+		key(toml, "reverb_damping", acoustics.reverbDamping());
+		key(toml, "echo_feedback", acoustics.echoFeedback());
+		key(toml, "echo_level", acoustics.echoLevel());
+
+		if (rendezvous != null) {
+			toml.append("\n[rendezvous]\n");
+			key(toml, "endpoint_id", rendezvous.endpointId());
+			key(toml, "addrs", rendezvous.addrs());
+			if (rendezvous.relay() != null) key(toml, "relay", rendezvous.relay());
+		}
+		if (!dev.equals(Dev.DEFAULT)) {
+			toml.append("\n[dev]\n");
+			if (dev.toneHz() != null) key(toml, "tone_hz", dev.toneHz());
+			if (dev.wav() != null) key(toml, "wav", dev.wav());
+			key(toml, "null_output", dev.nullOutput());
+		}
+		return toml.toString();
+	}
+
+	private static void key(StringBuilder toml, String name, Object value) {
+		toml.append(name).append(" = ").append(literal(value)).append('\n');
+	}
+
+	/** A TOML literal: integers for whole-number types, floats otherwise, and arrays of strings. */
+	private static String literal(Object value) {
+		return switch (value) {
+			case Boolean b -> b.toString();
+			case Integer i -> i.toString();
+			// Double.toString keeps a decimal point or an exponent, which is what a TOML float needs.
+			case Double d -> d.toString();
+			case String s -> quote(s);
+			case List<?> list -> list.stream().map(item -> quote((String) item)).collect(joining(", ", "[", "]"));
+			default -> throw new IllegalArgumentException(value.getClass().getName());
+		};
+	}
+
+	/** A TOML basic string, with control characters escaped, so any device name or path reads back as itself. */
+	static String quote(String text) {
+		StringBuilder out = new StringBuilder("\"");
+		for (char c : text.toCharArray()) {
+			switch (c) {
+				case '"' -> out.append("\\\"");
+				case '\\' -> out.append("\\\\");
+				case '\n' -> out.append("\\n");
+				case '\r' -> out.append("\\r");
+				case '\t' -> out.append("\\t");
+				default -> {
+					if (c < 0x20 || c == 0x7f) out.append(String.format("\\u%04X", (int) c));
+					else out.append(c);
+				}
+			}
+		}
+		return out.append('"').toString();
 	}
 
 	public Settings withVoiceRange(double blocks) {
