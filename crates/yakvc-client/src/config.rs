@@ -174,7 +174,7 @@ impl Config {
     fn validate(&self) -> Result<(), ConfigError> {
         let invalid = |msg: &str| Err(ConfigError::Invalid(msg.to_owned()));
         if !(1.0..=MAX_VOICE_RANGE).contains(&self.voice_range) {
-            return invalid("voice_range must be between 1 and 256 blocks");
+            return invalid("voice_range must be between 1 and 512 blocks");
         }
         if !(MIN_BITRATE..=MAX_BITRATE).contains(&self.audio.bitrate) {
             return invalid("audio.bitrate must be between 16000 and 64000");
@@ -253,7 +253,8 @@ fn built_in_rendezvous() -> (RendezvousConfig, IssuerId) {
 /// Opus bitrates the design allows.
 pub(crate) const MIN_BITRATE: u32 = 16_000;
 pub(crate) const MAX_BITRATE: u32 = 64_000;
-const MAX_VOICE_RANGE: f32 = 256.0;
+/// Minecraft's farthest render distance, 32 chunks; players past it aren't tracked.
+const MAX_VOICE_RANGE: f32 = 512.0;
 const MAX_INPUT_GAIN: f32 = 10.0;
 
 impl Default for Config {
@@ -407,6 +408,7 @@ mod tests {
         for toml in [
             "voice_range = 0.0",
             "voice_range = 1000.0",
+            "voice_range = 513.0",
             "[audio]\nbitrate = 8000",
             "[audio]\ninput_gain = -1.0",
             "[audio]\nvad_threshold_db = 3.0",

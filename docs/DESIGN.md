@@ -255,7 +255,7 @@ Voice is 48 kHz mono Opus in 20 ms frames, sent as unreliable QUIC datagrams on 
 | Sample rate / channels | 48 kHz, mono capture; stereo output |
 | Frame | 20 ms (960 samples) |
 | Codec | Opus, `VOIP` application, 24 kbps (16–64), in-band FEC on, DTX on |
-| Voice range | 256 blocks (the most allowed); full volume within 4 blocks. Per player; between two players the shorter range applies |
+| Voice range | 256 blocks by default, at most 512; the mod caps the range it gives the engine at the render distance (chunks × 16), since players past it aren't tracked, without changing the saved setting; full volume within 4 blocks. Per player; between two players the shorter range applies |
 | Jitter buffer | adaptive, target 40 ms (a floor), bounds 20–200 ms. Delay is the 95th-percentile jitter over the last 100 packets plus 20 ms; it grows at once and shrinks only between talk spurts. Clock drift is corrected by stretching or skipping one frame |
 | Activation | push-to-talk (default) or VAD with 300 ms hangover |
 
