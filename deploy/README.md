@@ -121,7 +121,9 @@ On first start the server creates its two keys in `/var/lib/yakvc` (really `/var
 
 ## Pointing clients at the server
 
-Clients use the project's default server unless their `config/yakvc/settings.json` names another. With the ids the server printed, add these keys to the file (a modpack can ship them on their own, and players get the defaults for everything else):
+Clients use the project's default server unless told otherwise. With a relay, the easy way is the server code: `yakvc-server code --config /etc/yakvc/config.toml` prints one line, `yakvc1:<endpoint id>:<issuer id>:<relay URL>` (the server also prints it at each start, so it is in `journalctl -u yakvc-server`; under Docker, `docker exec yakvc-server yakvc-server code --config /etc/yakvc/config.toml`). Players paste it into **Voice Server** in Yak VC's settings and restart the game, or a modpack ships it as `{"server": "yakvc1:…"}` in `config/yakvc/settings.json`. Clients then reach the rendezvous through the relay, by hostname, so the server can move with a DNS change.
+
+Without a relay, or to list direct addresses as well, spell it out in `config/yakvc/settings.json` with the ids the server printed (a `server` code, when there is one too, wins over these keys):
 
 ```json
 {
