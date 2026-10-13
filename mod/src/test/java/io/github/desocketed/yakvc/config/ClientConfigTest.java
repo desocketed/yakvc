@@ -41,6 +41,17 @@ class ClientConfigTest {
 	}
 
 	@Test
+	void readsSpatialAudioWithSimpleAsTheDefault() {
+		assertEquals(SpatialAudio.SIMPLE, new ClientConfig(ClientConfig.DEFAULT).spatialAudio());
+		assertEquals(SpatialAudio.SIMPLE, new ClientConfig("").spatialAudio());
+		assertEquals(SpatialAudio.SIMPLE, new ClientConfig("spatial_audio = \"loud\"\n").spatialAudio());
+		assertEquals(SpatialAudio.OFF, new ClientConfig("spatial_audio = \"off\"\n").spatialAudio());
+		assertEquals(SpatialAudio.FULL, new ClientConfig("spatial_audio = \"full\"\n").spatialAudio());
+		assertEquals(SpatialAudio.FULL,
+				new ClientConfig("").with("", "spatial_audio", ClientConfig.quote("full")).spatialAudio());
+	}
+
+	@Test
 	void readsValuesFromTheirTable() {
 		ClientConfig config = new ClientConfig("""
 				# respect_chat_restrictions = true
