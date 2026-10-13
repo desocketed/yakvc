@@ -338,9 +338,20 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		context.runOnClient(mc -> VoiceSettingsScreen.applyAndSave(feeder,
 				feeder.settings().withSpatialAudio(SpatialAudio.FULL)));
 		context.waitFor(mc -> feeder.room().reverb() > 0.5f);
-		// Back to the default, so later runs start the same.
+		// With Full the settings show the Reverb slider, which applies while the screen is open and is saved.
+		context.runOnClient(mc -> mc.gui.setScreen(new VoiceSettingsScreen(null, mc.options, feeder)));
+		context.waitTicks(2);
+		context.runOnClient(mc -> ((VoiceSettingsScreen) mc.gui.screen()).acoustic("reverb_level").set(50));
+		context.waitFor(mc -> feeder.settings().acoustics().reverbLevel() == 0.5);
+		context.runOnClient(mc -> mc.gui.setScreen(null));
+		context.waitTicks(2);
+		if (settingsFile().getAsJsonObject("acoustics").get("reverb_level").getAsDouble() != 0.5) {
+			throw new AssertionError("the reverb wasn't saved");
+		}
+		// Back to the defaults, so later runs start the same.
 		context.runOnClient(mc -> VoiceSettingsScreen.applyAndSave(feeder,
-				feeder.settings().withSpatialAudio(SpatialAudio.SIMPLE)));
+				feeder.settings().withSpatialAudio(SpatialAudio.SIMPLE)
+						.withAcoustic("reverb_level", Settings.Acoustics.DEFAULT.reverbLevel())));
 		singleplayer.getServer().runCommand("fill -2 -61 -2 2 -56 2 air");
 		singleplayer.getServer().runCommand("fill -2 -61 -2 2 -61 2 grass_block");
 	}
