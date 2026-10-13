@@ -34,14 +34,16 @@ import org.jspecify.annotations.Nullable;
  * @param friendsOnly             when set, only these players (UUIDs) are heard and sent to
  * @param rendezvous              another voice server than the built-in one
  * @param trustedIssuers          issuers whose tickets are accepted; a {@code rendezvous} needs its issuer listed
+ * @param server                  a server code from {@code yakvc-server code}, the Voice Server setting; beats
+ *                                {@code rendezvous}, and null means the preset or the built-in server
  */
 public record Settings(double voiceRange, SpatialAudio spatialAudio, boolean relayOnly, boolean respectChatRestrictions,
 		boolean muteBlockedPlayers, boolean verifiedOnly, String invites, boolean setupDone, boolean checkForUpdates,
 		Audio audio, Acoustics acoustics, boolean devMode, Dev dev, @Nullable List<String> friendsOnly,
-		@Nullable Rendezvous rendezvous, List<String> trustedIssuers) {
+		@Nullable Rendezvous rendezvous, List<String> trustedIssuers, @Nullable String server) {
 	public static final String FILE_NAME = "settings.json";
 	public static final Settings DEFAULT = new Settings(256, SpatialAudio.SIMPLE, false, true, true, false, "everyone",
-			false, true, Audio.DEFAULT, Acoustics.DEFAULT, false, Dev.DEFAULT, null, null, List.of());
+			false, true, Audio.DEFAULT, Acoustics.DEFAULT, false, Dev.DEFAULT, null, null, List.of(), null);
 	/** Nulls are written too, so the file shows every key, and the JSON keys are the engine's snake case. */
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().serializeNulls()
 			.setFieldNamingPolicy(FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES).create();
@@ -148,6 +150,7 @@ public record Settings(double voiceRange, SpatialAudio spatialAudio, boolean rel
 		key(toml, "invites", invites);
 		key(toml, "dev_mode", devMode);
 		key(toml, "trusted_issuers", trustedIssuers);
+		if (server != null) key(toml, "server", server);
 		if (friendsOnly != null) key(toml, "friends_only", friendsOnly);
 
 		toml.append("\n[audio]\n");
@@ -252,6 +255,11 @@ public record Settings(double voiceRange, SpatialAudio spatialAudio, boolean rel
 		return with("", "setup_done", done);
 	}
 
+	/** The voice server's code, or null for the preset or built-in one. */
+	public Settings withServer(@Nullable String code) {
+		return with("", "server", code);
+	}
+
 	public Settings withCheckForUpdates(boolean on) {
 		return with("", "check_for_updates", on);
 	}
@@ -291,7 +299,7 @@ public record Settings(double voiceRange, SpatialAudio spatialAudio, boolean rel
 
 	/**
 	 * A copy with one value changed, by way of the JSON form: each setting changed by hand would otherwise need a
-	 * constructor call naming all sixteen components. {@code section} is "" for a top-level key.
+	 * constructor call naming all seventeen components. {@code section} is "" for a top-level key.
 	 */
 	private Settings with(String section, String key, @Nullable Object value) {
 		JsonObject json = GSON.toJsonTree(this).getAsJsonObject();

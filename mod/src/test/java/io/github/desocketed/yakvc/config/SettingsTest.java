@@ -61,7 +61,7 @@ class SettingsTest {
 		settings = Settings.parse("""
 				{"dev_mode": true, "trusted_issuers": ["abc"], "friends_only": ["00000000-0000-0000-0000-000000000001"],
 				 "rendezvous": {"endpoint_id": "def", "addrs": ["127.0.0.1:4433"], "relay": "https://relay.example/"},
-				 "dev": {"tone_hz": 440, "null_output": true}}
+				 "server": "yakvc1:a:b:https://relay.example/", "dev": {"tone_hz": 440, "null_output": true}}
 				""").withOutputDevice(settings.audio().inputDevice()).withInputGain(settings.audio().inputGain())
 				.withVadThresholdDb(settings.audio().vadThresholdDb());
 		settings.save(dir);
@@ -73,6 +73,8 @@ class SettingsTest {
 		assertEquals(new Settings.Rendezvous("def", List.of("127.0.0.1:4433"), "https://relay.example/"),
 				loaded.rendezvous());
 		assertEquals(new Settings.Dev(440.0, null, true), loaded.dev());
+		assertEquals("yakvc1:a:b:https://relay.example/", loaded.server());
+		assertNull(loaded.withServer(null).server());
 		assertEquals("Mic \"USB\" \\ 2", loaded.audio().outputDevice());
 		assertNull(loaded.withOutputDevice(null).audio().outputDevice());
 	}
@@ -103,7 +105,7 @@ class SettingsTest {
 		assertTrue(toml.contains("vad_threshold_db = -45.0\n"), toml);
 		assertTrue(toml.contains("\n[acoustics]\nfull_volume_distance = 4.0\n"), toml);
 		assertFalse(toml.contains("input_device"), "unset devices are left out");
-		assertFalse(toml.contains("[dev]") || toml.contains("[rendezvous]"), toml);
+		assertFalse(toml.contains("[dev]") || toml.contains("[rendezvous]") || toml.contains("server"), toml);
 		assertFalse(toml.contains("setup_done") || toml.contains("spatial_audio") || toml.contains("furnishing"),
 				"the mod's own keys stay out");
 		assertTrue(Settings.DEFAULT.engineToml(8).contains("voice_range = 128.0\n"));
@@ -111,10 +113,10 @@ class SettingsTest {
 		Settings full = Settings.parse("""
 				{"dev_mode": true, "trusted_issuers": ["abc"], "friends_only": ["00000000-0000-0000-0000-000000000001"],
 				 "rendezvous": {"endpoint_id": "def", "addrs": ["127.0.0.1:4433", "[::1]:4433"], "relay": "https://r/"},
-				 "dev": {"wav": "C:\\\\talk\\\\a.wav", "null_output": true}}
+				 "server": "yakvc1:a:b:https://r/", "dev": {"wav": "C:\\\\talk\\\\a.wav", "null_output": true}}
 				""").withInputDevice("Mic \"USB\"\t2").withOutputDevice("Speakers\n");
 		toml = full.engineToml(0);
-		assertTrue(toml.contains("trusted_issuers = [\"abc\"]\n"), toml);
+		assertTrue(toml.contains("trusted_issuers = [\"abc\"]\nserver = \"yakvc1:a:b:https://r/\"\n"), toml);
 		assertTrue(toml.contains("friends_only = [\"00000000-0000-0000-0000-000000000001\"]\n"), toml);
 		assertTrue(toml.contains("input_device = \"Mic \\\"USB\\\"\\t2\"\n"), toml);
 		assertTrue(toml.contains("output_device = \"Speakers\\n\"\n"), toml);

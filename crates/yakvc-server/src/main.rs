@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use tokio::signal::unix::{SignalKind, signal};
-use yakvc_proto::{EndpointId, IssuerKey, RelayUrl, SecretKey};
+use yakvc_proto::{EndpointId, IssuerKey, RelayUrl, SecretKey, ServerCode};
 use yakvc_server::Config;
 
 /// Yak VC rendezvous server.
@@ -35,6 +35,14 @@ enum Command {
     EndpointId { key: PathBuf },
     /// Print the IssuerId of an issuer key.
     IssuerId { key: PathBuf },
+    /// Print the server code for players' "Voice server" setting:
+    /// `yakvc1:<endpoint id>:<issuer id>:<relay URL>`, one line to paste.
+    /// Needs the relay's domain in the config, since clients reach the
+    /// server through its relay. `run` prints it at startup too.
+    Code {
+        #[arg(long)]
+        config: PathBuf,
+    },
     /// Sign in to a rendezvous through its relay as an offline player, and
     /// exit 0 once registered. A health check: no Mojang call is made.
     Probe {
@@ -64,8 +72,28 @@ fn main() -> anyhow::Result<()> {
             println!("{}", IssuerKey::from_bytes(&read_key(&key)?).id());
             Ok(())
         }
+        Command::Code { config } => {
+            println!("{}", server_code(&Config::load(&config)?)?);
+            Ok(())
+        }
         Command::Probe { endpoint_id, relay } => probe(endpoint_id, relay),
     }
+}
+
+/// The code for `config`'s server, from its key files and relay domain. The
+/// URL takes the HTTPS port as `run` does, so the two print the same code.
+fn server_code(config: &Config) -> anyhow::Result<ServerCode> {
+    let relay = config
+        .relay
+        .as_ref()
+        .and_then(|relay| Some((relay.domain.as_ref()?, relay.https_bind?)))
+        .context("a server code needs relay.domain and relay.https_bind in the config")?;
+    let (domain, https_bind) = relay;
+    Ok(ServerCode {
+        endpoint_id: SecretKey::from_bytes(&read_key(&config.endpoint_key)?).public(),
+        issuer_id: IssuerKey::from_bytes(&read_key(&config.issuer_key)?).id(),
+        relay: format!("https://{domain}:{}", https_bind.port()).parse()?,
+    })
 }
 
 #[tokio::main]
@@ -83,6 +111,12 @@ async fn run(config: &Path) -> anyhow::Result<()> {
     println!("issuer id:   {}", server.issuer_id());
     if let Some(url) = server.relay_url() {
         println!("relay:       {url}");
+        let code = ServerCode {
+            endpoint_id: server.endpoint_id(),
+            issuer_id: server.issuer_id(),
+            relay: url,
+        };
+        println!("server code: {code}");
     }
     notify_systemd_ready();
     // systemd stops services with SIGTERM; Ctrl-C sends SIGINT.
@@ -172,6 +206,37 @@ mod tests {
         create_missing_key(&path, "issuer", || [2; 32]).unwrap();
 
         assert_eq!(read_key(&path).unwrap(), [1; 32]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_server_code_names_the_keys_and_the_relay() {
+        let dir = std::env::temp_dir().join(format!("yakvc-code-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let endpoint = SecretKey::generate();
+        let issuer = IssuerKey::generate();
+        write_key(&dir.join("endpoint.key"), &endpoint.to_bytes()).unwrap();
+        write_key(&dir.join("issuer.key"), &issuer.to_bytes()).unwrap();
+        let config: Config = toml::from_str(&format!(
+            r#"
+            endpoint_key = "{}"
+            issuer_key = "{}"
+            bind = "0.0.0.0:7843"
+            [relay]
+            http_bind = "0.0.0.0:80"
+            https_bind = "0.0.0.0:443"
+            domain = "relay.example.com"
+            "#,
+            dir.join("endpoint.key").display(),
+            dir.join("issuer.key").display()
+        ))
+        .unwrap();
+
+        let code = server_code(&config).unwrap();
+        assert_eq!(code.endpoint_id, endpoint.public());
+        assert_eq!(code.issuer_id, issuer.id());
+        assert_eq!(code.relay.to_string(), "https://relay.example.com/");
+        assert_eq!(code.to_string().parse::<ServerCode>().unwrap(), code);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

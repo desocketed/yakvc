@@ -164,6 +164,17 @@ Open the settings from **Options → Music & Sounds → Voice Chat…**, at the 
 Under **Account** the settings say whether your Minecraft account is verified (see [Installing](#installing)).
 
 - **Only Verified Players**: talk only with players whose Minecraft account is verified, the ones with the badge. Players without an account, as on offline-mode servers, can't hear you and you don't hear them. Off by default.
+- **Voice Server**: which Yak VC server signs you in and matches you with other players. Empty (the default) means Yak VC's own server. Someone who [runs their own](#using-another-voice-server) gives you a code that starts with `yakvc1:`; paste it here and press **Done**. **Reset to Default** empties it. Only paste a code from someone you trust, because their server sees which game servers you play on and with whom (see [privacy](#privacy)). It takes effect after you restart the game.
+
+### Using another voice server
+
+Yak VC's own server matches players who use it, but a group of friends can run their own `yakvc-server` instead, for example to keep their play entirely among themselves. The [deployment guide](../deploy/README.md) says how. Once it runs, `yakvc-server code --config /etc/yakvc/config.toml` prints the server's code (and the server prints it at each start), one line like
+
+```
+yakvc1:5c9578695b7b…2cde60:7e2624000ff2…bd20f:https://relay.example.com/
+```
+
+which names the server, its ticket signing key and its relay. Everyone who should meet on that server pastes the code into **Voice Server** and restarts the game; a code belongs to one server, so players on different codes don't hear each other. The same code can go in a modpack's [preset](#modpack-presets) as the `server` key.
 
 ![The developer settings](guide/voice-settings-developer.png)
 
@@ -197,7 +208,7 @@ Voices follow the world: walls and closed doors muffle them, a voice behind a wa
 
 - **Other players learn your IP address.** Voice goes straight from player to player, and Yak VC connects to every Yak VC player on the server as soon as you both join, so all of them can see your IP address, not just the ones near you. On a server network with one shared player list, that is every Yak VC player on the network. Turn on **Relay Only** to hide it: everything then goes through the Yak VC relay. A relay has limited room, so with Relay Only about 11 nearby players can hear you at once; the nearest get it first.
 - **You talk only to players you can see nearby, or to your group.** Yak VC sends your voice only to players your game shows within range, and plays only theirs; in a [group](#groups), only to and from its members, wherever they are. Outside a group, spectators neither hear nor are heard. Voice is encrypted from player to player; the relay only passes on encrypted data.
-- **The Yak VC server** learns which Yak VC players are on a server together and their IP addresses, but never hears what you say, and it keeps no record of who played with whom. Your game sends it the rest of the player list only as scrambled codes, but player IDs are public, so it could work out who is on your list.
+- **The Yak VC server** learns which Yak VC players are on a server together and their IP addresses, but never hears what you say, and it keeps no record of who played with whom. Your game sends it the rest of the player list only as scrambled codes, but player IDs are public, so it could work out who is on your list.  The same goes for anyone else's server you paste under **Voice Server**, so only use codes from people you trust.
 - **Chat restrictions.** If your Microsoft account (for example a child account) or your launcher turns chat off, Yak VC turns voice off too. **Obey Chat Limits** controls this.
 - **Blocked players.** Anyone you block in Social Interactions is muted both ways. **Mute Blocked** controls this.
 - **Update check.** Once at startup Yak VC asks GitHub for its list of releases, so GitHub sees your IP address and that you run Yak VC; nothing else is sent. **Check for Updates** turns it off.
@@ -276,7 +287,8 @@ A few more are only in the file:
 | --- | --- | --- |
 | `friends_only` | `null` | A list of player UUIDs, like `["11111111-2222-3333-4444-555555555555"]`. When set, you hear and talk to only these players. |
 | `setup_done` | `false` | Set once the voice menu's first-run card is dismissed, so it shows only once. |
-| `rendezvous`, `trusted_issuers` | the Yak VC server | Another voice server, for those who [run their own](../deploy/README.md). |
+| `server` | `null` | Voice Server: a code from `yakvc-server code`, for [another voice server](#using-another-voice-server). |
+| `rendezvous`, `trusted_issuers` | the Yak VC server | Another voice server, spelled out for those who [run their own](../deploy/README.md) without a relay. A `server` code beats them. |
 
 `audio.activation` means the `activation` key inside the `audio` object:
 
@@ -289,6 +301,6 @@ A few more are only in the file:
 
 ### Modpack presets
 
-A modpack can ship a `config/yakvc/settings.json` with only the keys it wants to preset, and players get the defaults for everything else. The file above is a complete preset. A pack that wants to skip the first-run card and the update check ships `{"setup_done": true, "check_for_updates": false}`.
+A modpack can ship a `config/yakvc/settings.json` with only the keys it wants to preset, and players get the defaults for everything else. The file above is a complete preset. A pack that wants to skip the first-run card and the update check ships `{"setup_done": true, "check_for_updates": false}`. A pack for a group with [its own voice server](#using-another-voice-server) ships `{"server": "yakvc1:…"}`.
 
 The same folder holds `players.json`, the volume and mute you set for each player, and `node.key`, the private key that identifies your game to other players. Keep it to yourself; if you delete it, Yak VC makes a new one.
