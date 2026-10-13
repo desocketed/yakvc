@@ -16,9 +16,10 @@ final class MicLevelMeter extends AbstractWidget {
 	private static final double FLOOR_DB = -60;
 
 	private final DoubleSupplier levelDb;
-	private final double thresholdDb;
+	/** Read each frame, so the mark follows the threshold slider while it is dragged. */
+	private final DoubleSupplier thresholdDb;
 
-	MicLevelMeter(DoubleSupplier levelDb, double thresholdDb) {
+	MicLevelMeter(DoubleSupplier levelDb, DoubleSupplier thresholdDb) {
 		super(0, 0, 310, 20, Component.translatable("yakvc.settings.mic_level"));
 		this.levelDb = levelDb;
 		this.thresholdDb = thresholdDb;
@@ -32,6 +33,7 @@ final class MicLevelMeter extends AbstractWidget {
 		int right = getRight();
 		int bottom = getBottom();
 		double level = levelDb.getAsDouble();
+		double thresholdDb = this.thresholdDb.getAsDouble();
 		graphics.text(Minecraft.getInstance().font, getMessage(), left, getY(), 0xFFFFFFFF);
 		graphics.fill(left, top, right, bottom, 0xFF000000);
 		graphics.fill(left + 1, top + 1, x(level, left + 1, right - 1), bottom - 1,

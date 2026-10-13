@@ -18,6 +18,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.OptionInstance;
 import net.minecraft.client.Options;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.MultiLineTextWidget;
 import net.minecraft.client.gui.components.Tooltip;
@@ -43,6 +44,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	private static final List<String> TEST_SOUNDS = List.of("clicks", "noise", "sweep", "beeps", "tone");
 	private static final String NO_TEST_SOUND = "";
 	private static final String VOICE = "voice";
+	private static final int RIGHT_BUTTON = 1;
 	/** Stands for an unset device: the system default microphone, or speakers that follow the game. */
 	private static final String DEFAULT_DEVICE = "";
 	/**
@@ -55,6 +57,8 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	private final Settings initial;
 	private final ApplyThrottle throttle = new ApplyThrottle();
 	private final OptionInstance<String> activation;
+	/** The voice activation threshold, in whole dBFS; only listed while activation is voice. */
+	private final OptionInstance<Integer> vadThresholdDb;
 	private final OptionInstance<Integer> range;
 	private final OptionInstance<Integer> bitrateKbps;
 	/** The microphone's gain, in percent. */
@@ -98,7 +102,15 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		super(lastScreen, options, Component.translatable("yakvc.settings.title"));
 		this.feeder = feeder;
 		this.initial = feeder.settings();
-		activation = activationOption(initial, value -> throttle.changed());
+		// Rebuilt so the threshold slider appears or goes with the choice.
+		activation = activationOption(initial, value -> {
+			throttle.changed();
+			rebuildWidgets();
+		});
+		vadThresholdDb = new OptionInstance<>("yakvc.settings.vad_threshold_db",
+				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.vad_threshold_db.tooltip")),
+				(caption, value) -> Options.genericValueLabel(caption, Component.translatable("yakvc.settings.vad_threshold_db.decibels", value)),
+				new OptionInstance.IntRange(-100, 0), vadThresholdDb(initial), value -> throttle.changed());
 		invites = invitesOption(initial, value -> throttle.changed());
 		int maxRange = options.renderDistance().get() * 16;
 		range = new OptionInstance<>("yakvc.settings.range",
@@ -258,12 +270,20 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	}
 
 	@Override
+	protected void init() {
+		// init runs again on every rebuild, and the layout would keep the old widgets.
+		layout.removeChildren();
+		super.init();
+	}
+
+	@Override
 	protected void addOptions() {
 		list.addSmall(activation, range);
+		if (activation.get().equals(VOICE)) list.addBig(vadThresholdDb);
 		list.addSmall(bitrateKbps, noiseSuppression);
 		list.addBig(inputDevice);
 		list.addBig(inputGainPercent);
-		list.addBig(new MicLevelMeter(feeder::micLevelDb, initial.audio().vadThresholdDb()));
+		list.addBig(new MicLevelMeter(feeder::micLevelDb, () -> vadThresholdDb.get()));
 		list.addBig(outputDevice);
 		list.addSmall(spatialAudio);
 		list.addHeader(Component.translatable("yakvc.settings.privacy"));
@@ -341,6 +361,16 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 
 	@Override
 	public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+		// A right click on the threshold slider puts it back to its default, as the Sound Tuning sliders do.
+		AbstractWidget threshold = list.findOption(vadThresholdDb);
+		if (event.button() == RIGHT_BUTTON && threshold != null && threshold.isMouseOver(event.x(), event.y())) {
+			vadThresholdDb.set(vadThresholdDb(Settings.DEFAULT));
+			// The slider only reads its option when made.
+			double scroll = list.scrollAmount();
+			rebuildWidgets();
+			list.setScrollAmount(scroll);
+			return true;
+		}
 		return inputDevice.listClicked(event.x(), event.y(), height)
 				|| outputDevice.listClicked(event.x(), event.y(), height)
 				|| testSound.listClicked(event.x(), event.y(), height)
@@ -399,6 +429,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		if (inputGainPercent.get() != inputGainPercent(current)) {
 			changed = changed.withInputGain(inputGainPercent.get() / 100.0);
 		}
+		if (vadThresholdDb.get() != vadThresholdDb(current)) changed = changed.withVadThresholdDb(vadThresholdDb.get());
 		return changed.equals(current) || applyAndSave(feeder, changed);
 	}
 
@@ -424,6 +455,11 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	/** The saved microphone gain as the slider shows it, so an untouched slider never rewrites it. */
 	private static int inputGainPercent(Settings settings) {
 		return (int) Math.clamp(Math.round(settings.audio().inputGain() * 100), 0, MAX_INPUT_GAIN_PERCENT);
+	}
+
+	/** The saved threshold as the slider shows it, likewise. */
+	private static int vadThresholdDb(Settings settings) {
+		return (int) Math.clamp(Math.round(settings.audio().vadThresholdDb()), -100, 0);
 	}
 
 	private static @Nullable String deviceValue(String id) {
