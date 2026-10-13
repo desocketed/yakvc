@@ -73,7 +73,7 @@ jobs:
             const top = Math.max(1, ...closed, ...opened);
 
             const open = issues.filter((i) => i.state === "open");
-            const waiting = open.filter((i) => i.labels.some((l) => l.name === "needs-maintainer"));
+            const waiting = open.filter((i) => i.labels.some((l) => l.name === "status: needs-maintainer"));
             const body = [
               "Kept current by the `Project status` workflow on every issue change and once a day; edits here are overwritten.",
               "",

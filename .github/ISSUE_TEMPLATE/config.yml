@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: User guide
+    url: https://github.com/desocketed/yakvc/blob/main/docs/USER_GUIDE.md
+    about: Setup, settings and troubleshooting, before opening an issue.

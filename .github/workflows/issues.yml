@@ -1,0 +1,16 @@
+# Every new issue is marked for triage; Claude's session picks those up,
+# assesses them and swaps the label for the outcome.
+name: Issues
+on:
+  issues:
+    types: [opened]
+permissions:
+  issues: write
+jobs:
+  mark:
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh issue edit "$NUMBER" -R "$GITHUB_REPOSITORY" --add-label "status: needs-triage"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ github.event.issue.number }}

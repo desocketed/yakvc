@@ -1,0 +1,35 @@
+name: Bug report
+description: Something doesn't work as the guide says it should
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead. If voice was involved, say whether the other player could hear you, or you them.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Yak VC version
+      description: The release or dev build (`yakvc-<version>.jar`), from the mods list or the settings title.
+      placeholder: 0.1.0-alpha.3
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: Lines from `logs/latest.log` mentioning `yakvc`, if any. Paste as is; it is formatted as code.
+      render: text
