@@ -1,6 +1,9 @@
 package io.github.desocketed.yakvc.ui;
 
+import io.github.desocketed.yakvc.FarEchoes;
 import io.github.desocketed.yakvc.GameStateFeeder;
+import io.github.desocketed.yakvc.Room;
+import io.github.desocketed.yakvc.config.SpatialAudio;
 import io.github.desocketed.yakvc.config.Settings;
 import io.github.desocketed.yakvc.natives.EngineEvent;
 import io.github.desocketed.yakvc.natives.NativeBridge;
@@ -77,6 +80,21 @@ public final class DebugOverlay implements HudElement {
 			lines.add((audio.transmitting() ? "Sending" : "Not sending") + input);
 			lines.add(String.format("Bitrate: %d kbit/s (set %d)", audio.bitrate() / 1000, settings.audio().bitrate() / 1000));
 			lines.add("Overruns: " + audio.overruns() + ", underruns: " + audio.underruns());
+		}
+
+		// The room and echoes the mod computed where you stand, for tuning by ear: what the engine was told to play.
+		lines.add("");
+		lines.add("Spatial audio: " + settings.spatialAudio().name().toLowerCase());
+		if (settings.spatialAudio() == SpatialAudio.FULL) {
+			Room room = feeder.room();
+			lines.add(String.format("Room: reverb %.2f, decay %.2f s, critical %.1f m, echo %.2f at %.0f ms",
+					room.reverb(), room.decay(), room.criticalDistance(), room.echo(), room.echoDelay() * 1000));
+			List<FarEchoes.Echo> echoes = feeder.echoes();
+			StringBuilder far = new StringBuilder("Far echoes: " + echoes.size());
+			for (FarEchoes.Echo echo : echoes) {
+				far.append(String.format(", %.0f ms ×%.2f <%.0f Hz", echo.delay() * 1000, echo.gain(), echo.cutoff()));
+			}
+			lines.add(far.toString());
 		}
 
 		Map<UUID, VoiceStats.Peer> peerStats = stats == null ? Map.of() : stats.peers();
