@@ -283,7 +283,8 @@ impl Voice {
             state.audio = config.audio.clone();
             state.acoustics = config.acoustics.clone();
             state.voice_range = config.voice_range;
-            state.friends_only = config.friends_only.clone();
+            state.friends = config.friends.clone();
+            state.friends_only = config.friends_only;
             state.invites_from = config.invites;
         });
         self.shared.receive_policy.send_replace(());
@@ -330,11 +331,9 @@ impl Shared {
         events: EventSender,
         #[cfg(feature = "sim")] impairment: Option<crate::sim::Impairment>,
     ) -> Shared {
-        let mut state = VoiceState::new(
-            config.audio.clone(),
-            config.voice_range,
-            config.friends_only.clone(),
-        );
+        let mut state = VoiceState::new(config.audio.clone(), config.voice_range);
+        state.friends = config.friends.clone();
+        state.friends_only = config.friends_only;
         state.invites_from = config.invites;
         state.acoustics = config.acoustics.clone();
         Shared {
