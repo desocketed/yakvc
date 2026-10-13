@@ -5,6 +5,7 @@ import io.github.desocketed.yakvc.GameStateFeeder;
 import io.github.desocketed.yakvc.UpdateCheck;
 import io.github.desocketed.yakvc.YakVcClient;
 import io.github.desocketed.yakvc.config.Settings;
+import io.github.desocketed.yakvc.config.Settings.Acoustics;
 import io.github.desocketed.yakvc.config.SpatialAudio;
 import io.github.desocketed.yakvc.natives.EngineEvent;
 import java.io.IOException;
@@ -14,6 +15,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
+import java.util.function.ToDoubleFunction;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.OptionInstance;
 import net.minecraft.client.Options;
@@ -52,6 +54,11 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	 * hand-edited higher gain shows as 400% and is left alone until the slider moves.
 	 */
 	private static final int MAX_INPUT_GAIN_PERCENT = 400;
+	/**
+	 * The reverb and echo sliders' top. The engine allows up to 400%, as Sound Tuning offers, but twice the default is
+	 * all a player needs; a higher value set there shows as 200% and is left alone until the slider moves.
+	 */
+	private static final int MAX_ACOUSTICS_PERCENT = 200;
 
 	private final GameStateFeeder feeder;
 	private final Settings initial;
@@ -65,6 +72,11 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	private final OptionInstance<Integer> inputGainPercent;
 	private final OptionInstance<Boolean> noiseSuppression;
 	private final OptionInstance<SpatialAudio> spatialAudio;
+	/** The room reverb's and the far echoes' loudness, in percent. Shown only with Spatial Audio on Full. */
+	private final OptionInstance<Integer> reverbPercent;
+	private final OptionInstance<Integer> echoPercent;
+	/** Whether the reverb and echo sliders are in the list, so a Spatial Audio change can rebuild it. */
+	private boolean acousticsShown;
 	private final Dropdown inputDevice;
 	private final Dropdown outputDevice;
 	/** The device names, once listed: the listing runs on a worker thread while the screen shows "Loading…". */
@@ -131,6 +143,8 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 				(caption, value) -> Component.translatable("yakvc.settings.spatial_audio." + value.key()),
 				new OptionInstance.Enum<>(List.of(SpatialAudio.values()), Codec.STRING.xmap(SpatialAudio::of, SpatialAudio::key)),
 				initial.spatialAudio(), value -> throttle.changed());
+		reverbPercent = acousticsOption("reverb_level", initial, Acoustics::reverbLevel);
+		echoPercent = acousticsOption("echo_level", initial, Acoustics::echoLevel);
 		inputGainPercent = new OptionInstance<>("yakvc.settings.input_gain",
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.input_gain.tooltip")),
 				(caption, value) -> Options.genericValueLabel(caption, Component.translatable("yakvc.tuning.percent", value)),
@@ -182,6 +196,25 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 				feeder.debugOverlay(), feeder::setDebugOverlay);
 		// Last, after both pickers exist: a stopped engine answers at once.
 		feeder.listDevices().thenAccept(this::fillDevices);
+	}
+
+	/** One of the {@code acoustics} levels (a fraction, 1 being unchanged) as a percent slider. */
+	private OptionInstance<Integer> acousticsOption(String key, Settings settings, ToDoubleFunction<Acoustics> read) {
+		return new OptionInstance<>("yakvc.settings." + key,
+				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings." + key + ".tooltip")),
+				(caption, value) -> Options.genericValueLabel(caption, Component.translatable("yakvc.tuning.percent", value)),
+				new OptionInstance.IntRange(0, MAX_ACOUSTICS_PERCENT), acousticsPercent(settings, read),
+				value -> throttle.changed());
+	}
+
+	/** The Reverb ({@code reverb_level}) or Echo ({@code echo_level}) slider. Public for the client gametest. */
+	public OptionInstance<Integer> acoustic(String key) {
+		return key.equals("reverb_level") ? reverbPercent : echoPercent;
+	}
+
+	/** A saved acoustics level as its slider shows it, so an untouched slider never rewrites it. */
+	private static int acousticsPercent(Settings settings, ToDoubleFunction<Acoustics> read) {
+		return (int) Math.clamp(Math.round(read.applyAsDouble(settings.acoustics()) * 100), 0, MAX_ACOUSTICS_PERCENT);
 	}
 
 	/** Push to talk or voice activation. Shared with the voice menu's setup card. */
@@ -286,6 +319,9 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		list.addBig(new MicLevelMeter(feeder::micLevelDb, () -> vadThresholdDb.get()));
 		list.addBig(outputDevice);
 		list.addSmall(spatialAudio);
+		// Only Full has reverb and echo: the other levels send the engine open air and no echoes.
+		acousticsShown = spatialAudio.get() == SpatialAudio.FULL;
+		if (acousticsShown) list.addSmall(reverbPercent, echoPercent);
 		list.addHeader(Component.translatable("yakvc.settings.privacy"));
 		list.addBig(new MultiLineTextWidget(Component.translatable("yakvc.settings.ip_note"), font)
 				.setMaxWidth(310).setCentered(true));
@@ -333,6 +369,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 			minecraft.gui.setScreen(new VoiceSettingsScreen(lastScreen, options, feeder));
 			return;
 		}
+		if (acousticsShown != (spatialAudio.get() == SpatialAudio.FULL)) showValues();
 		Component now = accountState();
 		if (accountText != null && !now.equals(shownAccountState)) {
 			shownAccountState = now;
@@ -361,16 +398,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 
 	@Override
 	public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
-		// A right click on the threshold slider puts it back to its default, as the Sound Tuning sliders do.
-		AbstractWidget threshold = list.findOption(vadThresholdDb);
-		if (event.button() == RIGHT_BUTTON && threshold != null && threshold.isMouseOver(event.x(), event.y())) {
-			vadThresholdDb.set(vadThresholdDb(Settings.DEFAULT));
-			// The slider only reads its option when made.
-			double scroll = list.scrollAmount();
-			rebuildWidgets();
-			list.setScrollAmount(scroll);
-			return true;
-		}
+		if (event.button() == RIGHT_BUTTON && resetSlider(event)) return true;
 		return inputDevice.listClicked(event.x(), event.y(), height)
 				|| outputDevice.listClicked(event.x(), event.y(), height)
 				|| testSound.listClicked(event.x(), event.y(), height)
@@ -394,6 +422,31 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 			return true;
 		}
 		return super.keyPressed(event);
+	}
+
+	/** A right click on the threshold, reverb or echo slider puts it back to its default; true if one was hit. */
+	private boolean resetSlider(MouseButtonEvent event) {
+		for (OptionInstance<Integer> option : List.of(vadThresholdDb, reverbPercent, echoPercent)) {
+			AbstractWidget widget = list.findOption(option);
+			if (widget == null || !widget.isMouseOver(event.x(), event.y())) continue;
+			option.set(defaultValue(option));
+			throttle.changed();
+			showValues();
+			return true;
+		}
+		return false;
+	}
+
+	private int defaultValue(OptionInstance<Integer> option) {
+		if (option == vadThresholdDb) return vadThresholdDb(Settings.DEFAULT);
+		return acousticsPercent(Settings.DEFAULT, option == reverbPercent ? Acoustics::reverbLevel : Acoustics::echoLevel);
+	}
+
+	/** Rebuilds the controls, which only read their option when made, keeping the list where it was scrolled to. */
+	private void showValues() {
+		double scroll = list.scrollAmount();
+		rebuildWidgets();
+		list.setScrollAmount(scroll);
 	}
 
 	/** Called whenever the screen goes away: a change still waiting on the throttle is applied now. */
@@ -430,6 +483,12 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 			changed = changed.withInputGain(inputGainPercent.get() / 100.0);
 		}
 		if (vadThresholdDb.get() != vadThresholdDb(current)) changed = changed.withVadThresholdDb(vadThresholdDb.get());
+		if (reverbPercent.get() != acousticsPercent(current, Acoustics::reverbLevel)) {
+			changed = changed.withAcoustic("reverb_level", reverbPercent.get() / 100.0);
+		}
+		if (echoPercent.get() != acousticsPercent(current, Acoustics::echoLevel)) {
+			changed = changed.withAcoustic("echo_level", echoPercent.get() / 100.0);
+		}
 		return changed.equals(current) || applyAndSave(feeder, changed);
 	}
 
