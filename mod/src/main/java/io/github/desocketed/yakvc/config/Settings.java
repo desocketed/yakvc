@@ -272,6 +272,10 @@ public record Settings(double voiceRange, SpatialAudio spatialAudio, boolean rel
 		return with("audio", "input_gain", gain);
 	}
 
+	public Settings withVadThresholdDb(double db) {
+		return with("audio", "vad_threshold_db", db);
+	}
+
 	public Settings withInputDevice(@Nullable String id) {
 		return with("audio", "input_device", id);
 	}
