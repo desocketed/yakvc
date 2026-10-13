@@ -12,6 +12,7 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
+use md5::Digest as _;
 use serde_json::{Value, json};
 
 use crate::{dev, root, run};
@@ -86,7 +87,10 @@ pub(crate) fn session(
                 .spawn()
                 .context("starting the rendezvous")?;
             parts.push(("rendezvous".into(), child));
-            parts.push(("server".into(), server(&dir.join("server"), &launch)?));
+            parts.push((
+                "server".into(),
+                server(&dir.join("server"), &launch, names)?,
+            ));
         }
         // Quick play gives up if the server isn't listening yet.
         wait_for_server(&mut parts)?;
@@ -120,9 +124,15 @@ pub(crate) fn session(
     result
 }
 
-/// The dev Minecraft server in offline mode, so any name can join.
-fn server(dir: &Path, launch: &Path) -> Result<Child> {
+/// The dev Minecraft server in offline mode, so any name can join; the named
+/// players are operators, so they (and the command file) can change the world.
+fn server(dir: &Path, launch: &Path, names: &[String]) -> Result<Child> {
     fs::create_dir_all(dir)?;
+    let ops: Vec<Value> = names
+        .iter()
+        .map(|name| json!({"uuid": offline_uuid(name), "name": name, "level": 4, "bypassesPlayerLimit": false}))
+        .collect();
+    fs::write(dir.join("ops.json"), dev::settings_json(&Value::Array(ops)))?;
     let eula = fs::read_to_string(dir.join("eula.txt")).unwrap_or_default();
     if !eula.lines().any(|line| line.trim() == "eula=true") {
         bail!(
@@ -308,6 +318,16 @@ fn set_talking(settings: &Path, talk: Talk) -> Result<()> {
     Ok(())
 }
 
+/// The UUID the offline-mode server gives `name` (as `yakvc_proto::offline_uuid`,
+/// repeated here so xtask needn't build the networking crates).
+fn offline_uuid(name: &str) -> uuid::Uuid {
+    let hash = md5::Md5::new()
+        .chain_update(b"OfflinePlayer:")
+        .chain_update(name.as_bytes())
+        .finalize();
+    uuid::Builder::from_md5_bytes(hash.into()).into_uuid()
+}
+
 fn write_once(path: &Path, text: &str) -> Result<()> {
     if !path.exists() {
         fs::create_dir_all(path.parent().unwrap_or(&PathBuf::from(".")))?;
@@ -364,6 +384,9 @@ mod tests {
     #[test]
     fn a_player_s_own_microphone_is_kept_when_not_talking() {
         let before = json!({"audio": {"input_device": "hw:1"}});
-        assert_eq!(talking(before.clone(), Talk::No), json!({"audio": {"input_device": "hw:1"}, "dev": {"fly_speed": 0.1}}));
+        assert_eq!(
+            talking(before.clone(), Talk::No),
+            json!({"audio": {"input_device": "hw:1"}, "dev": {"fly_speed": 0.1}})
+        );
     }
 }
