@@ -55,16 +55,19 @@ class SettingsTest {
 				.withInvites("friends")
 				.withActivation("voice")
 				.withInputGain(2.5)
+				.withVadThresholdDb(-30)
 				.withInputDevice("Mic \"USB\" \\ 2")
 				.withAcoustic("furnishing", 0.9);
 		settings = Settings.parse("""
 				{"dev_mode": true, "trusted_issuers": ["abc"], "friends_only": ["00000000-0000-0000-0000-000000000001"],
 				 "rendezvous": {"endpoint_id": "def", "addrs": ["127.0.0.1:4433"], "relay": "https://relay.example/"},
 				 "dev": {"tone_hz": 440, "null_output": true}}
-				""").withOutputDevice(settings.audio().inputDevice()).withInputGain(settings.audio().inputGain());
+				""").withOutputDevice(settings.audio().inputDevice()).withInputGain(settings.audio().inputGain())
+				.withVadThresholdDb(settings.audio().vadThresholdDb());
 		settings.save(dir);
 		Settings loaded = Settings.load(dir);
 		assertEquals(settings, loaded);
+		assertEquals(-30, loaded.audio().vadThresholdDb());
 		assertTrue(loaded.devMode());
 		assertEquals(List.of("abc"), loaded.trustedIssuers());
 		assertEquals(new Settings.Rendezvous("def", List.of("127.0.0.1:4433"), "https://relay.example/"),
@@ -148,6 +151,7 @@ class SettingsTest {
 			bridge.updateConfig(engine, edited.engineToml(8));
 			assertThrows(YakVcException.class, () -> bridge.updateConfig(engine, edited.withVoiceRange(1000).engineToml(0)));
 			assertThrows(YakVcException.class, () -> bridge.updateConfig(engine, edited.withInputGain(20).engineToml(0)));
+			assertThrows(YakVcException.class, () -> bridge.updateConfig(engine, edited.withVadThresholdDb(3).engineToml(0)));
 			assertThrows(YakVcException.class, () -> bridge.updateConfig(engine, edited.withInvites("all").engineToml(0)));
 		} finally {
 			bridge.destroy(engine);
