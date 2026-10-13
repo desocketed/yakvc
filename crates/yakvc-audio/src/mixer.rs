@@ -351,6 +351,35 @@ mod tests {
     }
 
     #[test]
+    fn open_air_adds_nothing_to_the_dry_voice() {
+        // What the mod pushes in open air, or with Spatial Audio below Full:
+        // no reverb, no room echo and silent far taps. A voice in the world
+        // still sends to the far echoes, which must then stay silent.
+        let mut mixer = Mixer::new();
+        mixer.set_acoustics(Acoustics {
+            decay: 0.1,
+            ..Acoustics::default()
+        });
+        let spatial = Spatial {
+            gain: 0.8,
+            pan: -0.3,
+            muffle: 0.0,
+            reverb: 0.0,
+            echo: 1.0,
+        };
+        let [left, right] = pan_gains(spatial);
+        let mut out = [[0.0; 2]; FRAME_SAMPLES];
+        for n in 0..10 {
+            let frame: MonoFrame =
+                std::array::from_fn(|i| 0.5 * ((n * FRAME_SAMPLES + i) as f32 * 0.05).sin());
+            mixer.mix([(&frame, spatial)], &mut out);
+            for (sample, mixed) in frame.iter().zip(&out) {
+                assert_eq!(*mixed, [sample * left, sample * right]);
+            }
+        }
+    }
+
+    #[test]
     fn limiter_keeps_output_in_range() {
         let sources = [(
             constant(1.0),

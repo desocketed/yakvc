@@ -146,6 +146,7 @@ Open the settings from **Options → Music & Sounds → Voice Chat…**, at the 
 - **Mic Volume**: how loud your microphone is, from 0 to 400% (100% by default). The level meter below shows the result, so set it by eye: talk normally and aim for the bar to cross the white mark comfortably. It also changes when *Voice* activation starts sending.
 - **Microphone Level**: shows live how loud your microphone hears you, so you can check it works without joining a world or holding the talk key. The bar turns green above the white mark, the level at which *Voice* activation starts sending (`vad_threshold_db` in the [config file](#the-config-file)). It shows the microphone in use, so after picking another one, leave and reopen the settings to see it.
 - **Speakers**: where voices play. Click it to pick from a list, like the microphone. *Same as Game* uses the game's sound device (Options → Music & Sounds → Device).
+- **Spatial Audio**: how voices sound in the world. *Off*: they only get quieter with distance and come from the left or right. *Simple* (the default): walls and closed doors also muffle them, and a voice behind a wall comes round through the nearest opening. *Full*: caves, halls and canyons also ring with reverb and echo, and far cliffs echo voices back. Lower levels also spare your computer the work of tracing the sound.
 
 ![The microphone list](guide/voice-settings-microphone.png)
 
@@ -183,7 +184,7 @@ Under **Developer**, tools for testing Yak VC:
 
 ![The Sound Tuning screen](guide/sound-tuning.png)
 
-Voices follow the world: walls and closed doors muffle them, a voice behind a wall comes round through the nearest opening, and caves, halls and canyons ring with reverb and echo, the bigger the longer. Sound Tuning lets you adjust all of that by ear. Every slider applies as you drag it, so have someone talk while you tune, and is saved when you close the screen. **Reset to Defaults** puts every slider back.
+Voices follow the world: walls and closed doors muffle them, a voice behind a wall comes round through the nearest opening, and caves, halls and canyons ring with reverb and echo, the bigger the longer. The Rooms sliders only matter with **Spatial Audio** set to *Full*, and the Walls sliders not with it *Off*. Sound Tuning lets you adjust all of that by ear. Every slider applies as you drag it, so have someone talk while you tune, and is saved when you close the screen. **Reset to Defaults** puts every slider back.
 
 - **Distance**: how close a voice must be to play at full volume, and how it fades towards the voice range. Below ×1, distant voices stay louder for longer.
 - **Walls**: how much quieter and more muffled a voice behind walls is, and how muffled a voice coming round a corner or through a doorway is, plus a little more for each block of the way round.
@@ -248,6 +249,7 @@ The keys that the settings screen shows:
 | Key | Default | Setting |
 | --- | --- | --- |
 | `voice_range` | `256.0` | Range |
+| `spatial_audio` | `"simple"` | Spatial Audio (`"off"`, `"simple"` or `"full"`) |
 | `relay_only` | `false` | Relay Only |
 | `respect_chat_restrictions` | `true` | Obey Chat Limits |
 | `mute_blocked_players` | `true` | Mute Blocked |

@@ -715,6 +715,8 @@ mod tests {
     #[test]
     fn occluded_speakers_are_quieter_and_muffled() {
         let mut state = state();
+        // Off by default; tuning can turn it on.
+        state.acoustics.occlusion_attenuation = 0.75;
         state.world.players = vec![
             Player::new(uuid(1), at(10.0, 0.0)),
             Player {
