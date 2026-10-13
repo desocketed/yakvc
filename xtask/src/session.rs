@@ -42,7 +42,7 @@ const ROOMS: &[(&str, &str)] = &[
 /// Grass on dirt on bedrock, the ground's top at y -61, as the rooms expect; the
 /// void biome, so nothing ever spawns (an older world keeps plains, and the
 /// build function clears its animals).
-const FLAT_LAYERS: &str = r#"{"layers":[{"block":"minecraft:bedrock","height":1},{"block":"minecraft:dirt","height":2},{"block":"minecraft:grass_block","height":1}],"biome":"minecraft:the_void"}"#;
+const FLAT_LAYERS: &str = r#"{"layers":[{"block":"minecraft:bedrock","height":1},{"block":"minecraft:dirt","height":2},{"block":"minecraft:grass_block","height":1}],"biome":"minecraft:the_void","structure_overrides":[]}"#;
 
 /// Libraries Minecraft loads at runtime, from the flake's nixpkgs.
 const LIBRARIES: &[&str] = &[
@@ -140,9 +140,11 @@ fn server(dir: &Path, launch: &Path, names: &[String]) -> Result<Child> {
             dir.join("eula.txt").display()
         );
     }
-    write_once(
-        &dir.join("server.properties"),
-        &format!(
+    // Written every time, like the rooms, so a changed world setting takes effect
+    // (the world itself must be deleted to regenerate).
+    fs::write(
+        dir.join("server.properties"),
+        format!(
             "online-mode=false\nenforce-secure-profile=false\nwhite-list=false\nenforce-whitelist=false\n\
              server-ip=127.0.0.1\nserver-port={SERVER_PORT}\ndifficulty=peaceful\nspawn-protection=0\ngamemode=creative\nforce-gamemode=true\n\
              level-name=rooms\nlevel-type=minecraft\\:flat\ngenerator-settings={FLAT_LAYERS}\n"
