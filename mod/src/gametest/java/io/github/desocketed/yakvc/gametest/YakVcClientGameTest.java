@@ -440,6 +440,8 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		screenshotScreen(context, "voice-menu");
 		pressNestedButton(context, "yakvc.menu.mute");
 		context.waitFor(mc -> feeder.volumes().get(REMOTE).muted());
+		pressNestedButton(context, "yakvc.menu.friend");
+		context.waitFor(mc -> feeder.volumes().get(REMOTE).friend());
 
 		context.clickScreenButton("yakvc.menu.settings");
 		context.waitForScreen(VoiceSettingsScreen.class);

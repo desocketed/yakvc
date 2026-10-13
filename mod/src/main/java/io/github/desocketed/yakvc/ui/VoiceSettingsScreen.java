@@ -74,6 +74,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	private final OptionInstance<Boolean> muteBlockedPlayers;
 	private final OptionInstance<Boolean> verifiedOnly;
 	private final OptionInstance<String> invites;
+	private final OptionInstance<Boolean> friendsOnly;
 	private final OptionInstance<Boolean> checkForUpdates;
 	private final OptionInstance<Boolean> debugOverlay;
 	/** The account line, which follows the rendezvous state while the screen is open. */
@@ -158,6 +159,9 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		muteBlockedPlayers = OptionInstance.createBoolean("yakvc.settings.mute_blocked_players",
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.mute_blocked_players.tooltip")),
 				initial.muteBlockedPlayers(), value -> throttle.changed());
+		friendsOnly = OptionInstance.createBoolean("yakvc.settings.friends_only",
+				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.friends_only.tooltip")),
+				initial.friendsOnly(), value -> throttle.changed());
 		verifiedOnly = OptionInstance.createBoolean("yakvc.settings.verified_only",
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.verified_only.tooltip")),
 				initial.verifiedOnly(), value -> throttle.changed());
@@ -181,14 +185,9 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 				settings.audio().voiceActivation() ? VOICE : PUSH_TO_TALK, onChange::accept);
 	}
 
-	/**
-	 * Who may invite us to a group. Shared with the voice menu's setup card. "friends" is left out because no screen
-	 * edits the friends list, so picking it here would mean nobody; a hand-edited file may still say it, and shows
-	 * as "Friends" until the player picks something else.
-	 */
+	/** Who may invite us to a group; friends are marked in the voice menu. Shared with the menu's setup card. */
 	static OptionInstance<String> invitesOption(Settings settings, Consumer<String> onChange) {
-		List<String> values = new ArrayList<>(List.of("everyone", "nobody"));
-		if (settings.invites().equals("friends")) values.add("friends");
+		List<String> values = List.of("everyone", "friends", "nobody");
 		return new OptionInstance<>("yakvc.settings.invites",
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.invites.tooltip")),
 				(caption, value) -> Component.translatable("yakvc.settings.invites." + value),
@@ -271,6 +270,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 				.setMaxWidth(310).setCentered(true));
 		list.addSmall(relayOnly, respectChatRestrictions);
 		list.addSmall(muteBlockedPlayers, invites);
+		list.addSmall(friendsOnly);
 		list.addSmall(checkForUpdates.createButton(options), releasesButton());
 		list.addHeader(Component.translatable("yakvc.settings.account"));
 		shownAccountState = accountState();
@@ -388,6 +388,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 				.withRespectChatRestrictions(respectChatRestrictions.get())
 				.withMuteBlockedPlayers(muteBlockedPlayers.get())
 				.withVerifiedOnly(verifiedOnly.get())
+				.withFriendsOnly(friendsOnly.get())
 				.withCheckForUpdates(checkForUpdates.get())
 				.withSpatialAudio(spatialAudio.get())
 				.withNoiseSuppression(noiseSuppression.get())

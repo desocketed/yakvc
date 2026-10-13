@@ -129,6 +129,8 @@ public final class GameStateFeeder {
 	/** The address of the voice sink the engine was last given; 0 for the speakers. */
 	private long voiceSink;
 	private final Map<UUID, PlayerVolumes.Setting> peerAudio = new HashMap<>();
+	/** The friends list the engine was given last; the menu's Friend toggle changes {@link #volumes}. */
+	private List<UUID> friends;
 
 	/** Players in the tab list that are blocked in Social Interactions, when {@code mute_blocked_players} is on. */
 	private Set<UUID> blocked = Set.of();
@@ -173,6 +175,8 @@ public final class GameStateFeeder {
 		this.keys = keys;
 		this.joiner = joiner;
 		this.volumes = volumes;
+		// The engine was created with this list.
+		this.friends = volumes.friends();
 	}
 
 	public void join(ClientPacketListener connection, Minecraft minecraft) {
@@ -231,6 +235,7 @@ public final class GameStateFeeder {
 			else clearWorld();
 		});
 		feedPeerAudio(players);
+		step(this::feedFriends);
 		step(() -> feedInput(active ? inputFlags(player) : 0));
 		step(() -> feedVolume(minecraft.options.getFinalSoundSourceVolume(SoundSource.VOICE)));
 		step(() -> feedDevice(minecraft.options.soundDevice().get()));
@@ -239,8 +244,16 @@ public final class GameStateFeeder {
 
 	private void feedRenderDistance(int renderChunks) {
 		if (renderChunks == rangeRenderChunks) return;
-		bridge.updateConfig(engine, settings.engineToml(renderChunks));
+		bridge.updateConfig(engine, settings.engineToml(renderChunks, friends));
 		rangeRenderChunks = renderChunks;
+	}
+
+	/** The friends list is part of the engine's config, so a Friend toggle in the menu is one more config update. */
+	private void feedFriends() {
+		List<UUID> wanted = volumes.friends();
+		if (wanted.equals(friends)) return;
+		bridge.updateConfig(engine, settings.engineToml(rangeRenderChunks, wanted));
+		friends = wanted;
 	}
 
 	/**
@@ -275,7 +288,7 @@ public final class GameStateFeeder {
 	public @Nullable String applySettings(Settings changed) {
 		if (closed) return "the voice engine is stopped";
 		try {
-			bridge.updateConfig(engine, changed.engineToml(rangeRenderChunks));
+			bridge.updateConfig(engine, changed.engineToml(rangeRenderChunks, friends));
 		} catch (YakVcException e) {
 			fail(e);
 			return e.getMessage();
@@ -535,7 +548,7 @@ public final class GameStateFeeder {
 	private void feedPeerAudio(Set<UUID> players) {
 		for (UUID uuid : players) {
 			PlayerVolumes.Setting saved = volumes.get(uuid);
-			PlayerVolumes.Setting wanted = new PlayerVolumes.Setting(saved.volume(), saved.muted() || blocked(uuid));
+			PlayerVolumes.Setting wanted = saved.withMuted(saved.muted() || blocked(uuid));
 			if (wanted.equals(peerAudio.getOrDefault(uuid, PlayerVolumes.DEFAULT))) continue;
 			peerAudio.put(uuid, wanted);
 			step(() -> bridge.setPeerVolume(engine, uuid, wanted.volume(), wanted.muted()));
@@ -710,7 +723,7 @@ public final class GameStateFeeder {
 		return groupChat;
 	}
 
-	/** Saved per-player volume and mute. Changes reach the engine on the next tick. */
+	/** Saved per-player volume, mute and friend mark. Changes reach the engine on the next tick. */
 	public PlayerVolumes volumes() {
 		return volumes;
 	}
