@@ -98,9 +98,11 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		this.initial = feeder.config();
 		activation = activationOption(initial, value -> throttle.changed());
 		invites = invitesOption(initial, value -> throttle.changed());
-		range = new OptionInstance<>("yakvc.settings.range", OptionInstance.noTooltip(),
+		int maxRange = options.renderDistance().get() * 16;
+		range = new OptionInstance<>("yakvc.settings.range",
+				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.range.tooltip")),
 				(caption, value) -> Options.genericValueLabel(caption, Component.translatable("yakvc.settings.range.blocks", value)),
-				new OptionInstance.IntRange(1, 256), (int) Math.clamp(Math.round(initial.voiceRange()), 1, 256),
+				new OptionInstance.IntRange(1, maxRange), (int) Math.clamp(Math.round(shownRange(initial)), 1, maxRange),
 				value -> throttle.changed());
 		bitrateKbps = new OptionInstance<>("yakvc.settings.bitrate",
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.bitrate.tooltip")),
@@ -360,12 +362,17 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		if (throttle.takePending()) apply();
 	}
 
+	private double shownRange(ClientConfig config) {
+		return ClientConfig.effectiveVoiceRange(config.voiceRange(), options.renderDistance().get());
+	}
+
 	/** Applies and saves what differs from the settings in effect; false if the engine rejected it. */
 	private boolean apply() {
 		ClientConfig current = feeder.config();
 		// Only what the player changed is written, so the rest of the file keeps its exact text.
 		ClientConfig changed = current;
-		if (range.get() != Math.round(current.voiceRange())) {
+		// Against the capped range, so a saved range past the render distance stays saved unless moved.
+		if (range.get() != Math.round(shownRange(current))) {
 			changed = changed.with("", "voice_range", String.valueOf((double) range.get()));
 		}
 		if (relayOnly.get() != current.relayOnly()) {
