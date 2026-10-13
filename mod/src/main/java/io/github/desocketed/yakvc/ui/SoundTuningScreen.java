@@ -47,12 +47,12 @@ public final class SoundTuningScreen extends OptionsSubScreen {
 		slider("muffled_cutoff_hz", 2, 80, 50, 600, value -> label("hertz", "%.0f", value));
 		slider("path_bend", 0, 100, 0.01, mod.pathBend(), SoundTuningScreen::percent);
 		slider("path_per_block", 0, 100, 0.001, mod.pathPerBlock(), SoundTuningScreen::percent);
-		slider("reverb_level", 0, 400, 0.01, 0.85, SoundTuningScreen::percent);
+		slider("reverb_level", 0, 400, 0.01, 0.35, SoundTuningScreen::percent);
 		slider("reverb_damping", 0, 95, 0.01, 0.25, SoundTuningScreen::percent);
 		slider("room_reach", 8, 128, 1, mod.roomReach(), SoundTuningScreen::blocks);
 		slider("furnishing", 0, 100, 0.01, mod.furnishing(), SoundTuningScreen::percent);
 		slider("max_decay", 5, 100, 0.1, mod.maxDecay(), value -> label("seconds", "%.1f", value));
-		slider("echo_feedback", 0, 90, 0.01, 0.4, SoundTuningScreen::percent);
+		slider("echo_feedback", 0, 90, 0.01, 0.12, SoundTuningScreen::percent);
 		slider("echo_reach", 32, 256, 1, mod.echoReach(), SoundTuningScreen::blocks);
 		slider("echo_level", 0, 400, 0.01, 1, SoundTuningScreen::percent);
 	}
