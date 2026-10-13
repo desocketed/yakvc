@@ -23,8 +23,8 @@ class FarEchoesTest {
 		for (FarEchoes.Echo echo : echoes) {
 			double distance = Math.abs(echo.direction().x) > 0.9 ? (echo.direction().x < 0 ? 35.5 : 34.5) : -1;
 			assertEquals(2 * distance / 343, echo.delay(), 0.005, echo.toString());
-			// 0.5 × 8.5 / d × √0.98: about 0.12.
-			assertEquals(0.5 * 8.5 / distance * Math.sqrt(1 - STONE), echo.gain(), 0.005);
+			// 0.2 × 8.5 / d × √0.98: about 0.05.
+			assertEquals(0.2 * 8.5 / distance * Math.sqrt(1 - STONE), echo.gain(), 0.005);
 			assertTrue(echo.cutoff() > 4000 && echo.cutoff() < 5500, "cutoff " + echo.cutoff());
 		}
 		assertTrue(echoes.get(0).direction().x * echoes.get(1).direction().x < 0, "one from each side");

@@ -37,7 +37,9 @@ public record Room(float reverb, float criticalDistance, float decay, float echo
 	/** The shortest round trip the ear hears as an echo apart from the voice (about 50 ms): walls 8.5 m away. */
 	private static final double ECHO_MIN_DISTANCE = 8.5;
 	/** How loud an echo off a hard wall just far enough to stand apart is. */
-	private static final double ECHO_LEVEL = 0.5;
+	private static final double ECHO_LEVEL = 0.2;
+	/** Metres past {@link #ECHO_MIN_DISTANCE} over which the echo fades in: only big spaces echo in full. */
+	private static final double ECHO_FADE = 8;
 	/** A voice is louder in front of the talker than behind; Q = 2 widens the critical distance by √2. */
 	private static final double VOICE_DIRECTIVITY = 2;
 	/** Air absorbs sound too, m in Sabine's 4mV: per metre, around 1 kHz at 50 % humidity. It matters only in big spaces. */
@@ -134,14 +136,14 @@ public record Room(float reverb, float criticalDistance, float decay, float echo
 		double enclosed = (double) walls / wallRays;
 		double distance = wallDistance / walls;
 		// An echo stands apart from the voice only once its round trip takes about 50 ms. It is quieter the further
-		// it travels (1/r) and the more the walls absorb, and fades in over a few metres so it doesn't switch on.
+		// it travels (1/r) and the more the walls absorb, and fades in over several metres so only big spaces echo.
 		// Only surfaces that face the listener send it back, so the ground stretching away doesn't.
 		double echo = 0;
 		if (facing > 0) {
 			distance = facingDistance / facing;
 			double reflected = Math.sqrt(1 - facingAbsorption / facing);
 			echo = ECHO_LEVEL * facing / wallRays * reflected * Math.min(1, ECHO_MIN_DISTANCE / distance)
-					* Math.clamp((distance - ECHO_MIN_DISTANCE) / 4, 0, 1);
+					* Math.clamp((distance - ECHO_MIN_DISTANCE) / ECHO_FADE, 0, 1);
 		}
 		return new Room((float) Math.pow(enclosed, 1.5), (float) critical, (float) decay, (float) echo,
 				(float) Math.min(MAX_ECHO_DELAY, 2 * distance / SPEED_OF_SOUND));

@@ -29,7 +29,8 @@ class RoomTest {
 	void aHallRingsLongerWithAnEcho() {
 		Room room = box(19, 11, 19);
 		assertBetween(2, 3, room.decay());
-		assertTrue(room.echo() > 0.1, "echo " + room.echo());
+		// Faint: its walls are barely far enough to echo apart.
+		assertBetween(0.02, 0.08, room.echo());
 	}
 
 	/** The test world's cavern, 48 × 24 × 48 inside. */
