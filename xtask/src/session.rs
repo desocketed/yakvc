@@ -38,8 +38,10 @@ const ROOMS: &[(&str, &str)] = &[
     ),
 ];
 
-/// Grass on dirt on bedrock, the ground's top at y -61, as the rooms expect.
-const FLAT_LAYERS: &str = r#"{"layers":[{"block":"minecraft:bedrock","height":1},{"block":"minecraft:dirt","height":2},{"block":"minecraft:grass_block","height":1}],"biome":"minecraft:plains"}"#;
+/// Grass on dirt on bedrock, the ground's top at y -61, as the rooms expect; the
+/// void biome, so nothing ever spawns (an older world keeps plains, and the
+/// build function clears its animals).
+const FLAT_LAYERS: &str = r#"{"layers":[{"block":"minecraft:bedrock","height":1},{"block":"minecraft:dirt","height":2},{"block":"minecraft:grass_block","height":1}],"biome":"minecraft:the_void"}"#;
 
 /// Libraries Minecraft loads at runtime, from the flake's nixpkgs.
 const LIBRARIES: &[&str] = &[
