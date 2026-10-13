@@ -21,7 +21,8 @@ import org.jspecify.annotations.Nullable;
 /**
  * Advanced sound tuning, for adjusting by ear how voices carry through the world: distance, walls, rooms and echo.
  * Every change applies at once, so you can listen while dragging, and is saved to {@code acoustics} in
- * {@code settings.json} when the screen closes. Reached from the settings' Troubleshooting section.
+ * {@code settings.json} when the screen closes. Reached from the settings' Developer section; the settings' own Reverb
+ * and Echo sliders edit two of the same values.
  */
 public final class SoundTuningScreen extends OptionsSubScreen {
 	private static final int RIGHT_BUTTON = 1;
