@@ -49,7 +49,8 @@ pub(crate) struct VoiceState {
     pub game_volume: f32,
     pub peer_audio: HashMap<Uuid, PeerAudio>,
     pub voice_range: f32,
-    pub friends_only: Option<Vec<Uuid>>,
+    pub friends: Vec<Uuid>,
+    pub friends_only: bool,
     pub invites_from: InvitesFrom,
     pub audio: AudioConfig,
     pub acoustics: AcousticsConfig,
@@ -113,11 +114,7 @@ pub(crate) struct SendPlan {
 }
 
 impl VoiceState {
-    pub(crate) fn new(
-        audio: AudioConfig,
-        voice_range: f32,
-        friends_only: Option<Vec<Uuid>>,
-    ) -> Self {
+    pub(crate) fn new(audio: AudioConfig, voice_range: f32) -> Self {
         let now = Instant::now();
         VoiceState {
             own_uuid: None,
@@ -129,7 +126,8 @@ impl VoiceState {
             game_volume: 1.0,
             peer_audio: HashMap::new(),
             voice_range,
-            friends_only,
+            friends: Vec::new(),
+            friends_only: false,
             invites_from: InvitesFrom::Everyone,
             audio,
             acoustics: AcousticsConfig::default(),
@@ -310,10 +308,10 @@ impl VoiceState {
         self.peer_audio.get(&peer).is_some_and(|audio| audio.muted)
     }
 
+    /// Whether voice may pass between us and `peer`: everyone, unless only
+    /// friends may.
     pub(crate) fn is_friend(&self, peer: Uuid) -> bool {
-        self.friends_only
-            .as_ref()
-            .is_none_or(|friends| friends.contains(&peer))
+        !self.friends_only || self.friends.contains(&peer)
     }
 }
 
@@ -477,7 +475,7 @@ mod tests {
     }
 
     fn state() -> VoiceState {
-        let mut state = VoiceState::new(AudioConfig::default(), 48.0, None);
+        let mut state = VoiceState::new(AudioConfig::default(), 48.0);
         state.world.listener = listener(0.0);
         state
     }
@@ -634,7 +632,8 @@ mod tests {
             Player::new(uuid(1), at(1.0, 0.0)),
             Player::new(uuid(2), at(1.0, 0.0)),
         ];
-        state.friends_only = Some(vec![uuid(1)]);
+        state.friends = vec![uuid(1)];
+        state.friends_only = true;
         assert!(nearby(&state, 1).is_some());
         assert_eq!(nearby(&state, 2), None);
         assert!(state.send_to(uuid(1), false).map(|c| c.distance).is_some());

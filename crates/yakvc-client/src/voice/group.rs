@@ -291,15 +291,11 @@ impl VoiceState {
         true
     }
 
-    /// Whether `peer` may invite us, by the `invites` setting. Friends are
-    /// the `friends_only` list, so with no list nobody is a friend.
+    /// Whether `peer` may invite us, by the `invites` setting.
     fn may_invite_us(&self, peer: Uuid) -> bool {
         match self.invites_from {
             InvitesFrom::Everyone => self.is_friend(peer),
-            InvitesFrom::Friends => self
-                .friends_only
-                .as_ref()
-                .is_some_and(|friends| friends.contains(&peer)),
+            InvitesFrom::Friends => self.friends.contains(&peer),
             InvitesFrom::Nobody => false,
         }
     }
@@ -481,7 +477,7 @@ mod tests {
 
     /// Client `n`, outside any group.
     fn client(n: u8) -> VoiceState {
-        let mut state = VoiceState::new(AudioConfig::default(), 48.0, None);
+        let mut state = VoiceState::new(AudioConfig::default(), 48.0);
         state.own_uuid = Some(uuid(n));
         state
     }
@@ -709,7 +705,7 @@ mod tests {
         }
         let mut carol = client(3);
         carol.invites_from = InvitesFrom::Friends;
-        carol.friends_only = Some(vec![uuid(1)]);
+        carol.friends = vec![uuid(1)];
         carol.receive_invite(
             uuid(1),
             own.key.clone(),

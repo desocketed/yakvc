@@ -13,6 +13,7 @@ import static java.util.stream.Collectors.joining;
 
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -30,20 +31,20 @@ import org.jspecify.annotations.Nullable;
  * @param invites                 who may invite us to a group: {@code "everyone"}, {@code "friends"} or {@code "nobody"}
  * @param setupDone               the voice menu's first-run card was dismissed
  * @param checkForUpdates         ask GitHub for a newer Yak VC at startup
+ * @param friendsOnly             only the players marked as friends in the voice menu are heard and sent to
  * @param devMode                 accept dev tickets and test audio, for development against a local server
- * @param friendsOnly             when set, only these players (UUIDs) are heard and sent to
  * @param rendezvous              another voice server than the built-in one
  * @param trustedIssuers          issuers whose tickets are accepted; a {@code rendezvous} needs its issuer listed
  * @param server                  a server code from {@code yakvc-server code}, the Voice Server setting; beats
  *                                {@code rendezvous}, and null means the preset or the built-in server
  */
 public record Settings(double voiceRange, SpatialAudio spatialAudio, boolean relayOnly, boolean respectChatRestrictions,
-		boolean muteBlockedPlayers, boolean verifiedOnly, String invites, boolean setupDone, boolean checkForUpdates,
-		Audio audio, Acoustics acoustics, boolean devMode, Dev dev, @Nullable List<String> friendsOnly,
+		boolean muteBlockedPlayers, boolean verifiedOnly, String invites, boolean friendsOnly, boolean setupDone,
+		boolean checkForUpdates, Audio audio, Acoustics acoustics, boolean devMode, Dev dev,
 		@Nullable Rendezvous rendezvous, List<String> trustedIssuers, @Nullable String server) {
 	public static final String FILE_NAME = "settings.json";
 	public static final Settings DEFAULT = new Settings(256, SpatialAudio.SIMPLE, false, true, true, false, "everyone",
-			false, true, Audio.DEFAULT, Acoustics.DEFAULT, false, Dev.DEFAULT, null, null, List.of(), null);
+			false, false, true, Audio.DEFAULT, Acoustics.DEFAULT, false, Dev.DEFAULT, null, List.of(), null);
 	/** Nulls are written too, so the file shows every key, and the JSON keys are the engine's snake case. */
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().serializeNulls()
 			.setFieldNamingPolicy(FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES).create();
@@ -141,17 +142,20 @@ public record Settings(double voiceRange, SpatialAudio spatialAudio, boolean rel
 	 * The settings as the engine takes them ({@code yakvc_create}, {@code yakvc_update_config}): TOML text of the keys
 	 * it reads, with the voice range capped by the render distance ({@code renderChunks}; 0 before the first tick, so
 	 * uncapped). The engine would ignore the mod's own keys, but leaving them out keeps the text to what it checks.
+	 * {@code friends} are the players marked in the voice menu ({@link PlayerVolumes#friends}), which live in
+	 * players.json rather than here.
 	 */
-	public String engineToml(int renderChunks) {
+	public String engineToml(int renderChunks, List<UUID> friends) {
 		StringBuilder toml = new StringBuilder();
 		key(toml, "voice_range", renderChunks == 0 ? voiceRange : effectiveVoiceRange(voiceRange, renderChunks));
 		key(toml, "relay_only", relayOnly);
 		key(toml, "verified_only", verifiedOnly);
 		key(toml, "invites", invites);
+		key(toml, "friends_only", friendsOnly);
+		key(toml, "friends", friends.stream().map(UUID::toString).toList());
 		key(toml, "dev_mode", devMode);
 		key(toml, "trusted_issuers", trustedIssuers);
 		if (server != null) key(toml, "server", server);
-		if (friendsOnly != null) key(toml, "friends_only", friendsOnly);
 
 		toml.append("\n[audio]\n");
 		if (audio.inputDevice() != null) key(toml, "input_device", audio.inputDevice());
@@ -249,6 +253,10 @@ public record Settings(double voiceRange, SpatialAudio spatialAudio, boolean rel
 
 	public Settings withInvites(String from) {
 		return with("", "invites", from);
+	}
+
+	public Settings withFriendsOnly(boolean on) {
+		return with("", "friends_only", on);
 	}
 
 	public Settings withSetupDone(boolean done) {
