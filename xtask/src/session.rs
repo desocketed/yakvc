@@ -18,6 +18,7 @@ use crate::{dev, root, run};
 
 const RENDEZVOUS_PORT: u16 = 7843;
 const SERVER_PORT: u16 = 25565;
+const FLY_SPEED: f64 = 0.1;
 
 /// A data pack that builds walls and rooms to listen through, in the flat
 /// dev world (`xtask/rooms`).
@@ -295,10 +296,12 @@ fn set_talking(settings: &Path, talk: Talk) -> Result<()> {
         .as_object_mut()
         .context("settings.json must hold an object")?;
     top.insert("audio".to_owned(), audio);
-    top.remove("dev");
+    // The dev world is big, so creative flight goes twice as fast (vanilla is 0.05).
+    let mut dev = json!({"fly_speed": FLY_SPEED});
     if let Talk::File(file) = talk {
-        top.insert("dev".to_owned(), json!({"wav": file}));
+        dev["wav"] = json!(file);
     }
+    top.insert("dev".to_owned(), dev);
     fs::write(settings, dev::settings_json(&json))?;
     Ok(())
 }
@@ -332,14 +335,14 @@ mod tests {
         );
         assert_eq!(
             after,
-            json!({"dev_mode": true, "audio": {"activation": "voice", "input_device": "yakvc:test-beeps", "bitrate": 24000}})
+            json!({"dev_mode": true, "audio": {"activation": "voice", "input_device": "yakvc:test-beeps", "bitrate": 24000}, "dev": {"fly_speed": 0.1}})
         );
         // Talking again changes nothing.
         assert_eq!(talking(after.clone(), Talk::Beeps), after);
         // Not talking puts the default microphone back, and keeps the activation.
         assert_eq!(
             talking(after, Talk::No),
-            json!({"dev_mode": true, "audio": {"activation": "voice", "bitrate": 24000}})
+            json!({"dev_mode": true, "audio": {"activation": "voice", "bitrate": 24000}, "dev": {"fly_speed": 0.1}})
         );
     }
 
@@ -348,17 +351,17 @@ mod tests {
         let after = talking(json!({"dev_mode": true}), Talk::File(Path::new("/b.wav")));
         assert_eq!(
             after,
-            json!({"dev_mode": true, "audio": {"activation": "voice"}, "dev": {"wav": "/b.wav"}})
+            json!({"dev_mode": true, "audio": {"activation": "voice"}, "dev": {"fly_speed": 0.1, "wav": "/b.wav"}})
         );
         assert_eq!(
             talking(after, Talk::No),
-            json!({"dev_mode": true, "audio": {"activation": "voice"}})
+            json!({"dev_mode": true, "audio": {"activation": "voice"}, "dev": {"fly_speed": 0.1}})
         );
     }
 
     #[test]
     fn a_player_s_own_microphone_is_kept_when_not_talking() {
         let before = json!({"audio": {"input_device": "hw:1"}});
-        assert_eq!(talking(before.clone(), Talk::No), before);
+        assert_eq!(talking(before.clone(), Talk::No), json!({"audio": {"input_device": "hw:1"}, "dev": {"fly_speed": 0.1}}));
     }
 }
