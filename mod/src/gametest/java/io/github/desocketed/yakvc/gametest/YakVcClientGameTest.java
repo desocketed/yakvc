@@ -13,6 +13,7 @@ import io.github.desocketed.yakvc.YakVcClient;
 import io.github.desocketed.yakvc.config.ClientConfig;
 import io.github.desocketed.yakvc.config.PlayerVolumes;
 import io.github.desocketed.yakvc.config.SoundTuning;
+import io.github.desocketed.yakvc.config.SpatialAudio;
 import io.github.desocketed.yakvc.natives.EngineEvent;
 import io.github.desocketed.yakvc.natives.NativeBridge;
 import io.github.desocketed.yakvc.natives.VoiceGroup;
@@ -190,6 +191,7 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 			checkFarEchoes(context, singleplayer);
 			checkSoundPath(context, singleplayer);
 			checkSoundTuning(context, feeder);
+			checkSpatialAudio(context, singleplayer, feeder);
 
 			if (context.computeOnClient(mc -> feeder.errorEvents() != 0 || feeder.closed())) {
 				throw new AssertionError("engine reported errors; see the log");
@@ -315,6 +317,30 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		// Back to the defaults, so later runs start the same.
 		context.runOnClient(mc -> VoiceSettingsScreen.applyAndSave(feeder,
 				feeder.config().with("acoustics", "furnishing", null)));
+	}
+
+	/**
+	 * In a stone box around the player, Simple (the default) still sends the engine open air, so no reverb; Full sends
+	 * the box's reverb.
+	 */
+	private static void checkSpatialAudio(ClientGameTestContext context, TestSingleplayerContext singleplayer,
+			GameStateFeeder feeder) {
+		if (context.computeOnClient(mc -> feeder.config().spatialAudio()) != SpatialAudio.SIMPLE) {
+			throw new AssertionError("Spatial Audio isn't Simple by default");
+		}
+		singleplayer.getServer().runCommand("fill -2 -61 -2 2 -56 2 stone hollow");
+		context.waitTicks(5);
+		if (!context.computeOnClient(mc -> feeder.room()).equals(Room.OPEN_AIR)) {
+			throw new AssertionError("Simple sent a room: " + context.computeOnClient(mc -> feeder.room()));
+		}
+		context.runOnClient(mc -> VoiceSettingsScreen.applyAndSave(feeder,
+				feeder.config().with("", "spatial_audio", ClientConfig.quote("full"))));
+		context.waitFor(mc -> feeder.room().reverb() > 0.5f);
+		// Back to the default, so later runs start the same.
+		context.runOnClient(mc -> VoiceSettingsScreen.applyAndSave(feeder,
+				feeder.config().with("", "spatial_audio", ClientConfig.quote("simple"))));
+		singleplayer.getServer().runCommand("fill -2 -61 -2 2 -56 2 air");
+		singleplayer.getServer().runCommand("fill -2 -61 -2 2 -61 2 grass_block");
 	}
 
 	/** Two engine errors in a row both show, one after the other, rather than the second replacing the first. */

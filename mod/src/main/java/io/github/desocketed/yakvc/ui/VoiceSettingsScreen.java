@@ -4,6 +4,7 @@ import com.mojang.serialization.Codec;
 import io.github.desocketed.yakvc.GameStateFeeder;
 import io.github.desocketed.yakvc.YakVcClient;
 import io.github.desocketed.yakvc.config.ClientConfig;
+import io.github.desocketed.yakvc.config.SpatialAudio;
 import io.github.desocketed.yakvc.natives.EngineEvent;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -57,6 +58,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	/** The microphone's gain, in percent. */
 	private final OptionInstance<Integer> inputGainPercent;
 	private final OptionInstance<Boolean> noiseSuppression;
+	private final OptionInstance<SpatialAudio> spatialAudio;
 	private final Dropdown inputDevice;
 	private final Dropdown outputDevice;
 	/** The device names, once listed: the listing runs on a worker thread while the screen shows "Loading…". */
@@ -107,6 +109,11 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		noiseSuppression = OptionInstance.createBoolean("yakvc.settings.noise_suppression",
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.noise_suppression.tooltip")),
 				initial.noiseSuppression(), value -> throttle.changed());
+		spatialAudio = new OptionInstance<>("yakvc.settings.spatial_audio",
+				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.spatial_audio.tooltip")),
+				(caption, value) -> Component.translatable("yakvc.settings.spatial_audio." + value.key()),
+				new OptionInstance.Enum<>(List.of(SpatialAudio.values()), Codec.STRING.xmap(SpatialAudio::of, SpatialAudio::key)),
+				initial.spatialAudio(), value -> throttle.changed());
 		inputGainPercent = new OptionInstance<>("yakvc.settings.input_gain",
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.input_gain.tooltip")),
 				(caption, value) -> Options.genericValueLabel(caption, Component.translatable("yakvc.tuning.percent", value)),
@@ -259,6 +266,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		list.addBig(inputGainPercent);
 		list.addBig(new MicLevelMeter(feeder::micLevelDb, initial.vadThresholdDb()));
 		list.addBig(outputDevice);
+		list.addSmall(spatialAudio);
 		list.addHeader(Component.translatable("yakvc.settings.privacy"));
 		list.addBig(new MultiLineTextWidget(Component.translatable("yakvc.settings.ip_note"), font)
 				.setMaxWidth(310).setCentered(true));
@@ -374,6 +382,9 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		}
 		if (checkForUpdates.get() != current.checkForUpdates()) {
 			changed = changed.with("", "check_for_updates", String.valueOf(checkForUpdates.get()));
+		}
+		if (spatialAudio.get() != current.spatialAudio()) {
+			changed = changed.with("", "spatial_audio", ClientConfig.quote(spatialAudio.get().key()));
 		}
 		changed = withActivationAndInvites(changed, activation, invites);
 		// In kbps: a hand-edited bitrate that isn't a whole kbps would otherwise be rewritten on every close.
