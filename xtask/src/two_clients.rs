@@ -109,11 +109,14 @@ pub(crate) fn two_clients(accept_eula: bool, pipewire: bool) -> Result<()> {
     for name in PLAYERS {
         let dir = work.join(name);
         fs::create_dir_all(dir.join("config/yakvc"))?;
-        let mut config = rendezvous.client.clone();
+        let mut settings = rendezvous.client.clone();
         if !pipewire {
-            config.push_str("\n[dev]\ntone_hz = 440.0\nnull_output = true\n");
+            settings["dev"] = serde_json::json!({"tone_hz": 440, "null_output": true});
         }
-        fs::write(dir.join("config/yakvc/client.toml"), config)?;
+        fs::write(
+            dir.join("config/yakvc/settings.json"),
+            dev::settings_json(&settings),
+        )?;
         fs::write(
             dir.join("options.txt"),
             "onboardAccessibility:false\nskipMultiplayerWarning:true\njoinedFirstServer:true\nrenderDistance:2\nmaxFps:30\n",
