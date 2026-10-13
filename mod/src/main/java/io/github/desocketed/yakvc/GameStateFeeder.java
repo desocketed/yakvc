@@ -116,6 +116,8 @@ public final class GameStateFeeder {
 	private Room room = Room.OPEN_AIR;
 	private final FarEchoes farEchoes = new FarEchoes();
 	private List<FarEchoes.Echo> echoes = List.of();
+	/** Only with dev_mode: a file of commands to send, for tools steering a dev session. */
+	private final DevCommands devCommands = new DevCommands(FabricLoader.getInstance().getGameDir());
 	/** The mod's half of the {@code acoustics} tuning, read again whenever the settings change. */
 	private SoundTuning tuning;
 	/** How much of the acoustics to work out each tick, read again whenever the settings change. */
@@ -218,6 +220,7 @@ public final class GameStateFeeder {
 	private void feedGame(Minecraft minecraft) {
 		keys.tick();
 		flyFaster(minecraft);
+		if (settings.devMode()) devCommands.tick(minecraft);
 		if (keys.debugOverlayPressed()) setDebugOverlay(!debugOverlay);
 		if (keys.menuPressed() && minecraft.gui.screen() == null) {
 			minecraft.gui.setScreen(new VoiceMenuScreen(null, this));
