@@ -1,7 +1,7 @@
 package io.github.desocketed.yakvc.gametest;
 
 import io.github.desocketed.yakvc.YakVcClient;
-import io.github.desocketed.yakvc.config.ClientConfig;
+import io.github.desocketed.yakvc.config.Settings;
 import io.github.desocketed.yakvc.natives.EngineEvent;
 import io.github.desocketed.yakvc.natives.NativeBridge;
 import io.github.desocketed.yakvc.natives.NativeLoader;
@@ -29,8 +29,7 @@ final class RemoteVoice implements AutoCloseable {
 		Files.createDirectories(dir);
 		// The same library the mod loaded, and the same dev rendezvous and test audio; only the key differs.
 		bridge = new NativeBridge(NativeLoader.load(YakVcClient.configDir()));
-		String config = Files.readString(YakVcClient.configDir().resolve(ClientConfig.FILE_NAME));
-		engine = bridge.create(dir.toString(), config);
+		engine = bridge.create(dir.toString(), Settings.load(YakVcClient.configDir()).engineToml(0));
 		bridge.setIdentity(engine, uuid, name);
 		bridge.setTabList(engine, List.of(uuid, localPlayer));
 		poller = new Thread(this::poll, "yakvc-remote-voice");

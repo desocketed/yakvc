@@ -5,8 +5,8 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.mojang.authlib.GameProfile;
-import io.github.desocketed.yakvc.config.ClientConfig;
 import io.github.desocketed.yakvc.config.PlayerVolumes;
+import io.github.desocketed.yakvc.config.Settings;
 import io.github.desocketed.yakvc.config.SoundTuning;
 import io.github.desocketed.yakvc.config.SpatialAudio;
 import io.github.desocketed.yakvc.input.VoiceKeys;
@@ -87,7 +87,7 @@ public final class GameStateFeeder {
 	private final SessionJoiner joiner;
 	private final PlayerVolumes volumes;
 	private final byte[] eventBuffer = new byte[EVENT_BUFFER_BYTES];
-	private ClientConfig config;
+	private Settings settings;
 	/** The render distance the engine's voice range was last capped to, 0 before the first tick. */
 	private int rangeRenderChunks;
 
@@ -115,9 +115,9 @@ public final class GameStateFeeder {
 	/** The listener's surroundings, smoothed from tick to tick. */
 	private Room room = Room.OPEN_AIR;
 	private final FarEchoes farEchoes = new FarEchoes();
-	/** The mod's half of the {@code [acoustics]} tuning, read again whenever the config changes. */
+	/** The mod's half of the {@code acoustics} tuning, read again whenever the settings change. */
 	private SoundTuning tuning;
-	/** How much of the acoustics to work out each tick, read again whenever the config changes. */
+	/** How much of the acoustics to work out each tick, read again whenever the settings change. */
 	private SpatialAudio spatialAudio;
 	/** Each occluded player's way around, if any: see {@link #heard}. */
 	private final Map<UUID, Optional<SoundPath>> detours = new HashMap<>();
@@ -162,21 +162,21 @@ public final class GameStateFeeder {
 	/** Invites and group changes, told in chat and toasts. */
 	private final GroupChat groupChat = new GroupChat(this);
 
-	public GameStateFeeder(NativeBridge bridge, MemorySegment engine, ClientConfig config, VoiceKeys keys,
+	public GameStateFeeder(NativeBridge bridge, MemorySegment engine, Settings settings, VoiceKeys keys,
 			SessionJoiner joiner, PlayerVolumes volumes) {
 		this.bridge = bridge;
 		this.engine = engine;
-		this.config = config;
-		this.startedRelayOnly = config.relayOnly();
-		this.tuning = SoundTuning.of(config);
-		this.spatialAudio = config.spatialAudio();
+		this.settings = settings;
+		this.startedRelayOnly = settings.relayOnly();
+		this.tuning = SoundTuning.of(settings.acoustics());
+		this.spatialAudio = settings.spatialAudio();
 		this.keys = keys;
 		this.joiner = joiner;
 		this.volumes = volumes;
 	}
 
 	public void join(ClientPacketListener connection, Minecraft minecraft) {
-		session = new VoiceSession(connection, minecraft, config);
+		session = new VoiceSession(connection, minecraft, settings);
 	}
 
 	public void leave() {
@@ -239,16 +239,8 @@ public final class GameStateFeeder {
 
 	private void feedRenderDistance(int renderChunks) {
 		if (renderChunks == rangeRenderChunks) return;
-		bridge.updateConfig(engine, engineToml(config, renderChunks));
+		bridge.updateConfig(engine, settings.engineToml(renderChunks));
 		rangeRenderChunks = renderChunks;
-	}
-
-	/** The config as the engine gets it: the saved one, with the voice range capped by the render distance. */
-	private static String engineToml(ClientConfig config, int renderChunks) {
-		if (renderChunks == 0) return config.toml();
-		double range = ClientConfig.effectiveVoiceRange(config.voiceRange(), renderChunks);
-		if (range == config.voiceRange()) return config.toml();
-		return config.with("", "voice_range", String.valueOf(range)).toml();
 	}
 
 	/**
@@ -277,25 +269,25 @@ public final class GameStateFeeder {
 	}
 
 	/**
-	 * Applies a changed config to the running engine, which checks it. Returns the engine's complaint, or null if it
-	 * took the config; only then may it be saved.
+	 * Applies changed settings to the running engine, which checks them. Returns the engine's complaint, or null if it
+	 * took them; only then may they be saved.
 	 */
-	public @Nullable String applyConfig(ClientConfig newConfig) {
+	public @Nullable String applySettings(Settings changed) {
 		if (closed) return "the voice engine is stopped";
 		try {
-			bridge.updateConfig(engine, engineToml(newConfig, rangeRenderChunks));
+			bridge.updateConfig(engine, changed.engineToml(rangeRenderChunks));
 		} catch (YakVcException e) {
 			fail(e);
 			return e.getMessage();
 		}
-		config = newConfig;
-		tuning = SoundTuning.of(newConfig);
-		spatialAudio = newConfig.spatialAudio();
+		settings = changed;
+		tuning = SoundTuning.of(changed.acoustics());
+		spatialAudio = changed.spatialAudio();
 		ticksUntilBlockedRefresh = 0;
 		return null;
 	}
 
-	/** The audio devices as id to name in the system's order. The id goes in the config, the name is for the player. */
+	/** The audio devices as id to name in the system's order. The id goes in the settings, the name is for the player. */
 	public record Devices(Map<String, String> inputs, Map<String, String> outputs) {
 		public static final Devices NONE = new Devices(Map.of(), Map.of());
 
@@ -424,7 +416,7 @@ public final class GameStateFeeder {
 		if (--ticksUntilBlockedRefresh > 0) return;
 		ticksUntilBlockedRefresh = BLOCKED_REFRESH_TICKS;
 		Set<UUID> now = new HashSet<>();
-		if (config.muteBlockedPlayers()) {
+		if (settings.muteBlockedPlayers()) {
 			for (UUID uuid : players) {
 				if (minecraft.getPlayerSocialManager().isBlocked(uuid)) now.add(uuid);
 			}
@@ -706,8 +698,8 @@ public final class GameStateFeeder {
 		return startedRelayOnly;
 	}
 
-	public ClientConfig config() {
-		return config;
+	public Settings settings() {
+		return settings;
 	}
 
 	public VoiceKeys keys() {

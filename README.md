@@ -11,7 +11,7 @@ Yak VC is in alpha: playtest builds are published as GitHub prereleases, and the
 - **Using it:** hold `V` to talk. Settings are under **Voice Chat…** in Options → Music & Sounds, in the voice menu, or in Mod Menu if you have it.
 - **Privacy:** other Yak VC players on the same server learn your IP address, because voice is peer to peer. The **Relay Only** setting hides it by sending everything through the Yak VC relay. Voice is encrypted from player to player.
 
-The [user guide](docs/USER_GUIDE.md) covers all of this with screenshots, plus the settings, troubleshooting and the config file.
+The [user guide](docs/USER_GUIDE.md) covers all of this with screenshots, plus the settings, troubleshooting and the settings file.
 
 ## For server owners
 
@@ -31,7 +31,7 @@ The mod's voice engine is written in Rust and loaded by the Fabric mod through J
 ```sh
 cargo test --workspace          # Rust crates
 cargo xtask header              # regenerate crates/yakvc-ffi/include/yakvc.h after changing the C ABI
-cargo xtask dev                 # a local dev-mode yakvc-server; prints its client.toml (--write-client-config puts it in mod/run/)
+cargo xtask dev                 # a local dev-mode yakvc-server; prints its settings.json (--write-client-config puts it in mod/run/)
 cd mod && ./gradlew runClient   # builds the native library for this machine and starts the game
 cargo xtask dist                # the mod jar in dist/, with this machine's native library only
 ```

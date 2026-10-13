@@ -1,5 +1,7 @@
 package io.github.desocketed.yakvc.gametest;
 
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.mojang.authlib.GameProfile;
 import com.terraformersmc.modmenu.gui.ModsScreen;
 import com.terraformersmc.modmenu.gui.widget.ModListWidget;
@@ -10,8 +12,8 @@ import io.github.desocketed.yakvc.FarEchoes;
 import io.github.desocketed.yakvc.Room;
 import io.github.desocketed.yakvc.SoundPath;
 import io.github.desocketed.yakvc.YakVcClient;
-import io.github.desocketed.yakvc.config.ClientConfig;
 import io.github.desocketed.yakvc.config.PlayerVolumes;
+import io.github.desocketed.yakvc.config.Settings;
 import io.github.desocketed.yakvc.config.SoundTuning;
 import io.github.desocketed.yakvc.config.SpatialAudio;
 import io.github.desocketed.yakvc.natives.EngineEvent;
@@ -306,17 +308,17 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		context.waitTicks(2);
 		context.takeScreenshot(TestScreenshotOptions.of("sound-tuning").disableCounterPrefix());
 		context.runOnClient(mc -> ((SoundTuningScreen) mc.gui.screen()).option("furnishing").set(90));
-		if (context.computeOnClient(mc -> feeder.config().acoustics("furnishing", -1)) != 0.9) {
+		if (context.computeOnClient(mc -> feeder.settings().acoustics().furnishing()) != 0.9) {
 			throw new AssertionError("the tuning didn't reach the engine");
 		}
 		context.runOnClient(mc -> mc.gui.setScreen(null));
 		context.waitTicks(2);
-		if (!context.computeOnClient(mc -> feeder.config().toml()).contains("furnishing = 0.9")) {
+		if (settingsFile().getAsJsonObject("acoustics").get("furnishing").getAsDouble() != 0.9) {
 			throw new AssertionError("the tuning wasn't saved");
 		}
 		// Back to the defaults, so later runs start the same.
 		context.runOnClient(mc -> VoiceSettingsScreen.applyAndSave(feeder,
-				feeder.config().with("acoustics", "furnishing", null)));
+				feeder.settings().withAcoustic("furnishing", Settings.Acoustics.DEFAULT.furnishing())));
 	}
 
 	/**
@@ -325,7 +327,7 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 	 */
 	private static void checkSpatialAudio(ClientGameTestContext context, TestSingleplayerContext singleplayer,
 			GameStateFeeder feeder) {
-		if (context.computeOnClient(mc -> feeder.config().spatialAudio()) != SpatialAudio.SIMPLE) {
+		if (context.computeOnClient(mc -> feeder.settings().spatialAudio()) != SpatialAudio.SIMPLE) {
 			throw new AssertionError("Spatial Audio isn't Simple by default");
 		}
 		singleplayer.getServer().runCommand("fill -2 -61 -2 2 -56 2 stone hollow");
@@ -334,11 +336,11 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 			throw new AssertionError("Simple sent a room: " + context.computeOnClient(mc -> feeder.room()));
 		}
 		context.runOnClient(mc -> VoiceSettingsScreen.applyAndSave(feeder,
-				feeder.config().with("", "spatial_audio", ClientConfig.quote("full"))));
+				feeder.settings().withSpatialAudio(SpatialAudio.FULL)));
 		context.waitFor(mc -> feeder.room().reverb() > 0.5f);
 		// Back to the default, so later runs start the same.
 		context.runOnClient(mc -> VoiceSettingsScreen.applyAndSave(feeder,
-				feeder.config().with("", "spatial_audio", ClientConfig.quote("simple"))));
+				feeder.settings().withSpatialAudio(SpatialAudio.SIMPLE)));
 		singleplayer.getServer().runCommand("fill -2 -61 -2 2 -56 2 air");
 		singleplayer.getServer().runCommand("fill -2 -61 -2 2 -61 2 grass_block");
 	}
@@ -423,17 +425,16 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 	/**
 	 * Opens the voice menu, mutes the remote player there, and goes to the settings screen and back. The mute is saved
 	 * by UUID; a setting applies as soon as it changes, and closing the settings writes nothing more to
-	 * {@code client.toml}.
+	 * {@code settings.json}.
 	 */
 	private static void checkVoiceMenu(ClientGameTestContext context, GameStateFeeder feeder) {
-		Path configFile = YakVcClient.configDir().resolve(ClientConfig.FILE_NAME);
-		// DevRendezvous writes a fresh config each run, so the first-run card shows; OK saves that it was seen.
+		Path settingsFile = YakVcClient.configDir().resolve(Settings.FILE_NAME);
+		// DevRendezvous writes a fresh preset each run, so the first-run card shows; OK saves that it was seen.
 		context.setScreen(() -> new VoiceMenuScreen(null, feeder));
 		screenshotScreen(context, "voice-menu-setup");
 		pressNestedButton(context, "yakvc.setup.ok");
-		context.waitFor(mc -> feeder.config().setupDone());
-		String configBefore = read(configFile);
-		if (!configBefore.contains("setup_done = true")) {
+		context.waitFor(mc -> feeder.settings().setupDone());
+		if (!settingsFile().get("setup_done").getAsBoolean()) {
 			throw new AssertionError("dismissing the setup card did not save setup_done");
 		}
 		screenshotScreen(context, "voice-menu");
@@ -446,13 +447,13 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		context.waitFor(mc -> ((VoiceSettingsScreen) mc.gui.screen()).devicesListed());
 		screenshotScreen(context, "voice-settings");
 		// A change applies while the screen is still open, without waiting for it to close.
-		boolean voiceActivation = context.computeOnClient(mc -> feeder.config().voiceActivation());
+		boolean voiceActivation = context.computeOnClient(mc -> feeder.settings().audio().voiceActivation());
 		pressOptionButton(context, "yakvc.settings.activation");
-		context.waitFor(mc -> feeder.config().voiceActivation() != voiceActivation);
+		context.waitFor(mc -> feeder.settings().audio().voiceActivation() != voiceActivation);
 		pressOptionButton(context, "yakvc.settings.activation");
-		context.waitFor(mc -> feeder.config().voiceActivation() == voiceActivation);
-		// The toggle wrote the activation line, so the file to compare with is the one it left.
-		configBefore = read(configFile);
+		context.waitFor(mc -> feeder.settings().audio().voiceActivation() == voiceActivation);
+		// The toggle saved the file, so the one to compare with is the one it left.
+		String settingsBefore = read(settingsFile);
 		pressOptionButton(context, "yakvc.settings.input_device");
 		screenshotScreen(context, "voice-settings-microphone");
 		pressOptionButton(context, "yakvc.settings.input_device");
@@ -469,8 +470,8 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		if (!read(YakVcClient.configDir().resolve(PlayerVolumes.FILE_NAME)).contains(REMOTE.toString())) {
 			throw new AssertionError("the mute was not saved");
 		}
-		if (!read(configFile).equals(configBefore)) {
-			throw new AssertionError("closing the settings rewrote client.toml");
+		if (!read(settingsFile).equals(settingsBefore)) {
+			throw new AssertionError("closing the settings rewrote settings.json");
 		}
 		// The run directory is reused, so leave no mute behind for the next run.
 		context.runOnClient(mc -> {
@@ -720,6 +721,11 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		} catch (IOException e) {
 			throw new UncheckedIOException(e);
 		}
+	}
+
+	/** The saved settings, as written. */
+	private static JsonObject settingsFile() {
+		return JsonParser.parseString(read(YakVcClient.configDir().resolve(Settings.FILE_NAME))).getAsJsonObject();
 	}
 
 	/**
