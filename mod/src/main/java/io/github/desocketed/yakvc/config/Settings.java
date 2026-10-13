@@ -83,9 +83,10 @@ public record Settings(double voiceRange, SpatialAudio spatialAudio, boolean rel
 	 * @param toneHz     a sine tone instead of the microphone
 	 * @param wav        a WAV file, looping, instead of the microphone
 	 * @param nullOutput discard the output instead of opening speakers
+	 * @param flySpeed   creative flight speed while set, for getting around a big dev world (vanilla is 0.05)
 	 */
-	public record Dev(@Nullable Double toneHz, @Nullable String wav, boolean nullOutput) {
-		public static final Dev DEFAULT = new Dev(null, null, false);
+	public record Dev(@Nullable Double toneHz, @Nullable String wav, boolean nullOutput, @Nullable Double flySpeed) {
+		public static final Dev DEFAULT = new Dev(null, null, false, null);
 	}
 
 	/** A voice server: its endpoint id, direct addresses ({@code host:port}) and, if it has one, its relay URL. */
@@ -182,7 +183,8 @@ public record Settings(double voiceRange, SpatialAudio spatialAudio, boolean rel
 			key(toml, "addrs", rendezvous.addrs());
 			if (rendezvous.relay() != null) key(toml, "relay", rendezvous.relay());
 		}
-		if (!dev.equals(Dev.DEFAULT)) {
+		// fly_speed is the mod's own; the engine never sees it.
+		if (dev.toneHz() != null || dev.wav() != null || dev.nullOutput()) {
 			toml.append("\n[dev]\n");
 			if (dev.toneHz() != null) key(toml, "tone_hz", dev.toneHz());
 			if (dev.wav() != null) key(toml, "wav", dev.wav());

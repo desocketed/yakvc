@@ -6,7 +6,9 @@ set shell := ["nix", "develop", "--quiet", "--command", "bash", "-euc"]
 default:
     @just --list
 
-# Dev session: a local rendezvous, a dev server and one client window per name.
+# Dev session: a local rendezvous, a dev server with the listening grounds
+# (xtask/rooms: walls, houses, a cave, a cavern, a canyon, a hill...) and one
+# client window per name, flying fast.
 session *names:
     cargo xtask session {{names}}
 

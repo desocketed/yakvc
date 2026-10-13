@@ -200,6 +200,14 @@ public final class GameStateFeeder {
 		step(this::refreshStats);
 	}
 
+	/** A dev world is big: with dev.fly_speed set, creative flight goes that fast. Set every tick, as the server resets it. */
+	private void flyFaster(Minecraft minecraft) {
+		Double speed = settings.dev().flySpeed();
+		if (speed != null && minecraft.player != null && minecraft.player.getAbilities().flying) {
+			minecraft.player.getAbilities().setFlyingSpeed(speed.floatValue());
+		}
+	}
+
 	/** Polls the engine's snapshot a few times a second, and only while the overlay shows it. */
 	private void refreshStats() {
 		if (!debugOverlay || --ticksUntilStats > 0) return;
@@ -209,6 +217,7 @@ public final class GameStateFeeder {
 
 	private void feedGame(Minecraft minecraft) {
 		keys.tick();
+		flyFaster(minecraft);
 		if (keys.debugOverlayPressed()) setDebugOverlay(!debugOverlay);
 		if (keys.menuPressed() && minecraft.gui.screen() == null) {
 			minecraft.gui.setScreen(new VoiceMenuScreen(null, this));
