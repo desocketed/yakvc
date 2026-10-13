@@ -1,11 +1,12 @@
 package io.github.desocketed.yakvc.ui;
 
 import io.github.desocketed.yakvc.GameStateFeeder;
-import io.github.desocketed.yakvc.config.ClientConfig;
-import io.github.desocketed.yakvc.config.SoundTuning;
+import io.github.desocketed.yakvc.config.Settings;
+import io.github.desocketed.yakvc.config.Settings.Acoustics;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.DoubleFunction;
+import java.util.function.ToDoubleFunction;
 import net.minecraft.client.OptionInstance;
 import net.minecraft.client.Options;
 import net.minecraft.client.gui.components.AbstractWidget;
@@ -19,56 +20,58 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * Advanced sound tuning, for adjusting by ear how voices carry through the world: distance, walls, rooms and echo.
- * Every change applies at once, so you can listen while dragging, and is saved to {@code [acoustics]} in
- * {@code client.toml} when the screen closes. Reached from the settings' Troubleshooting section.
+ * Every change applies at once, so you can listen while dragging, and is saved to {@code acoustics} in
+ * {@code settings.json} when the screen closes. Reached from the settings' Troubleshooting section.
  */
 public final class SoundTuningScreen extends OptionsSubScreen {
 	private static final int RIGHT_BUTTON = 1;
 
 	private final GameStateFeeder feeder;
-	private final ClientConfig initial;
+	private final Settings initial;
 	private final List<Slider> sliders = new ArrayList<>();
 
-	/** One {@code [acoustics]} value as a slider whose whole steps, times {@code step}, give the value. */
-	private record Slider(String key, double step, double fallback, OptionInstance<Integer> option) {
+	/**
+	 * One {@code acoustics} value as a slider whose whole steps, times {@code step}, give the value. {@code read} is
+	 * the value's accessor, {@code key} its name in the settings.
+	 */
+	private record Slider(String key, ToDoubleFunction<Acoustics> read, double step, OptionInstance<Integer> option) {
 		double value() {
 			return option.get() * step;
 		}
 
 		void reset() {
-			option.set((int) Math.round(fallback / step));
+			option.set((int) Math.round(read.applyAsDouble(Acoustics.DEFAULT) / step));
 		}
 	}
 
 	public SoundTuningScreen(@Nullable Screen lastScreen, Options options, GameStateFeeder feeder) {
 		super(lastScreen, options, Component.translatable("yakvc.tuning.title"));
 		this.feeder = feeder;
-		this.initial = feeder.config();
-		SoundTuning mod = SoundTuning.DEFAULT;
-		// The engine's keys fall back to its own defaults (AcousticsConfig); the mod's to SoundTuning's.
-		slider("full_volume_distance", 0, 32, 1, 4, SoundTuningScreen::blocks);
-		slider("distance_rolloff", 10, 400, 0.01, 3, value -> label("times", "%.2f", value));
-		slider("occlusion_attenuation", 0, 100, 0.01, 0.0, SoundTuningScreen::percent);
-		slider("muffled_cutoff_hz", 2, 80, 50, 600, value -> label("hertz", "%.0f", value));
-		slider("path_bend", 0, 100, 0.01, mod.pathBend(), SoundTuningScreen::percent);
-		slider("path_per_block", 0, 100, 0.001, mod.pathPerBlock(), SoundTuningScreen::percent);
-		slider("reverb_level", 0, 400, 0.01, 0.35, SoundTuningScreen::percent);
-		slider("reverb_damping", 0, 95, 0.01, 0.25, SoundTuningScreen::percent);
-		slider("room_reach", 8, 128, 1, mod.roomReach(), SoundTuningScreen::blocks);
-		slider("furnishing", 0, 100, 0.01, mod.furnishing(), SoundTuningScreen::percent);
-		slider("max_decay", 5, 100, 0.1, mod.maxDecay(), value -> label("seconds", "%.1f", value));
-		slider("echo_feedback", 0, 90, 0.01, 0.12, SoundTuningScreen::percent);
-		slider("echo_reach", 32, 256, 1, mod.echoReach(), SoundTuningScreen::blocks);
-		slider("echo_level", 0, 400, 0.01, 1, SoundTuningScreen::percent);
+		this.initial = feeder.settings();
+		slider("full_volume_distance", Acoustics::fullVolumeDistance, 0, 32, 1, SoundTuningScreen::blocks);
+		slider("distance_rolloff", Acoustics::distanceRolloff, 10, 400, 0.01, value -> label("times", "%.2f", value));
+		slider("occlusion_attenuation", Acoustics::occlusionAttenuation, 0, 100, 0.01, SoundTuningScreen::percent);
+		slider("muffled_cutoff_hz", Acoustics::muffledCutoffHz, 2, 80, 50, value -> label("hertz", "%.0f", value));
+		slider("path_bend", Acoustics::pathBend, 0, 100, 0.01, SoundTuningScreen::percent);
+		slider("path_per_block", Acoustics::pathPerBlock, 0, 100, 0.001, SoundTuningScreen::percent);
+		slider("reverb_level", Acoustics::reverbLevel, 0, 400, 0.01, SoundTuningScreen::percent);
+		slider("reverb_damping", Acoustics::reverbDamping, 0, 95, 0.01, SoundTuningScreen::percent);
+		slider("room_reach", Acoustics::roomReach, 8, 128, 1, SoundTuningScreen::blocks);
+		slider("furnishing", Acoustics::furnishing, 0, 100, 0.01, SoundTuningScreen::percent);
+		slider("max_decay", Acoustics::maxDecay, 5, 100, 0.1, value -> label("seconds", "%.1f", value));
+		slider("echo_feedback", Acoustics::echoFeedback, 0, 90, 0.01, SoundTuningScreen::percent);
+		slider("echo_reach", Acoustics::echoReach, 32, 256, 1, SoundTuningScreen::blocks);
+		slider("echo_level", Acoustics::echoLevel, 0, 400, 0.01, SoundTuningScreen::percent);
 	}
 
-	private void slider(String key, int min, int max, double step, double fallback, DoubleFunction<Component> label) {
-		int steps = (int) Math.clamp(Math.round(initial.acoustics(key, fallback) / step), min, max);
+	private void slider(String key, ToDoubleFunction<Acoustics> read, int min, int max, double step,
+			DoubleFunction<Component> label) {
+		int steps = (int) Math.clamp(Math.round(read.applyAsDouble(initial.acoustics()) / step), min, max);
 		OptionInstance<Integer> option = new OptionInstance<>("yakvc.tuning." + key,
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.tuning." + key + ".tooltip")),
 				(caption, value) -> Options.genericValueLabel(caption, label.apply(value * step)),
 				new OptionInstance.IntRange(min, max), steps, value -> apply());
-		sliders.add(new Slider(key, step, fallback, option));
+		sliders.add(new Slider(key, read, step, option));
 	}
 
 	@Override
@@ -114,33 +117,33 @@ public final class SoundTuningScreen extends OptionsSubScreen {
 		list.setScrollAmount(scroll);
 	}
 
-	/** The slider for an {@code [acoustics]} key. Public for the client gametest. */
+	/** The slider for an {@code acoustics} key. Public for the client gametest. */
 	public OptionInstance<Integer> option(String key) {
 		return sliders.stream().filter(slider -> slider.key().equals(key)).findFirst().orElseThrow().option();
 	}
 
-	/** The config with every slider's value, writing only the keys whose value the player changed. */
-	private ClientConfig tuned() {
-		ClientConfig config = initial;
+	/** The settings with every slider's value, writing only the keys whose value the player changed. */
+	private Settings tuned() {
+		Settings settings = initial;
 		for (Slider slider : sliders) {
-			if (Math.abs(slider.value() - initial.acoustics(slider.key(), slider.fallback())) > slider.step() / 2) {
+			if (Math.abs(slider.value() - slider.read().applyAsDouble(initial.acoustics())) > slider.step() / 2) {
 				// Rounded, so the file reads 0.35 rather than 0.35000000000000003.
 				double value = Math.round(slider.value() * 10_000) / 10_000.0;
-				config = config.with("acoustics", slider.key(), String.valueOf(value));
+				settings = settings.withAcoustic(slider.key(), value);
 			}
 		}
-		return config;
+		return settings;
 	}
 
-	/** Hands the engine the tuned config at once, so a change is heard while dragging. Saved on close. */
+	/** Hands the engine the tuned settings at once, so a change is heard while dragging. Saved on close. */
 	private void apply() {
-		feeder.applyConfig(tuned());
+		feeder.applySettings(tuned());
 	}
 
 	@Override
 	public void removed() {
 		super.removed();
-		ClientConfig tuned = tuned();
+		Settings tuned = tuned();
 		if (!tuned.equals(initial)) VoiceSettingsScreen.applyAndSave(feeder, tuned);
 	}
 
