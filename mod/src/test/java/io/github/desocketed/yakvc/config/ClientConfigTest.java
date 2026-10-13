@@ -71,6 +71,13 @@ class ClientConfigTest {
 	}
 
 	@Test
+	void voiceRangeIsCappedByRenderDistance() {
+		assertEquals(128, ClientConfig.effectiveVoiceRange(256, 8));
+		assertEquals(100, ClientConfig.effectiveVoiceRange(100, 8));
+		assertEquals(512, ClientConfig.effectiveVoiceRange(512, 32));
+	}
+
+	@Test
 	void editsKeepCommentsAndOtherKeys() {
 		ClientConfig config = new ClientConfig(ClientConfig.DEFAULT)
 				.with("", "voice_range", "32.0")
