@@ -115,6 +115,7 @@ public final class GameStateFeeder {
 	/** The listener's surroundings, smoothed from tick to tick. */
 	private Room room = Room.OPEN_AIR;
 	private final FarEchoes farEchoes = new FarEchoes();
+	private List<FarEchoes.Echo> echoes = List.of();
 	/** The mod's half of the {@code acoustics} tuning, read again whenever the settings change. */
 	private SoundTuning tuning;
 	/** How much of the acoustics to work out each tick, read again whenever the settings change. */
@@ -502,7 +503,7 @@ public final class GameStateFeeder {
 		float yaw = camera.isInitialized() ? camera.yRot() : player.getYRot();
 		float pitch = camera.isInitialized() ? camera.xRot() : player.getXRot();
 		// Below Full the rooms and far echoes aren't cast at all: open air and no echoes leave the engine's mix dry.
-		List<FarEchoes.Echo> echoes = List.of();
+		echoes = List.of();
 		if (spatialAudio == SpatialAudio.FULL) {
 			room = room.towards(Room.around(minecraft.level, eye, tuning));
 			echoes = farEchoes.update(minecraft.level, eye, tuning);
@@ -775,6 +776,11 @@ public final class GameStateFeeder {
 	/** The listener's surroundings as last sent. For tests. */
 	public Room room() {
 		return room;
+	}
+
+	/** The far echoes as last sent, for the debug overlay. */
+	public List<FarEchoes.Echo> echoes() {
+		return echoes;
 	}
 
 	public boolean debugOverlay() {
