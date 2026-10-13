@@ -4739,8 +4739,10 @@ dependencies = [
  "anyhow",
  "cbindgen",
  "clap",
+ "md-5",
  "serde_json",
  "sha2",
+ "uuid",
  "zip",
 ]
 
