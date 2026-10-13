@@ -49,7 +49,7 @@ public final class FarEchoes {
 	 * quieter as 1/(2d), the way it travels.
 	 */
 	private static final double REFERENCE_DISTANCE = 8.5;
-	private static final double REFERENCE_LEVEL = 0.5;
+	private static final double REFERENCE_LEVEL = 0.2;
 	/**
 	 * Air absorbs highs over distance: a low-pass at this many Hz·m over the way the echo travels (plus 30 m), about
 	 * 7 kHz off a wall 17 m away and 1 kHz off one 250 m away, close to the published absorption around 4 kHz.
