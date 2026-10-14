@@ -480,8 +480,10 @@ mod tests {
         state
     }
 
+    /// `x, z` from the listener, who stands away from the world's origin so
+    /// that positions are really subtracted.
     fn at(x: f64, z: f64) -> Vec3 {
-        Vec3::new(x, 64.0, z)
+        Vec3::new(x + 120.0, 64.0, z - 75.0)
     }
 
     fn listener(yaw: f32) -> Pose {
@@ -532,27 +534,30 @@ mod tests {
         assert!(pan(0.0, 0.0, 10.0).abs() < 1e-6);
         // Facing -X (west, yaw 90): -Z is to the right.
         assert!((pan(90.0, 0.0, -10.0) - 1.0).abs() < 1e-6);
+        // Facing south-west (yaw 45), a source due west is ahead and right.
+        let right_ahead = pan(45.0, -10.0, 0.0);
+        assert!(right_ahead > 0.0 && right_ahead < 1.0, "{right_ahead}");
+        assert!((pan(45.0, 0.0, 10.0) + right_ahead).abs() < 1e-6);
     }
 
     #[test]
     fn sources_behind_are_quieter() {
-        let front = spatial(
-            &listener(0.0),
-            at(0.0, 10.0),
-            48.0,
-            &AcousticsConfig::default(),
-        )
-        .unwrap()
-        .gain;
-        let behind = spatial(
-            &listener(0.0),
-            at(0.0, -10.0),
-            48.0,
-            &AcousticsConfig::default(),
-        )
-        .unwrap()
-        .gain;
-        assert!((behind - front * 0.7).abs() < 1e-6);
+        let gain = |yaw: f32, x: f64, z: f64| {
+            spatial(&listener(yaw), at(x, z), 48.0, &AcousticsConfig::default())
+                .unwrap()
+                .gain
+        };
+        // Facing south, ten blocks away in every direction.
+        let front = gain(0.0, 0.0, 10.0);
+        let side = gain(0.0, 10.0, 0.0);
+        let diagonal_behind = gain(0.0, 7.071_067_8, -7.071_067_8);
+        let behind = gain(0.0, 0.0, -10.0);
+        assert_eq!(side, front);
+        assert!(front > diagonal_behind && diagonal_behind > behind);
+        // Turning turns what counts as behind.
+        assert!((gain(90.0, 10.0, 0.0) - behind).abs() < 1e-6);
+        assert!((gain(45.0, 7.071_067_8, -7.071_067_8) - behind).abs() < 1e-6);
+        assert!((gain(45.0, -7.071_067_8, 7.071_067_8) - front).abs() < 1e-6);
     }
 
     #[test]
@@ -771,7 +776,7 @@ mod tests {
         state.set_world(world(10.0), start);
         state.set_world(world(20.0), start + tick);
 
-        let x_at = |t: Duration| state.world_at(start + t).players[0].pos.x;
+        let x_at = |t: Duration| state.world_at(start + t).players[0].pos.x - at(0.0, 0.0).x;
         assert_eq!(x_at(tick), 10.0, "one snapshot behind");
         assert_eq!(x_at(tick + tick / 2), 15.0);
         assert_eq!(x_at(tick * 2), 20.0);
@@ -780,10 +785,8 @@ mod tests {
         // After a long gap there is nothing sensible to glide from.
         state.set_world(world(40.0), start + Duration::from_secs(5));
         assert_eq!(
-            state.world_at(start + Duration::from_secs(5)).players[0]
-                .pos
-                .x,
-            40.0
+            state.world_at(start + Duration::from_secs(5)).players[0].pos,
+            at(40.0, 0.0)
         );
     }
 

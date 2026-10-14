@@ -184,13 +184,27 @@ mod tests {
     }
 
     #[test]
+    fn distance_is_straight_line_in_3d() {
+        let a = Vec3::new(10.0, 64.0, -5.0);
+        let b = Vec3::new(13.0, 68.0, -5.0);
+        let c = Vec3::new(10.0, 60.0, -2.0);
+        assert_eq!(distance(a, b), 5.0);
+        assert_eq!(distance(b, a), 5.0);
+        assert_eq!(distance(a, c), 5.0);
+    }
+
+    #[test]
     fn interpolation_moves_everyone_part_way() {
         let from = world(0.0, 0.0, 10.0);
-        let to = world(4.0, 90.0, 20.0);
+        let mut to = world(4.0, 90.0, 20.0);
+        to.players[0].heard_from = Vec3::new(10.0, 70.0, 0.0);
+        to.players[0].occlusion = 1.0;
         let half = interpolate(&from, &to, 0.5);
         assert_eq!(half.listener.pos, Vec3::new(2.0, 64.0, 0.0));
         assert_eq!(half.listener.yaw, 45.0);
         assert_eq!(half.players[0].pos, Vec3::new(15.0, 64.0, 0.0));
+        assert_eq!(half.players[0].heard_from, Vec3::new(10.0, 67.0, 0.0));
+        assert_eq!(half.players[0].occlusion, 0.5);
         assert_eq!(interpolate(&from, &to, 1.0), to);
     }
 

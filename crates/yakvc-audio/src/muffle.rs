@@ -101,6 +101,49 @@ mod tests {
     }
 
     #[test]
+    fn muffle_glides_in_and_out_without_seams() {
+        let tone = |hz: f32, n: usize| -> MonoFrame {
+            std::array::from_fn(|i| {
+                let t = (n * FRAME_SAMPLES + i) as f32 / SAMPLE_RATE as f32;
+                (std::f32::consts::TAU * hz * t).sin()
+            })
+        };
+        let energy = |s: &[f32]| s.iter().map(|s| s * s).sum::<f32>();
+        let largest_step = |s: &[f32]| {
+            s.windows(2)
+                .map(|w| (w[1] - w[0]).abs())
+                .fold(0.0, f32::max)
+        };
+
+        // Muffling a high tone from clear: the frame darkens as it goes.
+        let mut muffle = Muffle::new();
+        let mut frame = tone(4_000.0, 0);
+        muffle.apply(&mut frame, 1.0, 600.0);
+        let quarter = FRAME_SAMPLES / 4;
+        assert!(energy(&frame[..quarter]) > energy(&frame[3 * quarter..]) * 2.0);
+
+        // A muffled low tone runs on across frames: the seam between two
+        // steps no further than the tone does within a frame.
+        let mut muffle = Muffle::new();
+        let mut frames = [0.0; 3 * FRAME_SAMPLES];
+        for (n, chunk) in frames.chunks_mut(FRAME_SAMPLES).enumerate() {
+            let mut frame = tone(150.0, n);
+            muffle.apply(&mut frame, 1.0, 600.0);
+            chunk.copy_from_slice(&frame);
+        }
+        let seam = &frames[2 * FRAME_SAMPLES - 1..2 * FRAME_SAMPLES + 1];
+        assert!(largest_step(seam) < largest_step(&frames[2 * FRAME_SAMPLES..]) * 1.5);
+
+        // Clearing glides out too, then passes through untouched.
+        let mut frame = tone(4_000.0, 3);
+        muffle.apply(&mut frame, 0.0, 600.0);
+        assert_ne!(frame, tone(4_000.0, 3));
+        let mut frame = tone(4_000.0, 4);
+        muffle.apply(&mut frame, 0.0, 600.0);
+        assert_eq!(frame, tone(4_000.0, 4));
+    }
+
+    #[test]
     fn more_muffle_cuts_more() {
         assert!(rms_after(3_000.0, 0.5) > rms_after(3_000.0, 1.0));
         assert!(rms_after(3_000.0, 0.2) > rms_after(3_000.0, 0.5));
