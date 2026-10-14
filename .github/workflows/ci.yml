@@ -381,6 +381,17 @@ jobs:
     steps:
       - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
         run: exit 1
+      # A matrix leg cancelled while still queued (no macOS runner, #211)
+      # leaves its job neither failed nor cancelled, so when code changed
+      # every build job must have actually succeeded.
+      - if: >-
+          needs.changes.outputs.code == 'true' && (
+            needs.rust.result != 'success' || needs.natives-linux.result != 'success'
+            || needs.natives.result != 'success' || needs.test-os.result != 'success'
+            || needs.mod.result != 'success' || needs.server.result != 'success'
+            || needs.nix.result != 'success'
+            || (github.event_name != 'pull_request' && needs.jar.result != 'success'))
+        run: exit 1
 
   # On a version tag: the GitHub release (jar, launcher packs, yakvc-cli,
   # static yakvc-server, SHA256SUMS) and the image on GHCR. Nothing goes to
