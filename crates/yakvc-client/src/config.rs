@@ -208,8 +208,8 @@ impl Config {
         if !(0.0..=64.0).contains(&a.full_volume_distance) {
             return invalid("acoustics.full_volume_distance must be between 0 and 64");
         }
-        if !(0.1..=4.0).contains(&a.distance_rolloff) {
-            return invalid("acoustics.distance_rolloff must be between 0.1 and 4");
+        if !(0.1..=16.0).contains(&a.distance_rolloff) {
+            return invalid("acoustics.distance_rolloff must be between 0.1 and 16");
         }
         if !(0.0..=1.0).contains(&a.occlusion_attenuation) {
             return invalid("acoustics.occlusion_attenuation must be between 0 and 1");
