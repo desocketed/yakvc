@@ -83,16 +83,17 @@ public final class DebugOverlay implements HudElement {
 		}
 
 		// The room and echoes the mod computed where you stand, for tuning by ear: what the engine was told to play.
+		// The numbers glide every tick, so they are zero-padded to a fixed width: the right-aligned text would jitter otherwise.
 		lines.add("");
 		lines.add("Spatial audio: " + settings.spatialAudio().name().toLowerCase());
 		if (settings.spatialAudio() == SpatialAudio.FULL) {
 			Room room = feeder.room();
-			lines.add(String.format("Room: reverb %.2f, decay %.2f s, critical %.1f m, echo %.2f at %.0f ms",
+			lines.add(String.format("Room: reverb %.2f, decay %05.2f s, critical %05.1f m, echo %.2f at %03.0f ms",
 					room.reverb(), room.decay(), room.criticalDistance(), room.echo(), room.echoDelay() * 1000));
 			List<FarEchoes.Echo> echoes = feeder.echoes();
 			StringBuilder far = new StringBuilder("Far echoes: " + echoes.size());
 			for (FarEchoes.Echo echo : echoes) {
-				far.append(String.format(", %.0f ms ×%.2f <%.0f Hz", echo.delay() * 1000, echo.gain(), echo.cutoff()));
+				far.append(String.format(", %03.0f ms ×%.2f <%05.0f Hz", echo.delay() * 1000, echo.gain(), echo.cutoff()));
 			}
 			lines.add(far.toString());
 		}
