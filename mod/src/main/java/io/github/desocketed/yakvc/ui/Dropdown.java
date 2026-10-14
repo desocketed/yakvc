@@ -104,7 +104,7 @@ final class Dropdown extends AbstractButton {
 	/** The row under the point, or -1. */
 	private int rowAt(double x, double y, int screenHeight) {
 		int top = listTop(screenHeight) + 1;
-		if (x < getX() || x >= getRight() || y < top || y >= top + visibleRows() * ROW_HEIGHT) return -1;
+		if (!Mouse.over(x, y, getX(), top, getWidth(), visibleRows() * ROW_HEIGHT)) return -1;
 		return scroll + (int) ((y - top) / ROW_HEIGHT);
 	}
 

@@ -289,8 +289,7 @@ public final class VoiceMenuScreen extends Screen {
 			Component connection = connection();
 			graphics.text(font, connection, textX, y + 14, 0xFFA0A0A0, false);
 			Component mismatch = VoiceToasts.versionMismatch(feeder.peerState(uuid), name);
-			if (mismatch != null && mouseX >= textX && mouseX < textX + font.width(connection)
-					&& mouseY >= y + 14 && mouseY < y + 14 + font.lineHeight) {
+			if (mismatch != null && Mouse.over(mouseX, mouseY, textX, y + 14, font.width(connection), font.lineHeight)) {
 				graphics.setTooltipForNextFrame(mismatch, mouseX, mouseY);
 			}
 
