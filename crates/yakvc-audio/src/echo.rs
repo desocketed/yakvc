@@ -214,17 +214,29 @@ mod tests {
         let mut click = [0.0; FRAME_SAMPLES];
         click[0] = 1.0;
         let silence = [0.0; FRAME_SAMPLES];
-        // 0.1 s is five frames: the first repeat lands in frame 5.
-        let mut peaks = Vec::new();
-        for n in 0..16 {
-            let mut out = [[0.0; 2]; FRAME_SAMPLES];
-            let input = if n == 0 { &click } else { &silence };
-            echo.process(input, 1.0, 0.1, 0.5, &mut out);
-            peaks.push(out.iter().map(|[l, _]| l.abs()).fold(0.0, f32::max));
-        }
-        assert!(peaks[..5].iter().all(|&p| p == 0.0), "{peaks:?}");
-        assert!(peaks[5] > 0.5);
-        assert!(peaks[10] > 0.0 && peaks[10] < peaks[5], "{peaks:?}");
+        // 0.1 s is five frames: repeats land in frames 5, 10 and 15.
+        let frames: Vec<StereoFrame> = (0..16)
+            .map(|n| {
+                let mut out = [[0.0; 2]; FRAME_SAMPLES];
+                let input = if n == 0 { &click } else { &silence };
+                echo.process(input, 0.8, 0.1, 0.5, &mut out);
+                out
+            })
+            .collect();
+        let sum = |n: usize, c: usize| frames[n].iter().map(|s| s[c]).sum::<f32>();
+        let peak = |n: usize| frames[n].iter().map(|s| s[0].abs()).fold(0.0, f32::max);
+        let onset = |n: usize, c: usize| frames[n].iter().position(|s| s[c] != 0.0);
+        assert!(frames[..5].iter().flatten().flatten().all(|&s| s == 0.0));
+        // The first repeat is the click at the echo's level, on both sides,
+        // the right a little later so it sounds wide.
+        assert!((sum(5, 0) - 0.8).abs() < 1e-6);
+        assert!((sum(5, 1) - sum(5, 0)).abs() < 1e-6);
+        assert!(onset(5, 1) > onset(5, 0));
+        // Each repeat keeps `feedback` of the last, and is duller: the spike
+        // spreads out, so its peak drops further than its sum.
+        assert!((sum(10, 0) - 0.5 * sum(5, 0)).abs() < 1e-4);
+        assert!((sum(15, 0) - 0.5 * sum(10, 0)).abs() < 1e-4);
+        assert!(peak(10) < peak(5) * 0.5);
     }
 
     /// A click through one tap, then silence: each frame's peak per channel.
