@@ -1,5 +1,6 @@
 package io.github.desocketed.yakvc.ui;
 
+import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.serialization.Codec;
 import io.github.desocketed.yakvc.GameStateFeeder;
 import io.github.desocketed.yakvc.UpdateCheck;
@@ -48,7 +49,6 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	private static final List<String> TEST_SOUNDS = List.of("clicks", "noise", "sweep", "beeps", "tone");
 	private static final String NO_TEST_SOUND = "";
 	private static final String VOICE = "voice";
-	private static final int RIGHT_BUTTON = 1;
 	/** Stands for an unset device: the system default microphone, or speakers that follow the game. */
 	private static final String DEFAULT_DEVICE = "";
 	/**
@@ -432,7 +432,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 
 	@Override
 	public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
-		if (event.button() == RIGHT_BUTTON && resetSlider(event)) return true;
+		if (event.button() == InputConstants.MOUSE_BUTTON_RIGHT && resetSlider(event)) return true;
 		return inputDevice.listClicked(event.x(), event.y(), height)
 				|| outputDevice.listClicked(event.x(), event.y(), height)
 				|| testSound.listClicked(event.x(), event.y(), height)
