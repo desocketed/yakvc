@@ -313,10 +313,12 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		AbstractWidget slider = context.computeOnClient(mc -> ((SoundTuningScreen) mc.gui.screen()).widget("occlusion_attenuation"));
 		double x = slider.getX() + slider.getWidth() / 2.0;
 		double y = slider.getY() + slider.getHeight() / 2.0;
+
 		click(context, x, y, InputConstants.MOUSE_BUTTON_LEFT);
 		if (context.computeOnClient(mc -> feeder.settings().acoustics().occlusionAttenuation()) != 0.5) {
 			throw new AssertionError("a left click didn't set the slider: " + feeder.settings().acoustics());
 		}
+
 		click(context, x, y, InputConstants.MOUSE_BUTTON_RIGHT);
 		if (context.computeOnClient(mc -> feeder.settings().acoustics().occlusionAttenuation()) != 0) {
 			throw new AssertionError("a right click didn't reset the slider: " + feeder.settings().acoustics());
@@ -329,6 +331,7 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 			mc.gui.screen().mouseClicked(event, false);
 			mc.gui.screen().mouseReleased(event);
 		});
+
 		context.waitTicks(2);
 	}
 
