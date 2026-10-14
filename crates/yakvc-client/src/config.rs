@@ -109,14 +109,14 @@ pub struct AcousticsConfig {
 }
 
 impl Default for AcousticsConfig {
-    /// Voices that carry far and spaces that ring, like a mountain climbing
-    /// game.
+    /// Voices that carry far in the open and stop at a wall, tuned by ear in
+    /// the maintainer's playtests.
     fn default() -> Self {
         AcousticsConfig {
             full_volume_distance: 4.0,
-            distance_rolloff: 3.0,
-            occlusion_attenuation: 0.0,
-            muffled_cutoff_hz: 600.0,
+            distance_rolloff: 4.0,
+            occlusion_attenuation: 1.0,
+            muffled_cutoff_hz: 100.0,
             reverb_level: 0.35,
             reverb_damping: 0.25,
             echo_feedback: 0.12,

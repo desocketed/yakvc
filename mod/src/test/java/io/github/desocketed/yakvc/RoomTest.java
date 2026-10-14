@@ -10,7 +10,10 @@ import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
 
 class RoomTest {
-	private static final SoundTuning TUNING = SoundTuning.DEFAULT;
+	// A furnished room, as the model was measured (the default furnishing of 1 stops every room ringing).
+	private static final SoundTuning TUNING = new SoundTuning(0.12, SoundTuning.DEFAULT.maxDecay(),
+			SoundTuning.DEFAULT.roomReach(), SoundTuning.DEFAULT.echoReach(), SoundTuning.DEFAULT.pathBend(),
+			SoundTuning.DEFAULT.pathPerBlock());
 	private static final double STONE = 0.02;
 	private static final double EYE = 1.62;
 
