@@ -431,10 +431,13 @@ jobs:
   # command's flags: RELAY_DEPLOY_KEY (an SSH key that reads the host flake
   # and logs in to the box), RELAY_FLAKE, RELAY_TARGET and RELAY_KNOWN_HOSTS.
   deploy:
+    # One reason per line not to deploy: the run was cancelled (release may be
+    # skipped on a manual deploy, so needs alone can't gate this), CI failed,
+    # or nothing asked for it (a tagged release, or the "Deploy the relay" tick).
     if: >-
-      !cancelled() && needs.ci-ok.result == 'success'
-      && ((github.ref_type == 'tag' && needs.release.result == 'success')
-          || inputs.deploy_relay == true)
+      !cancelled()
+      && needs.ci-ok.result == 'success'
+      && (inputs.deploy_relay == true || (github.ref_type == 'tag' && needs.release.result == 'success'))
     needs: [ci-ok, release]
     runs-on: ubuntu-latest
     timeout-minutes: 60
