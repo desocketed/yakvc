@@ -73,7 +73,7 @@ public record Settings(double voiceRange, SpatialAudio spatialAudio, boolean rel
 	public record Acoustics(double fullVolumeDistance, double distanceRolloff, double occlusionAttenuation,
 			double muffledCutoffHz, double reverbLevel, double reverbDamping, double echoFeedback, double echoLevel,
 			double furnishing, double maxDecay, double roomReach, double echoReach, double pathBend, double pathPerBlock) {
-		public static final Acoustics DEFAULT = new Acoustics(4, 4, 1, 100, 0.35, 0.25, 0.12, 1, 1, 6, 64, 200, 0.4,
+		public static final Acoustics DEFAULT = new Acoustics(4, 4, 1, 100, 0.35, 0.25, 0.12, 1, 1, 6, 64, 200, 0.1,
 				1 / 24.0);
 	}
 
