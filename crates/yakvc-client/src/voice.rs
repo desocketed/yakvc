@@ -874,18 +874,27 @@ impl AudioLoop {
         if transmitting || self.transmitting {
             self.send(frame, &state, !transmitting);
         }
-        if transmitting
-            && !state.input.deafened
-            // Until the player is known, the sink couldn't tell whose voice
-            // it is, so it gets none.
-            && let Some(me) = state.own_uuid
-            && let Some(sink) = &mut self.voice_sink
-            && sink.wants_own_voice()
-        {
-            sink.own_voice(me, frame);
+        if transmitting && !state.input.deafened {
+            self.feed_own_voice(&state, frame);
         }
         self.set_transmitting(transmitting, &state);
         self.ts = self.ts.wrapping_add(FRAME_SAMPLES as u32);
+    }
+
+    /// Gives the sink a frame of our own voice, if it wants one. Until the
+    /// player is known, the sink couldn't tell whose voice it is, so it gets
+    /// none.
+    fn feed_own_voice(&mut self, state: &VoiceState, frame: &MonoFrame) {
+        let Some(me) = state.own_uuid else {
+            return;
+        };
+        let Some(sink) = &mut self.voice_sink else {
+            return;
+        };
+        if !sink.wants_own_voice() {
+            return;
+        }
+        sink.own_voice(me, frame);
     }
 
     /// Ends the talk spurt when the microphone fails during it, since no
