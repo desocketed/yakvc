@@ -57,6 +57,9 @@ import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.client.gui.screens.options.SoundOptionsScreen;
 import net.minecraft.client.gui.screens.options.controls.KeyBindsScreen;
 import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.input.MouseButtonInfo;
+import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.network.chat.Component;
 import org.jspecify.annotations.Nullable;
 import com.mojang.blaze3d.platform.InputConstants;
@@ -302,6 +305,33 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		}
 	}
 
+	/**
+	 * A left click on a slider sets it where it was clicked, and a right click puts it back to its default. The two
+	 * were confused once: 26.3 numbers mouse buttons from 1, not as GLFW does.
+	 */
+	private static void clickSlider(ClientGameTestContext context, GameStateFeeder feeder) {
+		AbstractWidget slider = context.computeOnClient(mc -> ((SoundTuningScreen) mc.gui.screen()).widget("occlusion_attenuation"));
+		double x = slider.getX() + slider.getWidth() / 2.0;
+		double y = slider.getY() + slider.getHeight() / 2.0;
+		click(context, x, y, InputConstants.MOUSE_BUTTON_LEFT);
+		if (context.computeOnClient(mc -> feeder.settings().acoustics().occlusionAttenuation()) != 0.5) {
+			throw new AssertionError("a left click didn't set the slider: " + feeder.settings().acoustics());
+		}
+		click(context, x, y, InputConstants.MOUSE_BUTTON_RIGHT);
+		if (context.computeOnClient(mc -> feeder.settings().acoustics().occlusionAttenuation()) != 0) {
+			throw new AssertionError("a right click didn't reset the slider: " + feeder.settings().acoustics());
+		}
+	}
+
+	private static void click(ClientGameTestContext context, double x, double y, int button) {
+		context.runOnClient(mc -> {
+			MouseButtonEvent event = new MouseButtonEvent(x, y, new MouseButtonInfo(button, 0));
+			mc.gui.screen().mouseClicked(event, false);
+			mc.gui.screen().mouseReleased(event);
+		});
+		context.waitTicks(2);
+	}
+
 	/** The tuning screen applies a changed value to the engine at once, and saves it on close. */
 	private static void checkSoundTuning(ClientGameTestContext context, GameStateFeeder feeder) {
 		context.runOnClient(mc -> mc.gui.setScreen(new SoundTuningScreen(null, mc.options, feeder)));
@@ -311,6 +341,7 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		if (context.computeOnClient(mc -> feeder.settings().acoustics().furnishing()) != 0.9) {
 			throw new AssertionError("the tuning didn't reach the engine");
 		}
+		clickSlider(context, feeder);
 		context.runOnClient(mc -> mc.gui.setScreen(null));
 		context.waitTicks(2);
 		if (settingsFile().getAsJsonObject("acoustics").get("furnishing").getAsDouble() != 0.9) {
