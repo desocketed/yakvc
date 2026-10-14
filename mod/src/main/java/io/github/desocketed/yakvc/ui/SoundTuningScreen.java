@@ -32,16 +32,52 @@ public final class SoundTuningScreen extends OptionsSubScreen {
 	private final List<Slider> sliders = new ArrayList<>();
 
 	/**
-	 * One {@code acoustics} value as a slider whose whole steps, times {@code step}, give the value. {@code read} is
-	 * the value's accessor, {@code key} its name in the settings.
+	 * One {@code acoustics} value as a slider of whole steps, which the {@code scale} turns into the value and back.
+	 * {@code read} is the value's accessor, {@code key} its name in the settings.
 	 */
-	private record Slider(String key, ToDoubleFunction<Acoustics> read, double step, OptionInstance<Integer> option) {
+	private record Slider(String key, ToDoubleFunction<Acoustics> read, Scale scale, OptionInstance<Integer> option) {
 		double value() {
-			return option.get() * step;
+			return scale.value(option.get());
 		}
 
-		void reset() {
-			option.set((int) Math.round(read.applyAsDouble(Acoustics.DEFAULT) / step));
+		int steps(Acoustics acoustics) {
+			return scale.steps(read.applyAsDouble(acoustics));
+		}
+	}
+
+	/** How a slider's whole steps map to its value: most are the steps times a fixed step, one is a curve. */
+	private interface Scale {
+		double value(int steps);
+
+		int steps(double value);
+
+		static Scale linear(double step) {
+			return new Scale() {
+				@Override
+				public double value(int steps) {
+					return steps * step;
+				}
+
+				@Override
+				public int steps(double value) {
+					return (int) Math.round(value / step);
+				}
+			};
+		}
+
+		/** The fade exponent shown as the distance at which voices are half as loud, so the steps are blocks. */
+		static Scale halfVolume(HalfVolumeDistance distance) {
+			return new Scale() {
+				@Override
+				public double value(int blocks) {
+					return distance.rolloff(blocks);
+				}
+
+				@Override
+				public int steps(double rolloff) {
+					return (int) Math.round(distance.blocks(rolloff));
+				}
+			};
 		}
 	}
 
@@ -49,30 +85,36 @@ public final class SoundTuningScreen extends OptionsSubScreen {
 		super(lastScreen, options, Component.translatable("yakvc.tuning.title"));
 		this.feeder = feeder;
 		this.initial = feeder.settings();
-		slider("full_volume_distance", Acoustics::fullVolumeDistance, 0, 32, 1, SoundTuningScreen::blocks);
-		slider("distance_rolloff", Acoustics::distanceRolloff, 10, 400, 0.01, value -> label("times", "%.2f", value));
-		slider("occlusion_attenuation", Acoustics::occlusionAttenuation, 0, 100, 0.01, SoundTuningScreen::percent);
-		slider("muffled_cutoff_hz", Acoustics::muffledCutoffHz, 2, 80, 50, value -> label("hertz", "%.0f", value));
-		slider("path_bend", Acoustics::pathBend, 0, 100, 0.01, SoundTuningScreen::percent);
-		slider("path_per_block", Acoustics::pathPerBlock, 0, 100, 0.001, SoundTuningScreen::percent);
-		slider("reverb_level", Acoustics::reverbLevel, 0, 400, 0.01, SoundTuningScreen::percent);
-		slider("reverb_damping", Acoustics::reverbDamping, 0, 95, 0.01, SoundTuningScreen::percent);
-		slider("room_reach", Acoustics::roomReach, 8, 128, 1, SoundTuningScreen::blocks);
-		slider("furnishing", Acoustics::furnishing, 0, 100, 0.01, SoundTuningScreen::percent);
-		slider("max_decay", Acoustics::maxDecay, 5, 100, 0.1, value -> label("seconds", "%.1f", value));
-		slider("echo_feedback", Acoustics::echoFeedback, 0, 90, 0.01, SoundTuningScreen::percent);
-		slider("echo_reach", Acoustics::echoReach, 32, 256, 1, SoundTuningScreen::blocks);
-		slider("echo_level", Acoustics::echoLevel, 0, 400, 0.01, SoundTuningScreen::percent);
+		slider("full_volume_distance", Acoustics::fullVolumeDistance, 0, 32, Scale.linear(1), SoundTuningScreen::blocks);
+		// Blocks against the voice range as saved, so changing the range moves this slider's scale with it.
+		HalfVolumeDistance halfVolume = new HalfVolumeDistance(initial.acoustics().fullVolumeDistance(),
+				initial.voiceRange());
+		slider("distance_rolloff", Acoustics::distanceRolloff, halfVolume.minBlocks(), halfVolume.maxBlocks(),
+				Scale.halfVolume(halfVolume), rolloff -> blocks(halfVolume.blocks(rolloff)));
+		slider("occlusion_attenuation", Acoustics::occlusionAttenuation, 0, 100, Scale.linear(0.01),
+				SoundTuningScreen::percent);
+		slider("muffled_cutoff_hz", Acoustics::muffledCutoffHz, 2, 80, Scale.linear(50),
+				value -> label("hertz", "%.0f", value));
+		slider("path_bend", Acoustics::pathBend, 0, 100, Scale.linear(0.01), SoundTuningScreen::percent);
+		slider("path_per_block", Acoustics::pathPerBlock, 0, 100, Scale.linear(0.001), SoundTuningScreen::percent);
+		slider("reverb_level", Acoustics::reverbLevel, 0, 400, Scale.linear(0.01), SoundTuningScreen::percent);
+		slider("reverb_damping", Acoustics::reverbDamping, 0, 95, Scale.linear(0.01), SoundTuningScreen::percent);
+		slider("room_reach", Acoustics::roomReach, 8, 128, Scale.linear(1), SoundTuningScreen::blocks);
+		slider("furnishing", Acoustics::furnishing, 0, 100, Scale.linear(0.01), SoundTuningScreen::percent);
+		slider("max_decay", Acoustics::maxDecay, 5, 100, Scale.linear(0.1), value -> label("seconds", "%.1f", value));
+		slider("echo_feedback", Acoustics::echoFeedback, 0, 90, Scale.linear(0.01), SoundTuningScreen::percent);
+		slider("echo_reach", Acoustics::echoReach, 32, 256, Scale.linear(1), SoundTuningScreen::blocks);
+		slider("echo_level", Acoustics::echoLevel, 0, 400, Scale.linear(0.01), SoundTuningScreen::percent);
 	}
 
-	private void slider(String key, ToDoubleFunction<Acoustics> read, int min, int max, double step,
+	private void slider(String key, ToDoubleFunction<Acoustics> read, int min, int max, Scale scale,
 			DoubleFunction<Component> label) {
-		int steps = (int) Math.clamp(Math.round(read.applyAsDouble(initial.acoustics()) / step), min, max);
+		int steps = Math.clamp(scale.steps(read.applyAsDouble(initial.acoustics())), min, max);
 		OptionInstance<Integer> option = new OptionInstance<>("yakvc.tuning." + key,
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.tuning." + key + ".tooltip")),
-				(caption, value) -> Options.genericValueLabel(caption, label.apply(value * step)),
+				(caption, value) -> Options.genericValueLabel(caption, label.apply(scale.value(value))),
 				new OptionInstance.IntRange(min, max), steps, value -> apply());
-		sliders.add(new Slider(key, read, step, option));
+		sliders.add(new Slider(key, read, scale, option));
 	}
 
 	/** The slider widget for an {@code acoustics} key, for the client gametest to click. */
@@ -120,7 +162,7 @@ public final class SoundTuningScreen extends OptionsSubScreen {
 	 * title, list and Done button to the layout, and the stacked lists drew their shading twice.
 	 */
 	private void reset(Slider slider) {
-		slider.reset();
+		slider.option().set(slider.steps(Acoustics.DEFAULT));
 		resetOption(slider.option());
 	}
 
@@ -133,11 +175,10 @@ public final class SoundTuningScreen extends OptionsSubScreen {
 	private Settings tuned() {
 		Settings settings = initial;
 		for (Slider slider : sliders) {
-			if (Math.abs(slider.value() - slider.read().applyAsDouble(initial.acoustics())) > slider.step() / 2) {
-				// Rounded, so the file reads 0.35 rather than 0.35000000000000003.
-				double value = Math.round(slider.value() * 10_000) / 10_000.0;
-				settings = settings.withAcoustic(slider.key(), value);
-			}
+			if (slider.option().get() == slider.steps(initial.acoustics())) continue;
+			// Rounded, so the file reads 0.35 rather than 0.35000000000000003.
+			double value = Math.round(slider.value() * 10_000) / 10_000.0;
+			settings = settings.withAcoustic(slider.key(), value);
 		}
 		return settings;
 	}
