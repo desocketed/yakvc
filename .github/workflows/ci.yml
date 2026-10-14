@@ -268,12 +268,9 @@ jobs:
           path: mod/build/run/clientGameTest/screenshots/
 
   # The release jar with every platform's natives, the launcher packs and
-  # the Mac CLI, merged from both architectures. Not for pull requests,
-  # whose `mod` job builds and tests a Linux-only jar without waiting for
-  # the other platforms.
+  # the Mac CLI, merged from both architectures.
   jar:
     needs: [natives-linux, natives]
-    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -382,15 +379,9 @@ jobs:
       - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
         run: exit 1
       # A matrix leg cancelled while still queued (no macOS runner, #211)
-      # leaves its job neither failed nor cancelled, so when code changed
-      # every build job must have actually succeeded.
-      - if: >-
-          needs.changes.outputs.code == 'true' && (
-            needs.rust.result != 'success' || needs.natives-linux.result != 'success'
-            || needs.natives.result != 'success' || needs.test-os.result != 'success'
-            || needs.mod.result != 'success' || needs.server.result != 'success'
-            || needs.nix.result != 'success'
-            || (github.event_name != 'pull_request' && needs.jar.result != 'success'))
+      # leaves its job skipped, not failed, so a skipped job is a failure
+      # whenever there was code to build.
+      - if: needs.changes.outputs.code == 'true' && contains(needs.*.result, 'skipped')
         run: exit 1
 
   # On a version tag: the GitHub release (jar, launcher packs, yakvc-cli,
