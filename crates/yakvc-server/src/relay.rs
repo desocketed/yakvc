@@ -80,19 +80,23 @@ impl RelayGate {
 
     fn admit(&self, id: EndpointId, now: Instant) -> Admission {
         if id == self.rendezvous || self.sessions.contains(id) {
-            Admission::Session
-        } else {
-            // The relay-wide budget is looked at first, so a flood of fresh
-            // keys stops costing a bucket each once it is spent, and taken
-            // last, so a refused connect charges neither limit.
-            let mut limiter = self.grace_limiter.lock().unwrap();
-            let mut admissions = self.grace_admissions.lock().unwrap();
-            if admissions.has_token(now) && limiter.allow(id, now) && admissions.take(now) {
-                Admission::Grace
-            } else {
-                Admission::Refused
-            }
+            return Admission::Session;
         }
+        // The relay-wide budget is looked at first, so a flood of fresh keys
+        // stops costing a bucket each once it is spent, and taken last, so a
+        // refused connect charges neither limit.
+        let mut limiter = self.grace_limiter.lock().unwrap();
+        let mut admissions = self.grace_admissions.lock().unwrap();
+        if !admissions.has_token(now) {
+            return Admission::Refused;
+        }
+        if !limiter.allow(id, now) {
+            return Admission::Refused;
+        }
+        if !admissions.take(now) {
+            return Admission::Refused;
+        }
+        Admission::Grace
     }
 
     fn disconnect(&self, id: EndpointId) {
@@ -396,10 +400,18 @@ mod tests {
 
         let mut reply = [0; 1500];
         match tokio::time::timeout(Duration::from_secs(5), socket.recv(&mut reply)).await {
-            // Version Negotiation is a long header with version 0.
-            Ok(Ok(len)) => len >= 5 && reply[0] & 0x80 != 0 && reply[1..5] == [0; 4],
+            Ok(Ok(len)) => is_version_negotiation(&reply[..len]),
             _ => false,
         }
+    }
+
+    /// Whether the reply is Version Negotiation: a long header with version 0.
+    fn is_version_negotiation(reply: &[u8]) -> bool {
+        if reply.len() < 5 {
+            return false;
+        }
+        let long_header = reply[0] & 0x80 != 0;
+        long_header && reply[1..5] == [0; 4]
     }
 
     #[test]

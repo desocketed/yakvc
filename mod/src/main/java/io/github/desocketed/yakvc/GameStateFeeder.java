@@ -241,7 +241,7 @@ public final class GameStateFeeder {
 		}
 		hadSession = session != null;
 		LocalPlayer player = minecraft.player;
-		boolean active = session != null && session.active() && player != null && minecraft.level != null;
+		boolean active = inWorld(session, minecraft);
 		if (keys.groupPressed() && active) step(() -> groupChat.groupKeyPressed(minecraft));
 
 		Set<UUID> players = active ? new HashSet<>(session.connection.getOnlinePlayerIds()) : Set.of();
@@ -257,6 +257,12 @@ public final class GameStateFeeder {
 		step(() -> feedVolume(minecraft.options.getFinalSoundSourceVolume(SoundSource.VOICE)));
 		step(() -> feedDevice(minecraft.options.soundDevice().get()));
 		step(() -> feedRenderDistance(minecraft.options.renderDistance().get()));
+	}
+
+	/** Whether there is a voice session and a world to feed it from. */
+	private static boolean inWorld(@Nullable VoiceSession session, Minecraft minecraft) {
+		if (session == null || !session.active()) return false;
+		return minecraft.player != null && minecraft.level != null;
 	}
 
 	private void feedRenderDistance(int renderChunks) {
