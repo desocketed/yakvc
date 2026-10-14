@@ -320,7 +320,7 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		}
 
 		click(context, x, y, InputConstants.MOUSE_BUTTON_RIGHT);
-		if (context.computeOnClient(mc -> feeder.settings().acoustics().occlusionAttenuation()) != 0) {
+		if (context.computeOnClient(mc -> feeder.settings().acoustics().occlusionAttenuation()) != Settings.Acoustics.DEFAULT.occlusionAttenuation()) {
 			throw new AssertionError("a right click didn't reset the slider: " + feeder.settings().acoustics());
 		}
 	}
