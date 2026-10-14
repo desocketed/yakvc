@@ -3,8 +3,8 @@ package io.github.desocketed.yakvc.ui;
 import io.github.desocketed.yakvc.GameStateFeeder;
 import io.github.desocketed.yakvc.VoiceSession;
 import io.github.desocketed.yakvc.YakVcClient;
-import io.github.desocketed.yakvc.config.ClientConfig;
 import io.github.desocketed.yakvc.config.PlayerVolumes;
+import io.github.desocketed.yakvc.config.Settings;
 import io.github.desocketed.yakvc.input.VoiceKeys;
 import io.github.desocketed.yakvc.natives.EngineEvent;
 import java.io.IOException;
@@ -21,9 +21,11 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractSliderButton;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.Checkbox;
 import net.minecraft.client.gui.components.ContainerObjectSelectionList;
 import net.minecraft.client.gui.components.PlayerFaceExtractor;
 import net.minecraft.client.gui.components.StringWidget;
+import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.components.events.GuiEventListener;
 import net.minecraft.client.gui.layouts.HeaderAndFooterLayout;
 import net.minecraft.client.gui.layouts.LinearLayout;
@@ -35,8 +37,8 @@ import net.minecraft.network.chat.Component;
 import org.jspecify.annotations.Nullable;
 
 /**
- * The voice menu: voice status, mute and deafen, every other player on the server with their voice connection and a
- * volume slider and mute button, saved by UUID, and the way to the settings screen.
+ * The voice menu: voice status, mute and deafen, every other player on the server with their voice connection, a
+ * friend mark, a volume slider and a mute button, saved by UUID, and the way to the settings screen.
  */
 public final class VoiceMenuScreen extends Screen {
 	private static final int ROW_HEIGHT = 28;
@@ -72,7 +74,7 @@ public final class VoiceMenuScreen extends Screen {
 
 		list = layout.addToContents(new PlayerList(minecraft));
 		// The first-run card sits at the top of the list, so it scrolls away with the players.
-		if (!feeder.config().setupDone()) list.add(new SetupRow(), SETUP_HEIGHT);
+		if (!feeder.settings().setupDone()) list.add(new SetupRow(), SETUP_HEIGHT);
 		shown = players();
 		for (UUID uuid : shown) list.add(new PlayerRow(uuid), ROW_HEIGHT);
 
@@ -179,25 +181,34 @@ public final class VoiceMenuScreen extends Screen {
 
 	/**
 	 * The first-run card: who may invite you to a group and how you talk, the two choices a new player should make
-	 * before anything else. Got it saves both and sets {@code setup_done}, so the card doesn't come back.
+	 * before anything else. Each applies and is saved at once; Got it sets {@code setup_done}, so the card doesn't come
+	 * back.
 	 */
 	private final class SetupRow extends Row {
 		private final AbstractWidget invites;
 		private final AbstractWidget activation;
 		private final Button gotIt;
+		private final OptionInstance<String> activationOption;
+		private final OptionInstance<String> invitesOption;
 
 		SetupRow() {
-			ClientConfig config = feeder.config();
-			OptionInstance<String> invitesOption = VoiceSettingsScreen.invitesOption(config);
-			OptionInstance<String> activationOption = VoiceSettingsScreen.activationOption(config);
-			invites = invitesOption.createButton(minecraft.options, 0, 0, 125);
+			Settings settings = feeder.settings();
+			// Each choice applies at once, as in the settings.
+			activationOption = VoiceSettingsScreen.activationOption(settings, value -> applyChoices());
+			invitesOption = VoiceSettingsScreen.invitesOption(settings, value -> applyChoices());
 			activation = activationOption.createButton(minecraft.options, 0, 0, 125);
+			invites = invitesOption.createButton(minecraft.options, 0, 0, 125);
 			gotIt = Button.builder(Component.translatable("yakvc.setup.ok"), button -> {
-				ClientConfig changed = VoiceSettingsScreen.withActivationAndInvites(config, activationOption, invitesOption)
-						.with("", "setup_done", "true");
-				VoiceSettingsScreen.applyAndSave(feeder, changed);
+				VoiceSettingsScreen.applyAndSave(feeder, feeder.settings().withSetupDone(true));
 				rebuildWidgets();
 			}).width(52).build();
+		}
+
+		/** A rejected choice rebuilds the card from what is in effect. */
+		private void applyChoices() {
+			Settings current = feeder.settings();
+			Settings changed = VoiceSettingsScreen.withActivationAndInvites(current, activationOption, invitesOption);
+			if (!changed.equals(current) && !VoiceSettingsScreen.applyAndSave(feeder, changed)) rebuildWidgets();
 		}
 
 		@Override
@@ -229,22 +240,31 @@ public final class VoiceMenuScreen extends Screen {
 		}
 	}
 
-	/** Face, name, verified badge, talking icon and voice connection on the left; volume and mute on the right. */
+	/**
+	 * Face, name, verified badge, talking icon and voice connection on the left; the friend mark, volume and mute on
+	 * the right.
+	 */
 	private final class PlayerRow extends Row {
 		private final UUID uuid;
 		private final VolumeSlider volume;
 		private final Button mute;
+		private final Checkbox friend;
 
 		PlayerRow(UUID uuid) {
 			this.uuid = uuid;
-			PlayerVolumes.Setting setting = feeder.volumes().get(uuid);
-			volume = new VolumeSlider(setting.volume(), v -> feeder.volumes().set(uuid,
-					new PlayerVolumes.Setting(v, feeder.volumes().get(uuid).muted())));
+			PlayerVolumes volumes = feeder.volumes();
+			PlayerVolumes.Setting setting = volumes.get(uuid);
+			volume = new VolumeSlider(setting.volume(), v -> volumes.set(uuid, volumes.get(uuid).withVolume(v)));
 			mute = Button.builder(playerMuteLabel(setting.muted()), button -> {
-				PlayerVolumes.Setting now = feeder.volumes().get(uuid);
-				feeder.volumes().set(uuid, new PlayerVolumes.Setting(now.volume(), !now.muted()));
+				PlayerVolumes.Setting now = volumes.get(uuid);
+				volumes.set(uuid, now.withMuted(!now.muted()));
 				button.setMessage(playerMuteLabel(!now.muted()));
 			}).width(56).build();
+			friend = Checkbox.builder(Component.translatable("yakvc.menu.friend"), font)
+					.selected(setting.friend())
+					.tooltip(Tooltip.create(Component.translatable("yakvc.menu.friend.tooltip")))
+					.onValueChange((box, on) -> volumes.set(uuid, volumes.get(uuid).withFriend(on)))
+					.build();
 		}
 
 		@Override
@@ -276,10 +296,12 @@ public final class VoiceMenuScreen extends Screen {
 
 			mute.setPosition(getContentRight() - mute.getWidth(), y + 2);
 			volume.setPosition(mute.getX() - 4 - volume.getWidth(), y + 2);
+			friend.setPosition(volume.getX() - 4 - friend.getWidth(), y + 2);
 			volume.active = !feeder.blocked(uuid);
 			mute.active = !feeder.blocked(uuid);
 			volume.extractRenderState(graphics, mouseX, mouseY, a);
 			mute.extractRenderState(graphics, mouseX, mouseY, a);
+			friend.extractRenderState(graphics, mouseX, mouseY, a);
 		}
 
 		private Component connection() {
@@ -291,12 +313,12 @@ public final class VoiceMenuScreen extends Screen {
 
 		@Override
 		public List<? extends GuiEventListener> children() {
-			return List.of(volume, mute);
+			return List.of(friend, volume, mute);
 		}
 
 		@Override
 		public List<? extends NarratableEntry> narratables() {
-			return List.of(volume, mute);
+			return List.of(friend, volume, mute);
 		}
 	}
 
@@ -309,7 +331,8 @@ public final class VoiceMenuScreen extends Screen {
 		private final Consumer<Float> onChange;
 
 		VolumeSlider(float volume, Consumer<Float> onChange) {
-			super(0, 0, 100, 20, Component.empty(), volume / 2.0);
+			// 80 wide, so the friend mark fits before it without crowding a long name.
+			super(0, 0, 80, 20, Component.empty(), volume / 2.0);
 			this.onChange = onChange;
 			updateMessage();
 		}

@@ -350,6 +350,112 @@ mod tests {
         assert_eq!(echoed(0.0), 0.0);
     }
 
+    fn voice(pan: f32, reverb: f32, echo: f32) -> Spatial {
+        Spatial {
+            gain: 1.0,
+            pan,
+            muffle: 0.0,
+            reverb,
+            echo,
+        }
+    }
+
+    /// Every sample out of a mixer in `room` over `frames` frames, after
+    /// one click from a source at `spatial`.
+    fn ring(room: Acoustics, spatial: Spatial, frames: usize) -> Vec<[f32; 2]> {
+        let mut mixer = Mixer::new();
+        mixer.set_acoustics(room);
+        let click: MonoFrame = std::array::from_fn(|i| if i == 0 { 0.1 } else { 0.0 });
+        let mut samples = Vec::new();
+        for n in 0..frames {
+            let mut out = [[0.0; 2]; FRAME_SAMPLES];
+            let frame = if n == 0 { click } else { constant(0.0) };
+            mixer.mix([(&frame, spatial)], &mut out);
+            samples.extend(out);
+        }
+        samples
+    }
+
+    #[test]
+    fn echoes_come_back_as_the_voice_went_out() {
+        let mut taps = [EchoTap::default(); ECHO_TAPS];
+        taps[0] = EchoTap {
+            delay: 0.05,
+            gain: 1.0,
+            pan: 1.0,
+            cutoff_hz: 20_000.0,
+        };
+        let room = Acoustics {
+            echo: 1.0,
+            echo_delay: 0.1,
+            reverb_level: 0.0,
+            taps,
+            ..Acoustics::default()
+        };
+        // The voice is fully left, so the far echo, panned right, is alone
+        // there; after the click, the left only hears the room's echo.
+        let out = ring(room, voice(-1.0, 1.0, 1.0), 8);
+        let first = |c: usize| out[1..].iter().map(|s| s[c]).find(|s| s.abs() > 1e-6);
+        assert!(first(1).is_some_and(|s| s > 0.0), "far echo {:?}", first(1));
+        assert!(
+            first(0).is_some_and(|s| s > 0.0),
+            "room echo {:?}",
+            first(0)
+        );
+    }
+
+    #[test]
+    fn the_reverb_waits_half_the_echo_delay_and_follows_its_level() {
+        // The voice is fully left, so the right is all reverb.
+        let wet = |echo_delay, reverb_level| -> Vec<f32> {
+            let room = Acoustics {
+                echo_delay,
+                reverb_level,
+                ..Acoustics::default()
+            };
+            let out = ring(room, voice(-1.0, 1.0, 0.0), 10);
+            out.iter().map(|[_, r]| *r).collect()
+        };
+        let onset = |wet: &[f32]| wet.iter().position(|&s| s != 0.0).unwrap();
+        let (now, later) = (wet(0.0, 1.0), wet(0.2, 1.0));
+        assert_eq!(onset(&later) - onset(&now), seconds_to_samples(0.1));
+        let quieter = wet(0.0, 0.5);
+        assert!(
+            now.iter()
+                .zip(&quieter)
+                .all(|(a, b)| (a * 0.5 - b).abs() < 1e-6)
+        );
+    }
+
+    #[test]
+    fn open_air_adds_nothing_to_the_dry_voice() {
+        // What the mod pushes in open air, or with Spatial Audio below Full:
+        // no reverb, no room echo and silent far taps. A voice in the world
+        // still sends to the far echoes, which must then stay silent.
+        let mut mixer = Mixer::new();
+        mixer.set_acoustics(Acoustics {
+            decay: 0.1,
+            ..Acoustics::default()
+        });
+        let spatial = Spatial {
+            gain: 0.8,
+            pan: -0.3,
+            muffle: 0.0,
+            reverb: 0.0,
+            echo: 1.0,
+        };
+        let [left, right] = pan_gains(spatial);
+        let mut out = [[0.0; 2]; FRAME_SAMPLES];
+        for n in 0..10 {
+            let frame: MonoFrame =
+                std::array::from_fn(|i| 0.5 * ((n * FRAME_SAMPLES + i) as f32 * 0.05).sin());
+            mixer.mix([(&frame, spatial)], &mut out);
+            for (sample, mixed) in frame.iter().zip(&out) {
+                assert_eq!(*mixed, [sample * left, sample * right]);
+            }
+        }
+    }
+
     #[test]
     fn limiter_keeps_output_in_range() {
         let sources = [(

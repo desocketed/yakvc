@@ -9,23 +9,40 @@ import io.github.desocketed.yakvc.YakVcClient;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.UUID;
 
 /**
- * Per-player volume and mute chosen in the voice menu, kept by UUID in {@code config/yakvc/players.json} so they
- * survive name changes and restarts. Players at the default (full volume, not muted) are not stored.
+ * Per-player volume, mute and friend mark chosen in the voice menu, kept by UUID in {@code config/yakvc/players.json}
+ * so they survive name changes and restarts. Players at the default (full volume, not muted, not a friend) are not
+ * stored.
  */
 public final class PlayerVolumes {
 	public static final String FILE_NAME = "players.json";
-	public static final Setting DEFAULT = new Setting(1f, false);
+	public static final Setting DEFAULT = new Setting(1f, false, false);
 	/** The voice menu's slider goes up to 200%. */
 	public static final float MAX_VOLUME = 2f;
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
-	/** {@code volume} is a gain: 1 is unchanged, 2 is twice as loud. */
-	public record Setting(float volume, boolean muted) {}
+	/**
+	 * {@code volume} is a gain: 1 is unchanged, 2 is twice as loud. A {@code friend} is who the Friends Only setting and
+	 * friends-only group invites allow.
+	 */
+	public record Setting(float volume, boolean muted, boolean friend) {
+		public Setting withVolume(float volume) {
+			return new Setting(volume, muted, friend);
+		}
+
+		public Setting withMuted(boolean muted) {
+			return new Setting(volume, muted, friend);
+		}
+
+		public Setting withFriend(boolean friend) {
+			return new Setting(volume, muted, friend);
+		}
+	}
 
 	private final Path file;
 	private final Map<UUID, Setting> settings;
@@ -66,13 +83,19 @@ public final class PlayerVolumes {
 	private static Setting parse(JsonObject json) {
 		float volume = json.has("volume") ? json.get("volume").getAsFloat() : DEFAULT.volume();
 		boolean muted = json.has("muted") ? json.get("muted").getAsBoolean() : DEFAULT.muted();
+		boolean friend = json.has("friend") ? json.get("friend").getAsBoolean() : DEFAULT.friend();
 		// NaN fails every comparison, so it can't be clamped.
 		if (Float.isNaN(volume)) throw new IllegalArgumentException("volume is not a number");
-		return new Setting(Math.clamp(volume, 0f, MAX_VOLUME), muted);
+		return new Setting(Math.clamp(volume, 0f, MAX_VOLUME), muted, friend);
 	}
 
 	public Setting get(UUID player) {
 		return settings.getOrDefault(player, DEFAULT);
+	}
+
+	/** The players marked as friends, in UUID order, as the engine's {@code friends} list. */
+	public List<UUID> friends() {
+		return settings.entrySet().stream().filter(entry -> entry.getValue().friend()).map(Map.Entry::getKey).toList();
 	}
 
 	public void set(UUID player, Setting setting) {

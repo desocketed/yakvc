@@ -7,8 +7,9 @@ const ALLPASS_DELAYS: [usize; 2] = [556, 441];
 /// The right channel's delays are this much longer, so the tail is wide.
 const STEREO_SPREAD: usize = 23;
 const ALLPASS_FEEDBACK: f32 = 0.5;
-/// The combs add up, so their sum is scaled back down.
-const OUTPUT_GAIN: f32 = 0.25;
+/// The four combs add up in energy, and each channel carries half of it, so
+/// a send comes out of the pair as loud as it went in: 1/√(4 × 2).
+const OUTPUT_GAIN: f32 = 0.353_553_4;
 /// The shortest and longest tail, in seconds until it fades by 60 dB.
 const MIN_DECAY: f32 = 0.1;
 const MAX_DECAY: f32 = 10.0;
@@ -35,6 +36,10 @@ struct Bank {
 struct Comb {
     delay: Delay,
     feedback: f32,
+    /// Scales its output so its ringing is as loud as its input whatever
+    /// the decay: √(1 − feedback²). How loud a room is next to the voice is
+    /// for the sends to say, not the tail length.
+    normalise: f32,
     /// The last output, low-passed: the damping filter's state.
     filtered: f32,
 }
@@ -53,6 +58,7 @@ impl Reverb {
                 .map(|&d| Comb {
                     delay: Delay::new(scaled(d + spread)),
                     feedback: 0.0,
+                    normalise: 1.0,
                     filtered: 0.0,
                 })
                 .collect(),
@@ -81,6 +87,7 @@ impl Reverb {
             for comb in &mut bank.combs {
                 let delay = comb.delay.buffer.len() as f32 / SAMPLE_RATE as f32;
                 comb.feedback = 10f32.powf(-3.0 * delay / seconds);
+                comb.normalise = (1.0 - comb.feedback * comb.feedback).sqrt();
             }
         }
     }
@@ -117,7 +124,7 @@ impl Bank {
             let delayed = comb.delay.read();
             comb.filtered = delayed * (1.0 - damping) + comb.filtered * damping;
             comb.delay.write(input + comb.filtered * comb.feedback);
-            sum += delayed;
+            sum += delayed * comb.normalise;
         }
         for allpass in &mut self.allpasses {
             let delayed = allpass.read();
@@ -156,20 +163,59 @@ fn scaled(samples_at_44k: usize) -> usize {
 mod tests {
     use super::*;
 
+    /// Each 20 ms frame's energy out of `reverb` after `input`, then silence.
+    fn energies(reverb: &mut Reverb, input: &MonoFrame, frames: usize) -> Vec<f32> {
+        (0..=frames)
+            .map(|n| {
+                let mut out = [[0.0; 2]; FRAME_SAMPLES];
+                reverb.process(if n == 0 { input } else { &[0.0; FRAME_SAMPLES] }, &mut out);
+                out.iter().flatten().map(|s| s * s).sum()
+            })
+            .collect()
+    }
+
+    fn click() -> MonoFrame {
+        std::array::from_fn(|i| if i == 0 { 1.0 } else { 0.0 })
+    }
+
     /// The tail's energy in the 20 ms frame `frames` after one click.
     fn tail_energy(decay: f32, frames: usize) -> f32 {
         let mut reverb = Reverb::new();
         reverb.set_decay(decay);
-        let mut click = [0.0; FRAME_SAMPLES];
-        click[0] = 1.0;
-        let silence = [0.0; FRAME_SAMPLES];
-        let mut energy = 0.0;
-        for n in 0..=frames {
-            let mut out = [[0.0; 2]; FRAME_SAMPLES];
-            reverb.process(if n == 0 { &click } else { &silence }, &mut out);
-            energy = out.iter().flatten().map(|s| s * s).sum();
-        }
-        energy
+        energies(&mut reverb, &click(), frames)[frames]
+    }
+
+    #[test]
+    fn the_tail_is_as_loud_whatever_its_length() {
+        // How loud a room is next to the voice is for the sends to say.
+        let total = |decay| {
+            let mut reverb = Reverb::new();
+            reverb.set_decay(decay);
+            reverb.set_damping(0.0);
+            energies(&mut reverb, &click(), 1000).iter().sum::<f32>()
+        };
+        let (short, long) = (total(0.5), total(3.0));
+        assert!(
+            long < short * 1.5 && short < long * 1.5,
+            "short {short}, long {long}"
+        );
+    }
+
+    #[test]
+    fn damping_fades_highs_faster_than_lows() {
+        // How much of a tone's tail damping takes away.
+        let kept = |hz: f32| {
+            let tone: MonoFrame = std::array::from_fn(|i| {
+                (std::f32::consts::TAU * hz * i as f32 / SAMPLE_RATE as f32).sin()
+            });
+            let tail = |damping| {
+                let mut reverb = Reverb::new();
+                reverb.set_damping(damping);
+                energies(&mut reverb, &tone, 50)[10..].iter().sum::<f32>()
+            };
+            tail(0.9) / tail(0.0)
+        };
+        assert!(kept(5_000.0) < kept(200.0) * 0.5);
     }
 
     #[test]

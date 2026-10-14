@@ -12,14 +12,18 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
+use md5::Digest as _;
+use serde_json::{Value, json};
 
 use crate::{dev, root, run};
 
 const RENDEZVOUS_PORT: u16 = 7843;
 const SERVER_PORT: u16 = 25565;
+const FLY_SPEED: f64 = 0.1;
 
-/// A data pack that builds walls and rooms to listen through, in the flat
-/// dev world (`xtask/rooms`).
+/// A data pack that keeps the flat dev world quiet and, on request
+/// (`/function yakvc:build`), builds walls and rooms to listen through
+/// (`xtask/rooms`).
 const ROOMS: &[(&str, &str)] = &[
     ("pack.mcmeta", include_str!("../rooms/pack.mcmeta")),
     (
@@ -36,8 +40,10 @@ const ROOMS: &[(&str, &str)] = &[
     ),
 ];
 
-/// Grass on dirt on bedrock, the ground's top at y -61, as the rooms expect.
-const FLAT_LAYERS: &str = r#"{"layers":[{"block":"minecraft:bedrock","height":1},{"block":"minecraft:dirt","height":2},{"block":"minecraft:grass_block","height":1}],"biome":"minecraft:plains"}"#;
+/// Grass on dirt on bedrock, the ground's top at y -61, as the rooms expect; the
+/// void biome, so nothing ever spawns (an older world keeps plains, and the
+/// build function clears its animals).
+const FLAT_LAYERS: &str = r#"{"layers":[{"block":"minecraft:bedrock","height":1},{"block":"minecraft:dirt","height":2},{"block":"minecraft:grass_block","height":1}],"biome":"minecraft:the_void","structure_overrides":[]}"#;
 
 /// Libraries Minecraft loads at runtime, from the flake's nixpkgs.
 const LIBRARIES: &[&str] = &[
@@ -82,11 +88,14 @@ pub(crate) fn session(
                 .spawn()
                 .context("starting the rendezvous")?;
             parts.push(("rendezvous".into(), child));
-            parts.push(("server".into(), server(&dir.join("server"), &launch)?));
+            parts.push((
+                "server".into(),
+                server(&dir.join("server"), &launch, names)?,
+            ));
         }
         // Quick play gives up if the server isn't listening yet.
         wait_for_server(&mut parts)?;
-        let client_config = fs::read_to_string(dir.join("rendezvous/client.toml"))
+        let client_config = fs::read_to_string(dir.join("rendezvous/settings.json"))
             .context("no rendezvous yet: start a session without --join first")?;
         for name in names {
             let game_dir = dir.join(name);
@@ -116,9 +125,15 @@ pub(crate) fn session(
     result
 }
 
-/// The dev Minecraft server in offline mode, so any name can join.
-fn server(dir: &Path, launch: &Path) -> Result<Child> {
+/// The dev Minecraft server in offline mode, so any name can join; the named
+/// players are operators, so they (and the command file) can change the world.
+fn server(dir: &Path, launch: &Path, names: &[String]) -> Result<Child> {
     fs::create_dir_all(dir)?;
+    let ops: Vec<Value> = names
+        .iter()
+        .map(|name| json!({"uuid": offline_uuid(name), "name": name, "level": 4, "bypassesPlayerLimit": false}))
+        .collect();
+    fs::write(dir.join("ops.json"), dev::settings_json(&Value::Array(ops)))?;
     let eula = fs::read_to_string(dir.join("eula.txt")).unwrap_or_default();
     if !eula.lines().any(|line| line.trim() == "eula=true") {
         bail!(
@@ -126,9 +141,11 @@ fn server(dir: &Path, launch: &Path) -> Result<Child> {
             dir.join("eula.txt").display()
         );
     }
-    write_once(
-        &dir.join("server.properties"),
-        &format!(
+    // Written every time, like the rooms, so a changed world setting takes effect
+    // (the world itself must be deleted to regenerate).
+    fs::write(
+        dir.join("server.properties"),
+        format!(
             "online-mode=false\nenforce-secure-profile=false\nwhite-list=false\nenforce-whitelist=false\n\
              server-ip=127.0.0.1\nserver-port={SERVER_PORT}\ndifficulty=peaceful\nspawn-protection=0\ngamemode=creative\nforce-gamemode=true\n\
              level-name=rooms\nlevel-type=minecraft\\:flat\ngenerator-settings={FLAT_LAYERS}\n"
@@ -159,12 +176,14 @@ fn client(
     library_path: &str,
 ) -> Result<Child> {
     // Written once, so each client's own settings survive between sessions.
-    let config = dir.join("config/yakvc/client.toml");
-    write_once(&config, client_config)?;
-    set_talking(&config, talk)?;
+    let settings = dir.join("config/yakvc/settings.json");
+    write_once(&settings, client_config)?;
+    set_talking(&settings, talk)?;
     write_once(
         &dir.join("options.txt"),
-        "onboardAccessibility:false\nskipMultiplayerWarning:true\njoinedFirstServer:true\n",
+        // No pause menu when another window takes focus: a session is several
+        // windows, and the one you aren't in should keep playing.
+        "onboardAccessibility:false\nskipMultiplayerWarning:true\njoinedFirstServer:true\npauseOnLostFocus:false\n",
     )?;
     // A nixpkgs Java can only load the host's GPU driver on NixOS; elsewhere
     // nixGL brings a matching one.
@@ -264,53 +283,54 @@ enum Talk<'a> {
 const BEEPS: &str = "yakvc:test-beeps";
 
 /// Makes the client talk on its own, or stop: a talker picks the beeps as its
-/// microphone (or plays the file from `[dev]`) by voice activation, so nobody
+/// microphone (or plays the file from `dev`) by voice activation, so nobody
 /// has to hold push-to-talk for it. Rewritten every session; the rest of the
-/// file is left as the player set it.
-fn set_talking(config: &Path, talk: Talk) -> Result<()> {
-    let text = fs::read_to_string(config)?;
-    let talking = !matches!(talk, Talk::No);
-    let mut audio = Vec::new();
-    if talking {
-        audio.push("activation = \"voice\"".to_owned());
+/// settings are left as the player set them.
+fn set_talking(settings: &Path, talk: Talk) -> Result<()> {
+    let mut json: Value = serde_json::from_str(&fs::read_to_string(settings)?)
+        .with_context(|| format!("reading {}", settings.display()))?;
+    let mut audio = json["audio"].take();
+    if !audio.is_object() {
+        audio = json!({});
     }
-    if let Talk::Beeps = talk {
-        audio.push(format!("input_device = \"{BEEPS}\""));
-    }
-    let mut lines = Vec::new();
-    let mut table = String::new();
-    let mut has_audio = false;
-    for line in text.lines() {
-        let code = line.trim();
-        if code.starts_with('[') {
-            table = code.to_owned();
+    match talk {
+        // A talker's beeps go away; a player's own microphone stays.
+        Talk::No => {
+            if audio["input_device"] == BEEPS {
+                audio.as_object_mut().unwrap().remove("input_device");
+            }
         }
-        let ours = table == "[audio]"
-            && (talking && code.starts_with("activation")
-                || code.starts_with("input_device") && (talking || code.contains(BEEPS)));
-        if table == "[dev]" || ours {
-            continue;
+        Talk::Beeps => {
+            audio["activation"] = json!("voice");
+            audio["input_device"] = json!(BEEPS);
         }
-        lines.push(line.to_owned());
-        if code == "[audio]" {
-            has_audio = true;
-            lines.extend(audio.iter().cloned());
+        Talk::File(_) => {
+            audio["activation"] = json!("voice");
+            audio.as_object_mut().unwrap().remove("input_device");
         }
     }
-    // The blank line before a dropped [dev] would otherwise pile up.
-    while lines.last().is_some_and(|line| line.trim().is_empty()) {
-        lines.pop();
-    }
-    if !has_audio && !audio.is_empty() {
-        lines.push(format!("\n[audio]\n{}", audio.join("\n")));
-    }
+    let top = json
+        .as_object_mut()
+        .context("settings.json must hold an object")?;
+    top.insert("audio".to_owned(), audio);
+    // The dev world is big, so creative flight goes twice as fast (vanilla is 0.05).
+    let mut dev = json!({"fly_speed": FLY_SPEED});
     if let Talk::File(file) = talk {
-        // TOML strings escape backslashes, as in Windows paths.
-        let path = file.display().to_string().replace('\\', "\\\\");
-        lines.push(format!("\n[dev]\nwav = \"{path}\""));
+        dev["wav"] = json!(file);
     }
-    fs::write(config, lines.join("\n") + "\n")?;
+    top.insert("dev".to_owned(), dev);
+    fs::write(settings, dev::settings_json(&json))?;
     Ok(())
+}
+
+/// The UUID the offline-mode server gives `name` (as `yakvc_proto::offline_uuid`,
+/// repeated here so xtask needn't build the networking crates).
+fn offline_uuid(name: &str) -> uuid::Uuid {
+    let hash = md5::Md5::new()
+        .chain_update(b"OfflinePlayer:")
+        .chain_update(name.as_bytes())
+        .finalize();
+    uuid::Builder::from_md5_bytes(hash.into()).into_uuid()
 }
 
 fn write_once(path: &Path, text: &str) -> Result<()> {
@@ -325,50 +345,53 @@ fn write_once(path: &Path, text: &str) -> Result<()> {
 mod tests {
     use super::*;
 
-    fn talking(before: &str, talk: Talk) -> String {
+    fn talking(before: Value, talk: Talk) -> Value {
         let dir = std::env::temp_dir().join(format!("yakvc-talk-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
-        let config = dir.join(format!("client-{}.toml", before.len()));
-        fs::write(&config, before).unwrap();
-        set_talking(&config, talk).unwrap();
-        fs::read_to_string(&config).unwrap()
+        let settings = dir.join(format!("settings-{}.json", before.to_string().len()));
+        fs::write(&settings, dev::settings_json(&before)).unwrap();
+        set_talking(&settings, talk).unwrap();
+        serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap()
     }
 
     #[test]
     fn a_talker_gets_voice_activation_and_the_beeps() {
         let after = talking(
-            "dev_mode = true\n\n[audio]\nactivation = \"push_to_talk\"\ninput_device = \"hw:1\"\nbitrate = 24000\n",
+            json!({"dev_mode": true, "audio": {"activation": "push_to_talk", "input_device": "hw:1", "bitrate": 24000}}),
             Talk::Beeps,
         );
         assert_eq!(
             after,
-            "dev_mode = true\n\n[audio]\nactivation = \"voice\"\ninput_device = \"yakvc:test-beeps\"\nbitrate = 24000\n"
+            json!({"dev_mode": true, "audio": {"activation": "voice", "input_device": "yakvc:test-beeps", "bitrate": 24000}, "dev": {"fly_speed": 0.1}})
         );
         // Talking again changes nothing.
-        assert_eq!(talking(&after, Talk::Beeps), after);
+        assert_eq!(talking(after.clone(), Talk::Beeps), after);
         // Not talking puts the default microphone back, and keeps the activation.
         assert_eq!(
-            talking(&after, Talk::No),
-            "dev_mode = true\n\n[audio]\nactivation = \"voice\"\nbitrate = 24000\n"
+            talking(after, Talk::No),
+            json!({"dev_mode": true, "audio": {"activation": "voice", "bitrate": 24000}, "dev": {"fly_speed": 0.1}})
         );
     }
 
     #[test]
     fn a_talker_with_a_file_plays_it_from_dev() {
-        let after = talking("dev_mode = true\n", Talk::File(Path::new("/b.wav")));
+        let after = talking(json!({"dev_mode": true}), Talk::File(Path::new("/b.wav")));
         assert_eq!(
             after,
-            "dev_mode = true\n\n[audio]\nactivation = \"voice\"\n\n[dev]\nwav = \"/b.wav\"\n"
+            json!({"dev_mode": true, "audio": {"activation": "voice"}, "dev": {"fly_speed": 0.1, "wav": "/b.wav"}})
         );
         assert_eq!(
-            talking(&after, Talk::No),
-            "dev_mode = true\n\n[audio]\nactivation = \"voice\"\n"
+            talking(after, Talk::No),
+            json!({"dev_mode": true, "audio": {"activation": "voice"}, "dev": {"fly_speed": 0.1}})
         );
     }
 
     #[test]
     fn a_player_s_own_microphone_is_kept_when_not_talking() {
-        let before = "[audio]\ninput_device = \"hw:1\"\n";
-        assert_eq!(talking(before, Talk::No), before);
+        let before = json!({"audio": {"input_device": "hw:1"}});
+        assert_eq!(
+            talking(before.clone(), Talk::No),
+            json!({"audio": {"input_device": "hw:1"}, "dev": {"fly_speed": 0.1}})
+        );
     }
 }

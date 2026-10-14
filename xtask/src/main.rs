@@ -58,6 +58,10 @@ enum Cmd {
         /// host only.
         #[arg(long)]
         from: Option<PathBuf>,
+        /// Skip the mod's unit tests, for CI's release jar: another job
+        /// already ran them.
+        #[arg(long)]
+        skip_tests: bool,
     },
     /// Package a release jar as launcher packs (a Modrinth .mrpack and a Prism
     /// instance zip), each with Fabric API inside.
@@ -127,16 +131,16 @@ enum Cmd {
     /// Start the yakvc-server image twice, as the service does: the first
     /// start must create its keys in a fresh volume, the second keep them.
     ServerSmoke,
-    /// Start a dev-mode yakvc-server and print the client config for it.
+    /// Start a dev-mode yakvc-server and print the client settings for it.
     Dev {
         /// Port on 127.0.0.1.
         #[arg(long, default_value_t = 7843)]
         port: u16,
-        /// Keys, server config and client.toml (default target/dev-server).
+        /// Keys, server config and settings.json (default target/dev-server).
         #[arg(long)]
         dir: Option<PathBuf>,
-        /// Also write the client config into runClient's game directory
-        /// (mod/run/config/yakvc/client.toml).
+        /// Also write the client settings into runClient's game directory
+        /// (mod/run/config/yakvc/settings.json).
         #[arg(long)]
         write_client_config: bool,
         /// Check accounts with Mojang instead of taking dev tickets, for the
@@ -203,7 +207,7 @@ fn main() -> Result<()> {
         ),
         Cmd::Cli { target, out } => cli(&target, &out),
         Cmd::Header { check } => header(check),
-        Cmd::Dist { from } => dist(from.as_deref()),
+        Cmd::Dist { from, skip_tests } => dist(from.as_deref(), skip_tests),
         Cmd::ServerImage { save } => {
             server_image()?;
             match save {
@@ -227,7 +231,7 @@ fn main() -> Result<()> {
         Cmd::CheckJar { jar } => ci::check_jar(&jar),
         Cmd::ServerSmoke => ci::server_smoke(),
         Cmd::Pack { jar, out } => pack::pack(
-            &jar.unwrap_or_else(|| root().join(format!("dist/yakvc-{VERSION}.jar"))),
+            &jar.unwrap_or_else(|| root().join(format!("dist/yakvc-{}.jar", version()))),
             &out.unwrap_or_else(|| root().join("dist")),
         ),
         Cmd::Dev {
@@ -280,8 +284,30 @@ fn root() -> PathBuf {
         .to_path_buf()
 }
 
-/// The workspace version, which the mod shares.
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The version this build carries, which the mod shares: the workspace
+/// version, or for a dev build (CI sets `YAKVC_DEV_BUILD` to its run number)
+/// that version plus `dev.<n>`, so dev builds sort after the version they
+/// start from and before the next one: 0.1.0-alpha.3.dev.7 lies between
+/// alpha.3 and alpha.4. Cargo builds and Gradle get it as `YAKVC_VERSION`
+/// (see `pass_version`), so nothing has to be committed for it.
+fn version() -> String {
+    let base = env!("CARGO_PKG_VERSION");
+    match env::var("YAKVC_DEV_BUILD") {
+        Ok(n) if !n.is_empty() => {
+            let separator = if base.contains('-') { '.' } else { '-' };
+            format!("{base}{separator}dev.{n}")
+        }
+        _ => base.to_owned(),
+    }
+}
+
+/// Gives a dev build's version to `cmd` as `YAKVC_VERSION`. Only then, since
+/// a changed value rebuilds the engine crate that reads it.
+fn pass_version(cmd: &mut Command) {
+    if env::var_os("YAKVC_DEV_BUILD").is_some_and(|n| !n.is_empty()) {
+        cmd.env("YAKVC_VERSION", version());
+    }
+}
 
 /// The oldest glibc the Linux natives run on.
 const GLIBC: &str = "2.17";
@@ -495,6 +521,7 @@ fn parse_triple(triple: &str) -> Result<(&'static str, &'static str)> {
 fn cargo(args: &[&str]) -> Command {
     let mut cmd = Command::new(env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
     cmd.current_dir(root()).args(args).arg("--locked");
+    pass_version(&mut cmd);
     cmd
 }
 
@@ -554,8 +581,9 @@ fn sha256(path: &Path) -> Result<String> {
 }
 
 /// Packages the release jar from the staged natives and THIRD_PARTY_LICENSES
-/// with the Gradle build, which also runs the mod's unit tests.
-fn dist(from: Option<&Path>) -> Result<()> {
+/// with the Gradle build, which also runs the mod's unit tests unless
+/// `skip_tests`.
+fn dist(from: Option<&Path>, skip_tests: bool) -> Result<()> {
     let work = root().join("target/dist");
     let natives_dir = work.join("natives");
     if natives_dir.exists() {
@@ -589,13 +617,19 @@ fn dist(from: Option<&Path>) -> Result<()> {
     } else {
         "gradlew"
     };
-    run(Command::new(root().join("mod").join(gradlew))
+    let mut gradle = Command::new(root().join("mod").join(gradlew));
+    pass_version(&mut gradle);
+    gradle
         .current_dir(root().join("mod"))
         .arg("build")
         .arg(format!("-Pyakvc.prebuiltNatives={}", natives_dir.display()))
-        .arg(format!("-Pyakvc.thirdPartyLicenses={}", licenses.display())))?;
+        .arg(format!("-Pyakvc.thirdPartyLicenses={}", licenses.display()));
+    if skip_tests {
+        gradle.args(["-x", "test"]);
+    }
+    run(&mut gradle)?;
 
-    let jar = format!("yakvc-{VERSION}.jar");
+    let jar = format!("yakvc-{}.jar", version());
     let dist = root().join("dist");
     fs::create_dir_all(&dist)?;
     fs::copy(root().join("mod/build/libs").join(&jar), dist.join(&jar))?;
@@ -625,7 +659,7 @@ fn server_image() -> Result<()> {
     fs::copy(root().join("deploy/Dockerfile"), context.join("Dockerfile"))?;
     third_party_licenses("yakvc-server", &context.join("THIRD_PARTY_LICENSES"))?;
 
-    let tag = format!("yakvc-server:{VERSION}");
+    let tag = format!("yakvc-server:{}", version());
     run(Command::new("docker")
         // `--pull` checks the pinned base against the registry, so a stale
         // local copy under the same tag can't slip into a release.

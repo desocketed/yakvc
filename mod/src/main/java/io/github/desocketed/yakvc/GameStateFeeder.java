@@ -5,9 +5,10 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.mojang.authlib.GameProfile;
-import io.github.desocketed.yakvc.config.ClientConfig;
 import io.github.desocketed.yakvc.config.PlayerVolumes;
+import io.github.desocketed.yakvc.config.Settings;
 import io.github.desocketed.yakvc.config.SoundTuning;
+import io.github.desocketed.yakvc.config.SpatialAudio;
 import io.github.desocketed.yakvc.input.VoiceKeys;
 import io.github.desocketed.yakvc.natives.EngineEvent;
 import io.github.desocketed.yakvc.natives.NativeBridge;
@@ -16,6 +17,7 @@ import io.github.desocketed.yakvc.natives.VoiceStats;
 import io.github.desocketed.yakvc.natives.YakVcException;
 import io.github.desocketed.yakvc.ui.EngineErrorToasts;
 import io.github.desocketed.yakvc.ui.GroupChat;
+import io.github.desocketed.yakvc.ui.SoundTuningScreen;
 import io.github.desocketed.yakvc.ui.VoiceMenuScreen;
 import io.github.desocketed.yakvc.ui.VoiceToasts;
 import java.lang.foreign.MemorySegment;
@@ -86,7 +88,9 @@ public final class GameStateFeeder {
 	private final SessionJoiner joiner;
 	private final PlayerVolumes volumes;
 	private final byte[] eventBuffer = new byte[EVENT_BUFFER_BYTES];
-	private ClientConfig config;
+	private Settings settings;
+	/** The render distance the engine's voice range was last capped to, 0 before the first tick. */
+	private int rangeRenderChunks;
 
 	/** Volatile because Fabric may fire DISCONNECT off the client thread. */
 	private volatile @Nullable VoiceSession session;
@@ -112,8 +116,13 @@ public final class GameStateFeeder {
 	/** The listener's surroundings, smoothed from tick to tick. */
 	private Room room = Room.OPEN_AIR;
 	private final FarEchoes farEchoes = new FarEchoes();
-	/** The mod's half of the {@code [acoustics]} tuning, read again whenever the config changes. */
+	private List<FarEchoes.Echo> echoes = List.of();
+	/** Only with dev_mode: a file of commands to send, for tools steering a dev session. */
+	private final DevCommands devCommands = new DevCommands(FabricLoader.getInstance().getGameDir());
+	/** The mod's half of the {@code acoustics} tuning, read again whenever the settings change. */
 	private SoundTuning tuning;
+	/** How much of the acoustics to work out each tick, read again whenever the settings change. */
+	private SpatialAudio spatialAudio;
 	/** Each occluded player's way around, if any: see {@link #heard}. */
 	private final Map<UUID, Optional<SoundPath>> detours = new HashMap<>();
 	private static final int DETOUR_TICKS = 10;
@@ -124,6 +133,8 @@ public final class GameStateFeeder {
 	/** The address of the voice sink the engine was last given; 0 for the speakers. */
 	private long voiceSink;
 	private final Map<UUID, PlayerVolumes.Setting> peerAudio = new HashMap<>();
+	/** The friends list the engine was given last; the menu's Friend toggle changes {@link #volumes}. */
+	private List<UUID> friends;
 
 	/** Players in the tab list that are blocked in Social Interactions, when {@code mute_blocked_players} is on. */
 	private Set<UUID> blocked = Set.of();
@@ -148,6 +159,8 @@ public final class GameStateFeeder {
 	private long micLevelNanos;
 	/** Whether the debug overlay shows, and its latest snapshot (null until the first refresh). */
 	private boolean debugOverlay;
+	/** {@code relay_only} as the engine started, which is what it uses until a restart: it builds its endpoint once. */
+	private final boolean startedRelayOnly;
 	private @Nullable VoiceStats stats;
 	private int ticksUntilStats;
 	/** Whether the last tick had a server session, to leave our group once it ends. */
@@ -155,19 +168,23 @@ public final class GameStateFeeder {
 	/** Invites and group changes, told in chat and toasts. */
 	private final GroupChat groupChat = new GroupChat(this);
 
-	public GameStateFeeder(NativeBridge bridge, MemorySegment engine, ClientConfig config, VoiceKeys keys,
+	public GameStateFeeder(NativeBridge bridge, MemorySegment engine, Settings settings, VoiceKeys keys,
 			SessionJoiner joiner, PlayerVolumes volumes) {
 		this.bridge = bridge;
 		this.engine = engine;
-		this.config = config;
-		this.tuning = SoundTuning.of(config);
+		this.settings = settings;
+		this.startedRelayOnly = settings.relayOnly();
+		this.tuning = SoundTuning.of(settings.acoustics());
+		this.spatialAudio = settings.spatialAudio();
 		this.keys = keys;
 		this.joiner = joiner;
 		this.volumes = volumes;
+		// The engine was created with this list.
+		this.friends = volumes.friends();
 	}
 
 	public void join(ClientPacketListener connection, Minecraft minecraft) {
-		session = new VoiceSession(connection, minecraft, config);
+		session = new VoiceSession(connection, minecraft, settings);
 	}
 
 	public void leave() {
@@ -186,6 +203,14 @@ public final class GameStateFeeder {
 		step(this::refreshStats);
 	}
 
+	/** A dev world is big: with dev.fly_speed set, creative flight goes that fast. Set every tick, as the server resets it. */
+	private void flyFaster(Minecraft minecraft) {
+		Double speed = settings.dev().flySpeed();
+		if (speed != null && minecraft.player != null && minecraft.player.getAbilities().flying) {
+			minecraft.player.getAbilities().setFlyingSpeed(speed.floatValue());
+		}
+	}
+
 	/** Polls the engine's snapshot a few times a second, and only while the overlay shows it. */
 	private void refreshStats() {
 		if (!debugOverlay || --ticksUntilStats > 0) return;
@@ -195,9 +220,14 @@ public final class GameStateFeeder {
 
 	private void feedGame(Minecraft minecraft) {
 		keys.tick();
+		flyFaster(minecraft);
+		if (settings.devMode()) devCommands.tick(minecraft);
 		if (keys.debugOverlayPressed()) setDebugOverlay(!debugOverlay);
 		if (keys.menuPressed() && minecraft.gui.screen() == null) {
 			minecraft.gui.setScreen(new VoiceMenuScreen(null, this));
+		}
+		if (keys.soundTuningPressed() && minecraft.gui.screen() == null) {
+			minecraft.gui.setScreen(new SoundTuningScreen(null, minecraft.options, this));
 		}
 		VoiceSession session = this.session;
 		step(() -> feedIdentity(minecraft, session));
@@ -222,9 +252,25 @@ public final class GameStateFeeder {
 			else clearWorld();
 		});
 		feedPeerAudio(players);
+		step(this::feedFriends);
 		step(() -> feedInput(active ? inputFlags(player) : 0));
 		step(() -> feedVolume(minecraft.options.getFinalSoundSourceVolume(SoundSource.VOICE)));
 		step(() -> feedDevice(minecraft.options.soundDevice().get()));
+		step(() -> feedRenderDistance(minecraft.options.renderDistance().get()));
+	}
+
+	private void feedRenderDistance(int renderChunks) {
+		if (renderChunks == rangeRenderChunks) return;
+		bridge.updateConfig(engine, settings.engineToml(renderChunks, friends));
+		rangeRenderChunks = renderChunks;
+	}
+
+	/** The friends list is part of the engine's config, so a Friend toggle in the menu is one more config update. */
+	private void feedFriends() {
+		List<UUID> wanted = volumes.friends();
+		if (wanted.equals(friends)) return;
+		bridge.updateConfig(engine, settings.engineToml(rangeRenderChunks, wanted));
+		friends = wanted;
 	}
 
 	/**
@@ -253,24 +299,25 @@ public final class GameStateFeeder {
 	}
 
 	/**
-	 * Applies a changed config to the running engine, which checks it. Returns the engine's complaint, or null if it
-	 * took the config; only then may it be saved.
+	 * Applies changed settings to the running engine, which checks them. Returns the engine's complaint, or null if it
+	 * took them; only then may they be saved.
 	 */
-	public @Nullable String applyConfig(ClientConfig newConfig) {
+	public @Nullable String applySettings(Settings changed) {
 		if (closed) return "the voice engine is stopped";
 		try {
-			bridge.updateConfig(engine, newConfig.toml());
+			bridge.updateConfig(engine, changed.engineToml(rangeRenderChunks, friends));
 		} catch (YakVcException e) {
 			fail(e);
 			return e.getMessage();
 		}
-		config = newConfig;
-		tuning = SoundTuning.of(newConfig);
+		settings = changed;
+		tuning = SoundTuning.of(changed.acoustics());
+		spatialAudio = changed.spatialAudio();
 		ticksUntilBlockedRefresh = 0;
 		return null;
 	}
 
-	/** The audio devices as id to name in the system's order. The id goes in the config, the name is for the player. */
+	/** The audio devices as id to name in the system's order. The id goes in the settings, the name is for the player. */
 	public record Devices(Map<String, String> inputs, Map<String, String> outputs) {
 		public static final Devices NONE = new Devices(Map.of(), Map.of());
 
@@ -399,7 +446,7 @@ public final class GameStateFeeder {
 		if (--ticksUntilBlockedRefresh > 0) return;
 		ticksUntilBlockedRefresh = BLOCKED_REFRESH_TICKS;
 		Set<UUID> now = new HashSet<>();
-		if (config.muteBlockedPlayers()) {
+		if (settings.muteBlockedPlayers()) {
 			for (UUID uuid : players) {
 				if (minecraft.getPlayerSocialManager().isBlocked(uuid)) now.add(uuid);
 			}
@@ -471,12 +518,19 @@ public final class GameStateFeeder {
 		Vec3 eye = camera.isInitialized() ? camera.position() : player.getEyePosition();
 		float yaw = camera.isInitialized() ? camera.yRot() : player.getYRot();
 		float pitch = camera.isInitialized() ? camera.xRot() : player.getXRot();
-		room = room.towards(Room.around(minecraft.level, eye, tuning));
+		// Below Full the rooms and far echoes aren't cast at all: open air and no echoes leave the engine's mix dry.
+		echoes = List.of();
+		if (spatialAudio == SpatialAudio.FULL) {
+			room = room.towards(Room.around(minecraft.level, eye, tuning));
+			echoes = farEchoes.update(minecraft.level, eye, tuning);
+		} else {
+			room = Room.OPEN_AIR;
+			farEchoes.clear();
+		}
 		double[] listener = new double[NativeBridge.LISTENER_LENGTH];
 		System.arraycopy(new double[] {eye.x, eye.y, eye.z, yaw, pitch, room.reverb(), room.criticalDistance(),
 				room.decay(), room.echo(), room.echoDelay()}, 0, listener, 0, 10);
 		// Unused slots stay zero: silent. The engine glides each echo from tick to tick.
-		List<FarEchoes.Echo> echoes = farEchoes.update(minecraft.level, eye, tuning);
 		for (int i = 0; i < echoes.size(); i++) {
 			FarEchoes.Echo echo = echoes.get(i);
 			System.arraycopy(new double[] {echo.direction().x, echo.direction().y, echo.direction().z, echo.delay(),
@@ -491,7 +545,9 @@ public final class GameStateFeeder {
 			if (blocked.contains(other.getUUID())) continue;
 			Vec3 pos = other.getEyePosition();
 			uuids.add(other.getUUID());
-			SoundPath heard = heard(minecraft.level, eye, other);
+			// Off hears everyone straight from where they stand, as if no walls were in the way.
+			SoundPath heard = spatialAudio == SpatialAudio.OFF ? new SoundPath(pos, 0)
+					: heard(minecraft.level, eye, other);
 			players.add(new double[] {pos.x, pos.y, pos.z, heard.occlusion(), heard.heardFrom().x,
 					heard.heardFrom().y, heard.heardFrom().z});
 		}
@@ -509,7 +565,7 @@ public final class GameStateFeeder {
 	private void feedPeerAudio(Set<UUID> players) {
 		for (UUID uuid : players) {
 			PlayerVolumes.Setting saved = volumes.get(uuid);
-			PlayerVolumes.Setting wanted = new PlayerVolumes.Setting(saved.volume(), saved.muted() || blocked(uuid));
+			PlayerVolumes.Setting wanted = saved.withMuted(saved.muted() || blocked(uuid));
 			if (wanted.equals(peerAudio.getOrDefault(uuid, PlayerVolumes.DEFAULT))) continue;
 			peerAudio.put(uuid, wanted);
 			step(() -> bridge.setPeerVolume(engine, uuid, wanted.volume(), wanted.muted()));
@@ -668,8 +724,12 @@ public final class GameStateFeeder {
 		return closed;
 	}
 
-	public ClientConfig config() {
-		return config;
+	public boolean startedRelayOnly() {
+		return startedRelayOnly;
+	}
+
+	public Settings settings() {
+		return settings;
 	}
 
 	public VoiceKeys keys() {
@@ -680,7 +740,7 @@ public final class GameStateFeeder {
 		return groupChat;
 	}
 
-	/** Saved per-player volume and mute. Changes reach the engine on the next tick. */
+	/** Saved per-player volume, mute and friend mark. Changes reach the engine on the next tick. */
 	public PlayerVolumes volumes() {
 		return volumes;
 	}
@@ -727,6 +787,16 @@ public final class GameStateFeeder {
 	/** The last {@code NativeBridge.INPUT_*} flags sent. For tests. */
 	public int inputFlags() {
 		return inputFlags;
+	}
+
+	/** The listener's surroundings as last sent. For tests. */
+	public Room room() {
+		return room;
+	}
+
+	/** The far echoes as last sent, for the debug overlay. */
+	public List<FarEchoes.Echo> echoes() {
+		return echoes;
 	}
 
 	public boolean debugOverlay() {

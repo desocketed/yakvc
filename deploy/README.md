@@ -102,7 +102,7 @@ services.yakvc-server = {
 };
 ```
 
-**3. Rebuild** (`sudo nixos-rebuild switch`), then `journalctl -u yakvc-server` prints the endpoint id, issuer id and (with a relay) the relay URL, for clients' `client.toml` (see "Pointing clients at the server" below).
+**3. Rebuild** (`sudo nixos-rebuild switch`), then `journalctl -u yakvc-server` prints the endpoint id, issuer id and (with a relay) the relay URL, for clients' `settings.json` (see "Pointing clients at the server" below).
 
 ## Without Docker
 
@@ -121,15 +121,19 @@ On first start the server creates its two keys in `/var/lib/yakvc` (really `/var
 
 ## Pointing clients at the server
 
-Clients use the project's default server unless their `config/yakvc/client.toml` names another. With the ids the server printed:
+Clients use the project's default server unless told otherwise. With a relay, the easy way is the server code: `yakvc-server code --config /etc/yakvc/config.toml` prints one line, `yakvc1:<endpoint id>:<issuer id>:<relay URL>` (the server also prints it at each start, so it is in `journalctl -u yakvc-server`; under Docker, `docker exec yakvc-server yakvc-server code --config /etc/yakvc/config.toml`). Players paste it into **Voice Server** in Yak VC's settings and restart the game, or a modpack ships it as `{"server": "yakvc1:…"}` in `config/yakvc/settings.json`. Clients then reach the rendezvous through the relay, by hostname, so the server can move with a DNS change.
 
-```toml
-trusted_issuers = ["<issuer id>"]
+Without a relay, or to list direct addresses as well, spell it out in `config/yakvc/settings.json` with the ids the server printed (a `server` code, when there is one too, wins over these keys):
 
-[rendezvous]
-endpoint_id = "<endpoint id>"
-addrs = ["<server public IPv4>:7843", "[<server public IPv6>]:7843"]
-relay = "https://relay.example.com/"
+```json
+{
+  "trusted_issuers": ["<issuer id>"],
+  "rendezvous": {
+    "endpoint_id": "<endpoint id>",
+    "addrs": ["<server public IPv4>:7843", "[<server public IPv6>]:7843"],
+    "relay": "https://relay.example.com/"
+  }
+}
 ```
 
 List both addresses so that clients on IPv6-only networks can reach the rendezvous directly; one alone works too.

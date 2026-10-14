@@ -1,6 +1,6 @@
 package io.github.desocketed.yakvc;
 
-import io.github.desocketed.yakvc.config.ClientConfig;
+import io.github.desocketed.yakvc.config.Settings;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.client.multiplayer.ServerData;
@@ -27,13 +27,13 @@ public final class VoiceSession {
 	private boolean waiting;
 	private @Nullable String offReason;
 
-	public VoiceSession(ClientPacketListener connection, Minecraft minecraft, ClientConfig config) {
+	public VoiceSession(ClientPacketListener connection, Minecraft minecraft, Settings settings) {
 		this.connection = connection;
 		this.serverData = connection.getServerData();
 		this.motdAtJoin = serverData == null ? null : serverData.motd;
 		// Singleplayer has no server data and no MOTD to wait for.
 		this.waiting = serverData != null;
-		if (config.respectChatRestrictions() && chatDisabled(minecraft)) {
+		if (settings.respectChatRestrictions() && chatDisabled(minecraft)) {
 			offReason = "chat is disabled for this account";
 			YakVcClient.LOGGER.info("Voice off: {}", offReason);
 		}

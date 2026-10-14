@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 
 use serde::{Deserialize, Serialize};
-use yakvc_proto::{EndpointAddr, EndpointId, IssuerId, RelayUrl, Uuid};
+use yakvc_proto::{EndpointAddr, EndpointId, IssuerId, RelayUrl, ServerCode, Uuid};
 
 /// Engine configuration, parsed from the engine's keys in
 /// `client.toml`. Unknown keys are ignored, because the Java side keeps its
@@ -9,6 +9,10 @@ use yakvc_proto::{EndpointAddr, EndpointId, IssuerId, RelayUrl, Uuid};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    /// A server code (`yakvc-server code`) naming another rendezvous and its
+    /// issuer. It beats `rendezvous`, so what a player pastes in the settings
+    /// wins over a modpack's preset, and clearing it goes back to that preset.
+    pub server: Option<String>,
     /// The rendezvous to register with. Left out of `client.toml`, it is the
     /// built-in server ([`built_in_rendezvous`]), except in `dev_mode`, which
     /// then runs without one (voice only in direct calls).
@@ -26,8 +30,10 @@ pub struct Config {
     pub relay_only: bool,
     /// Voice range in blocks.
     pub voice_range: f32,
-    /// When set, only these players are heard and sent to.
-    pub friends_only: Option<Vec<Uuid>>,
+    /// Players marked as friends: who `friends_only` and `invites = "friends"` allow.
+    pub friends: Vec<Uuid>,
+    /// Only `friends` are heard and sent to.
+    pub friends_only: bool,
     /// Who may invite us to a group.
     pub invites: InvitesFrom,
     pub audio: AudioConfig,
@@ -103,17 +109,17 @@ pub struct AcousticsConfig {
 }
 
 impl Default for AcousticsConfig {
-    /// Voices that carry far and spaces that ring, like a mountain climbing
-    /// game.
+    /// Voices that carry far in the open and stop at a wall, tuned by ear in
+    /// the maintainer's playtests.
     fn default() -> Self {
         AcousticsConfig {
             full_volume_distance: 4.0,
-            distance_rolloff: 0.6,
-            occlusion_attenuation: 0.75,
-            muffled_cutoff_hz: 600.0,
-            reverb_level: 0.85,
+            distance_rolloff: 4.0,
+            occlusion_attenuation: 1.0,
+            muffled_cutoff_hz: 100.0,
+            reverb_level: 0.35,
             reverb_damping: 0.25,
-            echo_feedback: 0.4,
+            echo_feedback: 0.12,
             echo_level: 1.0,
         }
     }
@@ -137,7 +143,7 @@ pub struct DevConfig {
 #[serde(rename_all = "snake_case")]
 pub enum InvitesFrom {
     Everyone,
-    /// Only players on the `friends_only` list; nobody when it is unset.
+    /// Only players on the `friends` list.
     Friends,
     Nobody,
 }
@@ -160,6 +166,19 @@ pub enum ConfigError {
 impl Config {
     pub fn from_toml(toml: &str) -> Result<Config, ConfigError> {
         let mut config: Config = toml::from_str(toml)?;
+        if let Some(code) = &config.server {
+            let code: ServerCode = code
+                .parse()
+                .map_err(|e: yakvc_proto::ServerCodeError| ConfigError::Invalid(e.to_string()))?;
+            config.rendezvous = Some(RendezvousConfig {
+                endpoint_id: code.endpoint_id,
+                addrs: Vec::new(),
+                relay: Some(code.relay),
+            });
+            if !config.trusted_issuers.contains(&code.issuer_id) {
+                config.trusted_issuers.push(code.issuer_id);
+            }
+        }
         if config.rendezvous.is_none() && !config.dev_mode {
             let (rendezvous, issuer) = built_in_rendezvous();
             config.rendezvous = Some(rendezvous);
@@ -174,7 +193,7 @@ impl Config {
     fn validate(&self) -> Result<(), ConfigError> {
         let invalid = |msg: &str| Err(ConfigError::Invalid(msg.to_owned()));
         if !(1.0..=MAX_VOICE_RANGE).contains(&self.voice_range) {
-            return invalid("voice_range must be between 1 and 256 blocks");
+            return invalid("voice_range must be between 1 and 512 blocks");
         }
         if !(MIN_BITRATE..=MAX_BITRATE).contains(&self.audio.bitrate) {
             return invalid("audio.bitrate must be between 16000 and 64000");
@@ -253,19 +272,22 @@ fn built_in_rendezvous() -> (RendezvousConfig, IssuerId) {
 /// Opus bitrates the design allows.
 pub(crate) const MIN_BITRATE: u32 = 16_000;
 pub(crate) const MAX_BITRATE: u32 = 64_000;
-const MAX_VOICE_RANGE: f32 = 256.0;
+/// Minecraft's farthest render distance, 32 chunks; players past it aren't tracked.
+const MAX_VOICE_RANGE: f32 = 512.0;
 const MAX_INPUT_GAIN: f32 = 10.0;
 
 impl Default for Config {
     fn default() -> Self {
         Config {
+            server: None,
             rendezvous: None,
             trusted_issuers: Vec::new(),
             dev_mode: false,
             verified_only: false,
             relay_only: false,
-            voice_range: 48.0,
-            friends_only: None,
+            voice_range: 256.0,
+            friends: Vec::new(),
+            friends_only: false,
             invites: InvitesFrom::Everyone,
             audio: AudioConfig::default(),
             acoustics: AcousticsConfig::default(),
@@ -317,7 +339,8 @@ mod tests {
             voice_range = 32.0
             relay_only = true
             dev_mode = true
-            friends_only = ["00000000-0000-0000-0000-000000000001"]
+            friends = ["00000000-0000-0000-0000-000000000001"]
+            friends_only = true
             invites = "friends"
             # Java's own settings live in the same file.
             show_talking_indicator = true
@@ -333,7 +356,8 @@ mod tests {
         .unwrap();
         assert_eq!(config.voice_range, 32.0);
         assert!(config.relay_only && config.dev_mode);
-        assert_eq!(config.friends_only, Some(vec![Uuid::from_u128(1)]));
+        assert_eq!(config.friends, vec![Uuid::from_u128(1)]);
+        assert!(config.friends_only);
         assert_eq!(config.invites, InvitesFrom::Friends);
         assert_eq!(config.audio.activation, Activation::Voice);
         assert_eq!(config.audio.bitrate, 32_000);
@@ -360,6 +384,40 @@ mod tests {
         assert_eq!(rendezvous.endpoint_id, id);
         assert_eq!(rendezvous.addrs, vec!["127.0.0.1:4433".parse().unwrap()]);
         assert!(rendezvous.relay.is_some());
+    }
+
+    #[test]
+    fn a_server_code_sets_the_rendezvous_and_its_issuer() {
+        let code = ServerCode {
+            endpoint_id: iroh::SecretKey::generate().public(),
+            issuer_id: yakvc_proto::IssuerKey::generate().id(),
+            relay: "https://relay.example.com/".parse().unwrap(),
+        };
+        let other = iroh::SecretKey::generate().public();
+        let config = Config::from_toml(&format!(
+            r#"
+            server = "{code}"
+
+            [rendezvous]
+            endpoint_id = "{other}"
+            addrs = ["127.0.0.1:4433"]
+            "#
+        ))
+        .unwrap();
+        assert_eq!(
+            config.rendezvous,
+            Some(RendezvousConfig {
+                endpoint_id: code.endpoint_id,
+                addrs: Vec::new(),
+                relay: Some(code.relay),
+            }),
+            "the code beats the rendezvous section"
+        );
+        assert_eq!(config.trusted_issuers, vec![code.issuer_id]);
+        assert!(matches!(
+            Config::from_toml("server = \"yakvc1:nope\""),
+            Err(ConfigError::Invalid(_))
+        ));
     }
 
     #[test]
@@ -407,6 +465,7 @@ mod tests {
         for toml in [
             "voice_range = 0.0",
             "voice_range = 1000.0",
+            "voice_range = 513.0",
             "[audio]\nbitrate = 8000",
             "[audio]\ninput_gain = -1.0",
             "[audio]\nvad_threshold_db = 3.0",

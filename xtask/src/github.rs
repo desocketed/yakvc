@@ -81,9 +81,16 @@ fn git(args: &[&str]) -> Result<String> {
 
 /// `cargo xtask release`, the `release` job on a version tag: the GitHub
 /// release from the downloaded artifacts (`dist/`, `release/` with the CLIs,
-/// `server/`), and the server image on GHCR.
+/// `server/`), and the server image on GHCR. On a dev build (a manual run
+/// with "Publish a dev build") it tags the built commit itself and publishes
+/// a prerelease only.
 pub(crate) fn release() -> Result<()> {
-    let tag = env::var("GITHUB_REF_NAME")?;
+    let dev = env::var("YAKVC_DEV_BUILD").is_ok_and(|n| !n.is_empty());
+    let tag = if dev {
+        format!("v{}", crate::version())
+    } else {
+        env::var("GITHUB_REF_NAME")?
+    };
     let version = tag.strip_prefix('v').context("not a version tag")?;
     let (dist, files, server) = (
         root().join("dist"),
@@ -125,12 +132,25 @@ pub(crate) fn release() -> Result<()> {
     // A version like 0.2.0-beta.1 makes a prerelease.
     let prerelease = version.contains('-');
     let mut gh = Command::new("gh");
-    gh.args(["release", "create", &tag, "--generate-notes"]);
+    gh.args(["release", "create", &tag]);
+    if dev {
+        gh.args([
+            "--target",
+            &env::var("GITHUB_SHA")?,
+            "--notes",
+            &dev_notes(&tag, version)?,
+        ]);
+    } else {
+        gh.arg("--generate-notes");
+    }
     if prerelease {
         gh.arg("--prerelease");
     }
     run(gh.args(names.iter().map(|name| files.join(name))))?;
 
+    if dev {
+        return prune_dev_releases();
+    }
     // Alphas are playtest builds: a GitHub prerelease with no server image.
     if version.contains("-alpha") {
         return Ok(());
@@ -164,6 +184,67 @@ pub(crate) fn release() -> Result<()> {
         let remote = format!("{image}:{tag}");
         run(Command::new("docker").args(["tag", "yakvc-server:latest", &remote]))?;
         run(Command::new("docker").args(["push", &remote]))?;
+    }
+    Ok(())
+}
+
+/// A dev build's release notes, in the releases' usual shape: a short line
+/// for players, the download links, then the commits since the previous
+/// release (dev or not) collapsed under "Technical details", so testers can
+/// see what's in it.
+fn dev_notes(tag: &str, version: &str) -> Result<String> {
+    let sha = env::var("GITHUB_SHA")?;
+    let branch = env::var("GITHUB_REF_NAME")?;
+    let mut notes = String::from(
+        "**Development build for playtesting.** Not a release: it may be broken, and \
+         everyone you play with needs this same build. Please [report anything \
+         odd](https://github.com/desocketed/yakvc/issues).\n\n",
+    );
+    notes.push_str(&downloads(tag, version));
+    notes.push_str("\n\n<details>\n<summary>Technical details</summary>\n\n");
+    writeln!(notes, "Built from `{branch}` at {sha}.\n")?;
+    if let Ok(previous) = git(&["describe", "--tags", "--abbrev=0", "--match", "v*", "HEAD"]) {
+        let log = git(&[
+            "log",
+            "--no-merges",
+            "--format=- %s",
+            &format!("{previous}..HEAD"),
+        ])?;
+        write!(notes, "Changes since {previous}:\n\n{log}\n")?;
+    }
+    notes.push_str("\n</details>\n\n<!-- claude -->\n");
+    Ok(notes)
+}
+
+/// The notes' download line: which file is the mod, and the launcher packs,
+/// since players otherwise have to guess among the assets.
+fn downloads(tag: &str, version: &str) -> String {
+    let url =
+        format!("https://github.com/desocketed/yakvc/releases/download/{tag}/yakvc-{version}");
+    format!(
+        "**Download:** [the mod (`yakvc-{version}.jar`)]({url}.jar) for your `mods` folder \
+         (needs Fabric API), or a ready-made instance with Fabric API included: \
+         [Modrinth App (`.mrpack`)]({url}.mrpack) · [Prism Launcher (`.zip`)]({url}-prism.zip)."
+    )
+}
+
+/// Keeps only the newest few dev releases, deleting older ones with their
+/// tags, so they don't bury the real releases.
+fn prune_dev_releases() -> Result<()> {
+    const KEEP: usize = 5;
+    // Newest first.
+    let tags = output(Command::new("gh").args([
+        "release",
+        "list",
+        "--limit",
+        "100",
+        "--json",
+        "tagName",
+        "--jq",
+        ".[].tagName",
+    ]))?;
+    for tag in tags.lines().filter(|tag| tag.contains("dev.")).skip(KEEP) {
+        run(Command::new("gh").args(["release", "delete", tag, "--cleanup-tag", "--yes"]))?;
     }
     Ok(())
 }

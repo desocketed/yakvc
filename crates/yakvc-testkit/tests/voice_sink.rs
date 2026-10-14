@@ -158,7 +158,7 @@ async fn a_sink_gets_nearby_voice_instead_of_the_speakers() {
     let got = voice_from(&recorder, alice.uuid()).await;
     assert_eq!(got.samples, 960);
     assert!(got.positioned && !got.group, "{got:?}");
-    assert_eq!(got.range, 48.0);
+    assert_eq!(got.range, 256.0);
     assert_eq!(got.volume, 1.0);
     // Nothing in the way: heard from where alice stands, as the speakers would,
     // once bob's world has her there (her first frames can beat her move).
@@ -181,7 +181,7 @@ async fn a_sink_gets_nearby_voice_instead_of_the_speakers() {
     assert_eq!(bob.recording().audible_frames(), speakers);
 
     // Out of range, the sink gets nothing more, as the speakers wouldn't.
-    bob.move_to(Vec3::new(100.0, 64.0, 0.0));
+    bob.move_to(Vec3::new(300.0, 64.0, 0.0));
     sleep(Duration::from_millis(500)).await;
     let count = recorder.got.lock().unwrap().len();
     sleep(Duration::from_millis(500)).await;

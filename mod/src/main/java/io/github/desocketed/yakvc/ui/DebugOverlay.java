@@ -1,7 +1,10 @@
 package io.github.desocketed.yakvc.ui;
 
+import io.github.desocketed.yakvc.FarEchoes;
 import io.github.desocketed.yakvc.GameStateFeeder;
-import io.github.desocketed.yakvc.config.ClientConfig;
+import io.github.desocketed.yakvc.Room;
+import io.github.desocketed.yakvc.config.SpatialAudio;
+import io.github.desocketed.yakvc.config.Settings;
 import io.github.desocketed.yakvc.natives.EngineEvent;
 import io.github.desocketed.yakvc.natives.NativeBridge;
 import io.github.desocketed.yakvc.natives.VoiceStats;
@@ -51,23 +54,23 @@ public final class DebugOverlay implements HudElement {
 			lines.add("Engine stopped");
 			return lines;
 		}
-		ClientConfig config = feeder.config();
+		Settings settings = feeder.settings();
 		VoiceStats stats = feeder.stats();
 
 		lines.add("Rendezvous: " + rendezvous());
 		lines.add("Account: " + (feeder.verified() ? "verified" : "not verified"));
 		lines.add("Endpoint: " + (stats == null ? "…" : stats.endpointId().substring(0, 10))
 				+ (stats == null ? "" : ", voice v" + stats.voiceVersion())
-				+ (config.relayOnly() ? ", relay only" : ""));
+				+ (settings.relayOnly() ? ", relay only" : ""));
 
 		lines.add("");
-		lines.add("Microphone: " + deviceName(config.inputDevice(), "default")
+		lines.add("Microphone: " + deviceName(settings.audio().inputDevice(), "default")
 				+ (stats == null ? "" : stats.audio().microphoneOpen() ? " (open)" : " (not open)"));
-		lines.add("Speakers: " + deviceName(config.outputDevice(), "same as game") + (stats == null ? ""
+		lines.add("Speakers: " + deviceName(settings.audio().outputDevice(), "same as game") + (stats == null ? ""
 				: stats.audio().externalOutput() ? " (voice goes to another mod)"
 				: stats.audio().speakersOpen() ? " (open)" : " (not open)"));
 		lines.add(String.format("Level: %.0f dBFS, %s", feeder.micLevelDb(),
-				config.voiceActivation() ? String.format("voice above %.0f dBFS", config.vadThresholdDb())
+				settings.audio().voiceActivation() ? String.format("voice above %.0f dBFS", settings.audio().vadThresholdDb())
 						: "push to talk"));
 		int flags = feeder.inputFlags();
 		String input = (flags & NativeBridge.INPUT_MUTED) != 0 ? ", muted" : "";
@@ -75,8 +78,24 @@ public final class DebugOverlay implements HudElement {
 		if (stats != null) {
 			VoiceStats.Audio audio = stats.audio();
 			lines.add((audio.transmitting() ? "Sending" : "Not sending") + input);
-			lines.add(String.format("Bitrate: %d kbit/s (set %d)", audio.bitrate() / 1000, config.bitrate() / 1000));
+			lines.add(String.format("Bitrate: %d kbit/s (set %d)", audio.bitrate() / 1000, settings.audio().bitrate() / 1000));
 			lines.add("Overruns: " + audio.overruns() + ", underruns: " + audio.underruns());
+		}
+
+		// The room and echoes the mod computed where you stand, for tuning by ear: what the engine was told to play.
+		// The numbers glide every tick, so they are zero-padded to a fixed width: the right-aligned text would jitter otherwise.
+		lines.add("");
+		lines.add("Spatial audio: " + settings.spatialAudio().name().toLowerCase());
+		if (settings.spatialAudio() == SpatialAudio.FULL) {
+			Room room = feeder.room();
+			lines.add(String.format("Room: reverb %.2f, decay %05.2f s, critical %05.1f m, echo %.2f at %03.0f ms",
+					room.reverb(), room.decay(), room.criticalDistance(), room.echo(), room.echoDelay() * 1000));
+			List<FarEchoes.Echo> echoes = feeder.echoes();
+			StringBuilder far = new StringBuilder("Far echoes: " + echoes.size());
+			for (FarEchoes.Echo echo : echoes) {
+				far.append(String.format(", %03.0f ms ×%.2f <%05.0f Hz", echo.delay() * 1000, echo.gain(), echo.cutoff()));
+			}
+			lines.add(far.toString());
 		}
 
 		Map<UUID, VoiceStats.Peer> peerStats = stats == null ? Map.of() : stats.peers();
