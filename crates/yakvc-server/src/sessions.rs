@@ -214,7 +214,9 @@ impl Inner {
     ) -> impl Iterator<Item = (EndpointId, &Client)> {
         self.clients
             .iter()
-            .filter(move |&(&other, client)| other != id && client.uuid == uuid && !client.ended)
+            .filter(move |&(&other, _)| other != id)
+            .filter(move |(_, client)| client.uuid == uuid)
+            .filter(|(_, client)| !client.ended)
             .map(|(&other, client)| (other, client))
     }
 
