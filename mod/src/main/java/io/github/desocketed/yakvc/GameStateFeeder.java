@@ -17,6 +17,7 @@ import io.github.desocketed.yakvc.natives.VoiceStats;
 import io.github.desocketed.yakvc.natives.YakVcException;
 import io.github.desocketed.yakvc.ui.EngineErrorToasts;
 import io.github.desocketed.yakvc.ui.GroupChat;
+import io.github.desocketed.yakvc.ui.SoundTuningScreen;
 import io.github.desocketed.yakvc.ui.VoiceMenuScreen;
 import io.github.desocketed.yakvc.ui.VoiceToasts;
 import java.lang.foreign.MemorySegment;
@@ -224,6 +225,9 @@ public final class GameStateFeeder {
 		if (keys.debugOverlayPressed()) setDebugOverlay(!debugOverlay);
 		if (keys.menuPressed() && minecraft.gui.screen() == null) {
 			minecraft.gui.setScreen(new VoiceMenuScreen(null, this));
+		}
+		if (keys.soundTuningPressed() && minecraft.gui.screen() == null) {
+			minecraft.gui.setScreen(new SoundTuningScreen(null, minecraft.options, this));
 		}
 		VoiceSession session = this.session;
 		step(() -> feedIdentity(minecraft, session));
