@@ -174,9 +174,16 @@ public final class NativeBridge {
 	 */
 	public void pushWorld(MemorySegment engine, double[] listener, byte[] uuids, double[] players) {
 		long count = uuids.length / 16;
-		if (listener.length != LISTENER_LENGTH || uuids.length % 16 != 0 || players.length != 7 * count) {
-			throw new IllegalArgumentException("pushWorld: listener " + listener.length + ", uuids " + uuids.length
-					+ " bytes, players " + players.length);
+		if (listener.length != LISTENER_LENGTH) {
+			throw new IllegalArgumentException("pushWorld: listener has " + listener.length + " values, not "
+					+ LISTENER_LENGTH);
+		}
+		if (uuids.length % 16 != 0) {
+			throw new IllegalArgumentException("pushWorld: uuids are " + uuids.length + " bytes, not a multiple of 16");
+		}
+		if (players.length != 7 * count) {
+			throw new IllegalArgumentException("pushWorld: players has " + players.length + " values for " + count
+					+ " uuids, not " + 7 * count);
 		}
 		check((int) invoke(pushWorld, engine, MemorySegment.ofArray(listener), MemorySegment.ofArray(uuids),
 				MemorySegment.ofArray(players), count));
