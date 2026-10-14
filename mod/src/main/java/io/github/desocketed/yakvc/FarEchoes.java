@@ -42,14 +42,19 @@ public final class FarEchoes {
 	/** Hits this close in direction (cos 40°) and distance (25 %) are taken for one wall. */
 	private static final double SAME_DIRECTION = 0.77;
 	private static final double SAME_DISTANCE = 0.25;
-	/** A wall that fills this many rays is broad enough to echo fully; a lone pillar echoes less. */
-	private static final double BROAD_WALL_RAYS = 3;
+	/** A wall that fills this many rays is broad enough to echo fully; a narrower one echoes less. */
+	private static final double BROAD_WALL_RAYS = 5;
+	/**
+	 * A wall must fill this many rays to echo at all: a lone tree or pillar, or the odd tall step of hilly ground, is
+	 * heard as nothing.
+	 */
+	private static final int MIN_WALL_RAYS = 3;
 	/**
 	 * Where an echo is as loud as the {@link Room}'s, off a hard wall: 8.5 m away. Further, spherical spreading makes it
 	 * quieter as 1/(2d), the way it travels.
 	 */
 	private static final double REFERENCE_DISTANCE = 8.5;
-	private static final double REFERENCE_LEVEL = 0.5;
+	private static final double REFERENCE_LEVEL = 0.2;
 	/**
 	 * Air absorbs highs over distance: a low-pass at this many Hz·m over the way the echo travels (plus 30 m), about
 	 * 7 kHz off a wall 17 m away and 1 kHz off one 250 m away, close to the published absorption around 4 kHz.
@@ -75,12 +80,13 @@ public final class FarEchoes {
 	 * @param distance   metres to it
 	 * @param incidence  the cosine of the angle between the way to it and its normal, negative if it faces away
 	 * @param absorption the share of sound it absorbs, from 0 to 1
+	 * @param tall       whether it stands tall enough to echo, a wall or a cliff ({@link Room#tall})
 	 */
-	public record Hit(Vec3 direction, double distance, double incidence, double absorption) {
+	public record Hit(Vec3 direction, double distance, double incidence, double absorption, boolean tall) {
 	}
 
 	/** Where a ray hit, with the face's normal: still right after the listener moves. */
-	private record Surface(Vec3 point, Vec3 normal, double absorption) {
+	private record Surface(Vec3 point, Vec3 normal, double absorption, boolean tall) {
 	}
 
 	private final Surface[] surfaces = new Surface[RAYS];
@@ -94,7 +100,8 @@ public final class FarEchoes {
 					ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, CollisionContext.empty()));
 			surfaces[next] = hit.getType() == HitResult.Type.MISS ? null
 					: new Surface(hit.getLocation(), normal(hit.getDirection()),
-							Room.absorption(level.getBlockState(hit.getBlockPos())));
+							Room.absorption(level.getBlockState(hit.getBlockPos())),
+							Room.tall(level, hit.getBlockPos(), hit.getDirection()));
 			next = (next + 1) % RAYS;
 		}
 		List<Hit> hits = new ArrayList<>();
@@ -105,7 +112,8 @@ public final class FarEchoes {
 			// Kept from before the listener moved, it may now be out of reach.
 			if (distance < 1e-6 || distance > tuning.echoReach()) continue;
 			Vec3 direction = to.scale(1 / distance);
-			hits.add(new Hit(direction, distance, -direction.dot(surface.normal), surface.absorption));
+			hits.add(new Hit(direction, distance, -direction.dot(surface.normal), surface.absorption,
+					surface.tall));
 		}
 		return pick(hits, RAYS);
 	}
@@ -121,14 +129,16 @@ public final class FarEchoes {
 
 	/**
 	 * The loudest far echoes that {@code hits}, out of {@code rays} cast evenly, describe. Hits far enough away and
-	 * facing the listener are grouped into walls: hits pointing roughly the same way at about the same distance. Each
+	 * facing the listener, on surfaces tall enough to echo, are grouped into walls: hits pointing roughly the same way
+	 * at about the same distance. Each
 	 * wall echoes from its most head-on hit, which is nearest to where it mirrors the voice back. A wall is louder the
-	 * more of the sky it fills (up to {@link #BROAD_WALL_RAYS} rays), the less it absorbs and the nearer it is.
+	 * more of the sky it fills (none below {@link #MIN_WALL_RAYS} rays, full from {@link #BROAD_WALL_RAYS}), the less
+	 * it absorbs and the nearer it is.
 	 */
 	public static List<Echo> pick(List<Hit> hits, int rays) {
 		List<Hit> candidates = new ArrayList<>();
 		for (Hit hit : hits) {
-			if (hit.distance >= MIN_DISTANCE && hit.incidence >= FACING) candidates.add(hit);
+			if (hit.tall && hit.distance >= MIN_DISTANCE && hit.incidence >= FACING) candidates.add(hit);
 		}
 		candidates.sort(Comparator.comparingDouble(Hit::incidence).reversed());
 		List<List<Hit>> walls = new ArrayList<>();
@@ -141,7 +151,8 @@ public final class FarEchoes {
 			wall.add(hit);
 		}
 		walls.sort(Comparator.comparingDouble((List<Hit> wall) -> strength(wall, rays)).reversed());
-		return walls.stream().limit(COUNT).map(FarEchoes::echo).toList();
+		return walls.stream().filter(wall -> wall.size() >= MIN_WALL_RAYS).limit(COUNT).map(FarEchoes::echo)
+				.toList();
 	}
 
 	private static boolean sameWall(Hit a, Hit b) {

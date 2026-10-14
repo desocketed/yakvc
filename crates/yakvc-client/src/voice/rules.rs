@@ -17,6 +17,11 @@ use crate::world::{Input, Player, Pose, Room, Vec3, World, distance, interpolate
 const MAX_SNAPSHOT_GAP: Duration = Duration::from_millis(250);
 /// Directly behind the listener a speaker is this much quieter.
 const BEHIND_ATTENUATION: f64 = 0.3;
+/// Seconds of decay below which a space sounds dry: houses, small rooms,
+/// corridors.
+const DRY_DECAY: f32 = 0.6;
+/// Seconds of decay from which a space rings in full: big caves and halls.
+const FULL_DECAY: f32 = 5.0;
 const MAX_RECIPIENTS: usize = 32;
 /// Above this many recipients the encoder steps down to save upload.
 const STEP_DOWN_RECIPIENTS: usize = 16;
@@ -44,7 +49,8 @@ pub(crate) struct VoiceState {
     pub game_volume: f32,
     pub peer_audio: HashMap<Uuid, PeerAudio>,
     pub voice_range: f32,
-    pub friends_only: Option<Vec<Uuid>>,
+    pub friends: Vec<Uuid>,
+    pub friends_only: bool,
     pub invites_from: InvitesFrom,
     pub audio: AudioConfig,
     pub acoustics: AcousticsConfig,
@@ -108,11 +114,7 @@ pub(crate) struct SendPlan {
 }
 
 impl VoiceState {
-    pub(crate) fn new(
-        audio: AudioConfig,
-        voice_range: f32,
-        friends_only: Option<Vec<Uuid>>,
-    ) -> Self {
+    pub(crate) fn new(audio: AudioConfig, voice_range: f32) -> Self {
         let now = Instant::now();
         VoiceState {
             own_uuid: None,
@@ -124,7 +126,8 @@ impl VoiceState {
             game_volume: 1.0,
             peer_audio: HashMap::new(),
             voice_range,
-            friends_only,
+            friends: Vec::new(),
+            friends_only: false,
             invites_from: InvitesFrom::Everyone,
             audio,
             acoustics: AcousticsConfig::default(),
@@ -305,10 +308,10 @@ impl VoiceState {
         self.peer_audio.get(&peer).is_some_and(|audio| audio.muted)
     }
 
+    /// Whether voice may pass between us and `peer`: everyone, unless only
+    /// friends may.
     pub(crate) fn is_friend(&self, peer: Uuid) -> bool {
-        self.friends_only
-            .as_ref()
-            .is_none_or(|friends| friends.contains(&peer))
+        !self.friends_only || self.friends.contains(&peer)
     }
 }
 
@@ -397,10 +400,17 @@ pub(crate) fn echo_taps(world: &World, level: f32) -> [EchoTap; ECHO_TAPS] {
 /// So the reverb's share of what reaches the listener, in energy, is
 /// `d² / (d² + r_c²)`: a nearby talker is mostly dry, a far one mostly room.
 /// The send is its square root, an amplitude.
+///
+/// Only big, live spaces should be heard ringing, though: in a house or a
+/// small stone room the ear takes the reverb as part of the voice. So the
+/// send also grows with the decay, from nothing below [`DRY_DECAY`] to all
+/// of it at [`FULL_DECAY`], smoothly between.
 fn reverb_send(room: Room, distance: f64) -> f32 {
     let critical = f64::from(room.critical_distance).max(0.1);
     let share = distance / distance.hypot(critical);
-    room.reverb * share as f32
+    let size = ((room.decay - DRY_DECAY) / (FULL_DECAY - DRY_DECAY)).clamp(0.0, 1.0);
+    let size = size * size * (3.0 - 2.0 * size);
+    room.reverb * size * share as f32
 }
 
 /// `spatial` heard through obstacles that block `occlusion` of the direct
@@ -465,13 +475,15 @@ mod tests {
     }
 
     fn state() -> VoiceState {
-        let mut state = VoiceState::new(AudioConfig::default(), 48.0, None);
+        let mut state = VoiceState::new(AudioConfig::default(), 48.0);
         state.world.listener = listener(0.0);
         state
     }
 
+    /// `x, z` from the listener, who stands away from the world's origin so
+    /// that positions are really subtracted.
     fn at(x: f64, z: f64) -> Vec3 {
-        Vec3::new(x, 64.0, z)
+        Vec3::new(x + 120.0, 64.0, z - 75.0)
     }
 
     fn listener(yaw: f32) -> Pose {
@@ -499,14 +511,14 @@ mod tests {
         assert_eq!(gain(48.0), Some(0.0));
         assert_eq!(gain(48.1), None);
 
-        // A gentler rolloff keeps distant voices louder.
-        let gentle = spatial(
+        // The default, steeper rolloff drops distant voices sooner.
+        let steep = spatial(
             &listener(0.0),
             at(0.0, 40.0),
             48.0,
             &AcousticsConfig::default(),
         );
-        assert!(gentle.unwrap().gain > gain(40.0).unwrap() * 1.5);
+        assert!(steep.unwrap().gain < gain(40.0).unwrap() * 0.5);
     }
 
     #[test]
@@ -522,27 +534,30 @@ mod tests {
         assert!(pan(0.0, 0.0, 10.0).abs() < 1e-6);
         // Facing -X (west, yaw 90): -Z is to the right.
         assert!((pan(90.0, 0.0, -10.0) - 1.0).abs() < 1e-6);
+        // Facing south-west (yaw 45), a source due west is ahead and right.
+        let right_ahead = pan(45.0, -10.0, 0.0);
+        assert!(right_ahead > 0.0 && right_ahead < 1.0, "{right_ahead}");
+        assert!((pan(45.0, 0.0, 10.0) + right_ahead).abs() < 1e-6);
     }
 
     #[test]
     fn sources_behind_are_quieter() {
-        let front = spatial(
-            &listener(0.0),
-            at(0.0, 10.0),
-            48.0,
-            &AcousticsConfig::default(),
-        )
-        .unwrap()
-        .gain;
-        let behind = spatial(
-            &listener(0.0),
-            at(0.0, -10.0),
-            48.0,
-            &AcousticsConfig::default(),
-        )
-        .unwrap()
-        .gain;
-        assert!((behind - front * 0.7).abs() < 1e-6);
+        let gain = |yaw: f32, x: f64, z: f64| {
+            spatial(&listener(yaw), at(x, z), 48.0, &AcousticsConfig::default())
+                .unwrap()
+                .gain
+        };
+        // Facing south, ten blocks away in every direction.
+        let front = gain(0.0, 0.0, 10.0);
+        let side = gain(0.0, 10.0, 0.0);
+        let diagonal_behind = gain(0.0, 7.071_067_8, -7.071_067_8);
+        let behind = gain(0.0, 0.0, -10.0);
+        assert_eq!(side, front);
+        assert!(front > diagonal_behind && diagonal_behind > behind);
+        // Turning turns what counts as behind.
+        assert!((gain(90.0, 10.0, 0.0) - behind).abs() < 1e-6);
+        assert!((gain(45.0, 7.071_067_8, -7.071_067_8) - behind).abs() < 1e-6);
+        assert!((gain(45.0, -7.071_067_8, 7.071_067_8) - front).abs() < 1e-6);
     }
 
     #[test]
@@ -622,7 +637,8 @@ mod tests {
             Player::new(uuid(1), at(1.0, 0.0)),
             Player::new(uuid(2), at(1.0, 0.0)),
         ];
-        state.friends_only = Some(vec![uuid(1)]);
+        state.friends = vec![uuid(1)];
+        state.friends_only = true;
         assert!(nearby(&state, 1).is_some());
         assert_eq!(nearby(&state, 2), None);
         assert!(state.send_to(uuid(1), false).map(|c| c.distance).is_some());
@@ -693,6 +709,7 @@ mod tests {
         let mut state = state();
         state.world.room = Room {
             reverb: 0.8,
+            decay: 5.0,
             critical_distance: 2.0,
             ..Room::default()
         };
@@ -708,6 +725,10 @@ mod tests {
         assert!((send(&state, 2) - equal).abs() < 1e-3);
         assert!(send(&state, 3) > 0.79, "{}", send(&state, 3));
 
+        // A small room barely rings, however far the talker.
+        state.world.room.decay = 0.9;
+        assert!(send(&state, 3) < 0.05, "{}", send(&state, 3));
+
         state.world.room.reverb = 0.0;
         assert_eq!(send(&state, 3), 0.0);
     }
@@ -715,6 +736,8 @@ mod tests {
     #[test]
     fn occluded_speakers_are_quieter_and_muffled() {
         let mut state = state();
+        // Off by default; tuning can turn it on.
+        state.acoustics.occlusion_attenuation = 0.75;
         state.world.players = vec![
             Player::new(uuid(1), at(10.0, 0.0)),
             Player {
@@ -753,7 +776,7 @@ mod tests {
         state.set_world(world(10.0), start);
         state.set_world(world(20.0), start + tick);
 
-        let x_at = |t: Duration| state.world_at(start + t).players[0].pos.x;
+        let x_at = |t: Duration| state.world_at(start + t).players[0].pos.x - at(0.0, 0.0).x;
         assert_eq!(x_at(tick), 10.0, "one snapshot behind");
         assert_eq!(x_at(tick + tick / 2), 15.0);
         assert_eq!(x_at(tick * 2), 20.0);
@@ -762,10 +785,8 @@ mod tests {
         // After a long gap there is nothing sensible to glide from.
         state.set_world(world(40.0), start + Duration::from_secs(5));
         assert_eq!(
-            state.world_at(start + Duration::from_secs(5)).players[0]
-                .pos
-                .x,
-            40.0
+            state.world_at(start + Duration::from_secs(5)).players[0].pos,
+            at(40.0, 0.0)
         );
     }
 
@@ -940,5 +961,137 @@ mod tests {
         call.ignore_world = true;
         let peer = call.heard(&call.world, uuid(1), false).unwrap();
         assert_eq!(peer.heard, Heard::Centred);
+    }
+
+    /// The echo levels `Room` and `FarEchoes` give the test world's spaces.
+    const HALL_ECHO: f32 = 0.045;
+    const CAVERN_ECHO: f32 = 0.07;
+    const CANYON_ECHO: f32 = 0.048;
+
+    /// How loud a room's reverb and echoes are next to a voice `distance`
+    /// metres away, in dB: a voice-like signal (a 150 Hz buzz spoken in
+    /// syllables) mixed once dry and once in the room, the wet part being
+    /// the difference, over 2 s of speech and the 4 s of tail after it.
+    fn wet_db(room: Room, distance: f64) -> f32 {
+        use yakvc_audio::{FRAME_SAMPLES, Mixer, SAMPLE_RATE};
+        let config = AcousticsConfig::default();
+        let world = World {
+            room,
+            ..World::default()
+        };
+        let mut wet_mixer = Mixer::new();
+        wet_mixer.set_acoustics(yakvc_audio::Acoustics {
+            decay: room.decay,
+            echo: room.echo,
+            echo_delay: room.echo_delay,
+            echo_feedback: config.echo_feedback,
+            reverb_level: config.reverb_level,
+            reverb_damping: config.reverb_damping,
+            taps: echo_taps(&world, config.echo_level),
+        });
+        let mut dry_mixer = Mixer::new();
+        let wet = Spatial {
+            gain: 1.0,
+            pan: 0.0,
+            muffle: 0.0,
+            reverb: reverb_send(room, distance),
+            echo: 1.0,
+        };
+        let dry = Spatial {
+            reverb: 0.0,
+            echo: 0.0,
+            ..wet
+        };
+        let (mut dry_energy, mut wet_energy) = (0.0, 0.0);
+        for frame in 0..300 {
+            let mut voice = [0.0; FRAME_SAMPLES];
+            for (i, sample) in voice.iter_mut().enumerate() {
+                let t = (frame * FRAME_SAMPLES + i) as f32 / SAMPLE_RATE as f32;
+                if t < 2.0 {
+                    let syllable = (std::f32::consts::PI * 4.0 * t).sin().max(0.0);
+                    let buzz: f32 = (1..=8)
+                        .map(|h| (std::f32::consts::TAU * 150.0 * h as f32 * t).sin() / h as f32)
+                        .sum();
+                    *sample = 0.02 * syllable * buzz;
+                }
+            }
+            let mut in_room = [[0.0; 2]; FRAME_SAMPLES];
+            let mut plain = [[0.0; 2]; FRAME_SAMPLES];
+            wet_mixer.mix([(&voice, wet)], &mut in_room);
+            dry_mixer.mix([(&voice, dry)], &mut plain);
+            for (w, d) in in_room.iter().flatten().zip(plain.iter().flatten()) {
+                dry_energy += f64::from(d * d);
+                wet_energy += f64::from((w - d) * (w - d));
+            }
+        }
+        (10.0 * (wet_energy / dry_energy).log10()) as f32
+    }
+
+    /// The test world's spaces, as `Room` and `FarEchoes` measure them
+    /// (DESIGN.md "Room reverb and echo").
+    fn small_room() -> Room {
+        Room {
+            reverb: 1.0,
+            critical_distance: 1.16,
+            decay: 0.94,
+            ..Room::default()
+        }
+    }
+
+    fn hall() -> Room {
+        Room {
+            reverb: 1.0,
+            critical_distance: 3.2,
+            decay: 2.45,
+            echo: HALL_ECHO,
+            echo_delay: 0.065,
+            ..Room::default()
+        }
+    }
+
+    fn cavern() -> Room {
+        Room {
+            reverb: 1.0,
+            critical_distance: 8.3,
+            decay: 5.24,
+            far_echoes: [0.0, 1.0, 2.0, 3.0].map(|n: f64| FarEcho {
+                direction: Vec3::new(n.cos(), 0.0, n.sin()),
+                delay: 0.14,
+                gain: CAVERN_ECHO,
+                cutoff_hz: 6000.0,
+            }),
+            ..Room::default()
+        }
+    }
+
+    fn canyon() -> Room {
+        Room {
+            far_echoes: [1.0, -1.0, 0.0, 0.0].map(|x: f64| FarEcho {
+                direction: Vec3::new(x, 0.0, 0.0),
+                delay: 0.2,
+                gain: CANYON_ECHO * x.abs() as f32,
+                cutoff_hz: 4800.0,
+            }),
+            ..Room::default()
+        }
+    }
+
+    #[test]
+    fn effects_stay_under_the_voice() {
+        let small = wet_db(small_room(), 3.0);
+        let small_near = wet_db(small_room(), 2.0);
+        let small_far = wet_db(small_room(), 5.0);
+        let hall = wet_db(hall(), 5.0);
+        let cavern = wet_db(cavern(), 8.0);
+        let canyon = wet_db(canyon(), 5.0);
+        // Small rooms nearly dry, a hall a light tail, a cavern clearly
+        // ringing and a canyon a clear echo, all under the voice. Measured
+        // when this was set: -41, -14, -6 and -23 dB.
+        for db in [small_near, small, small_far] {
+            assert!(db < -20.0, "small room {db:.1} dB");
+        }
+        assert!((-18.0..-10.0).contains(&hall), "hall {hall:.1} dB");
+        assert!((-10.0..-3.0).contains(&cavern), "cavern {cavern:.1} dB");
+        assert!((-28.0..-18.0).contains(&canyon), "canyon {canyon:.1} dB");
     }
 }

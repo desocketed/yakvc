@@ -27,11 +27,11 @@ const AUDIO_CRATES: &[&str] = &[
 /// What a release jar must hold: a native per platform, their checksums,
 /// the xz decoder and the third-party licences.
 const JAR_ENTRIES: &[&str] = &[
-    "natives/natives.sha256",
-    "natives/linux-x86_64/libyakvc_ffi.so.xz",
-    "natives/linux-aarch64/libyakvc_ffi.so.xz",
-    "natives/windows-x86_64/yakvc_ffi.dll.xz",
-    "natives/macos-universal/libyakvc_ffi.dylib.xz",
+    "yakvc/natives/natives.sha256",
+    "yakvc/natives/linux-x86_64/libyakvc_ffi.so.xz",
+    "yakvc/natives/linux-aarch64/libyakvc_ffi.so.xz",
+    "yakvc/natives/windows-x86_64/yakvc_ffi.dll.xz",
+    "yakvc/natives/macos-universal/libyakvc_ffi.dylib.xz",
     "META-INF/jars/xz-1.10.jar",
     "THIRD_PARTY_LICENSES",
 ];
@@ -104,7 +104,7 @@ pub(crate) fn ci(fast: bool) -> Result<()> {
         step("server: no docker here; skipped the image");
     }
     step("mod: build (cargo xtask dist, host natives)");
-    crate::dist(None)?;
+    crate::dist(None, false)?;
     step("mod: jar manifest");
     check_jar_manifest(&dist_jar()?)?;
     step("mod: client gametest, and the user guide's screenshots");

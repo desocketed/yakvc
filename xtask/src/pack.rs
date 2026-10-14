@@ -18,7 +18,7 @@ use anyhow::{Context, Result, bail, ensure};
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
 
-use crate::{VERSION, root, run};
+use crate::{root, run, version};
 
 const FABRIC_MAVEN: &str = "https://maven.fabricmc.net/net/fabricmc/fabric-api/fabric-api";
 
@@ -29,13 +29,14 @@ pub(crate) fn pack(jar: &Path, out: &Path) -> Result<()> {
     fs::create_dir_all(out)?;
     let mods = [jar, fabric_api.as_path()];
 
-    let mrpack = out.join(format!("yakvc-{VERSION}.mrpack"));
+    let version = version();
+    let mrpack = out.join(format!("yakvc-{version}.mrpack"));
     let mut zip = ZipWriter::new(File::create(&mrpack)?);
     let index = format!(
         r#"{{
   "formatVersion": 1,
   "game": "minecraft",
-  "versionId": "{VERSION}",
+  "versionId": "{version}",
   "name": "Yak VC",
   "summary": "Peer-to-peer proximity voice chat that needs nothing on the server.",
   "files": [],
@@ -58,7 +59,7 @@ pub(crate) fn pack(jar: &Path, out: &Path) -> Result<()> {
     }
     zip.finish()?;
 
-    let prism = out.join(format!("yakvc-{VERSION}-prism.zip"));
+    let prism = out.join(format!("yakvc-{version}-prism.zip"));
     let mut zip = ZipWriter::new(File::create(&prism)?);
     // Prism fills in the rest of the components (intermediary, LWJGL) from
     // these two when the instance first launches.

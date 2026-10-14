@@ -921,8 +921,8 @@ mod tests {
         bob.hears().await;
 
         // Out of range: neither sends nor plays.
-        alice.stand(0.0, 2, 100.0);
-        bob.stand(100.0, 1, 0.0);
+        alice.stand(0.0, 2, 300.0);
+        bob.stand(300.0, 1, 0.0);
         bob.stays_silent().await;
 
         // Back in range, but Bob deafens: he plays nothing, and tells Alice

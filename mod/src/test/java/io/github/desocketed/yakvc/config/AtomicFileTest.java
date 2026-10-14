@@ -24,7 +24,7 @@ class AtomicFileTest {
 	@Test
 	void aFailedWriteLeavesTheOldContents(@TempDir Path dir) throws Exception {
 		// A non-empty directory can't be replaced, so the move fails after the temp file was written.
-		Path target = dir.resolve("client.toml");
+		Path target = dir.resolve("settings.json");
 		Files.createDirectories(target);
 		Path inside = target.resolve("keep");
 		Files.writeString(inside, "old");

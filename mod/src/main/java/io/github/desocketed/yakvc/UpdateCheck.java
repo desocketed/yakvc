@@ -18,6 +18,8 @@ import org.jspecify.annotations.Nullable;
  * nothing about the player is sent, and any failure only means no notice.
  */
 public final class UpdateCheck {
+	/** Where players download Yak VC. */
+	public static final URI RELEASES_PAGE = URI.create("https://github.com/desocketed/yakvc/releases");
 	private static final URI RELEASES = URI.create("https://api.github.com/repos/desocketed/yakvc/releases?per_page=10");
 	private static final Duration TIMEOUT = Duration.ofSeconds(10);
 
@@ -53,11 +55,13 @@ public final class UpdateCheck {
 	/**
 	 * The newest release in GitHub's releases JSON that is newer than {@code running}, or null. Drafts never count;
 	 * prereleases only when {@code running} is one itself, so someone on a stable release isn't pushed to an alpha.
+	 * Dev builds (CI's untested ones, versioned like 0.1.0-alpha.3.dev.7) are only offered to someone already on one.
 	 */
 	static @Nullable Release newerRelease(String json, String running) {
 		List<Object> current = parse(running);
 		if (current == null) return null;
 		boolean wantPrereleases = current.size() > 3;
+		boolean wantDevBuilds = current.contains("dev");
 		Release best = null;
 		List<Object> bestVersion = current;
 		for (JsonElement element : JsonParser.parseString(json).getAsJsonArray()) {
@@ -67,6 +71,7 @@ public final class UpdateCheck {
 			String tag = release.get("tag_name").getAsString();
 			List<Object> version = parse(tag);
 			if (version == null || compare(version, bestVersion) <= 0) continue;
+			if (version.contains("dev") && !wantDevBuilds) continue;
 			best = new Release(tag.startsWith("v") ? tag.substring(1) : tag,
 					URI.create(release.get("html_url").getAsString()));
 			bestVersion = version;

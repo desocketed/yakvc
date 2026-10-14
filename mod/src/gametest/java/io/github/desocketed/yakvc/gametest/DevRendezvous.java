@@ -16,9 +16,9 @@ import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.loader.api.entrypoint.PreLaunchEntrypoint;
 
 /**
- * Starts a dev-mode {@code yakvc-server} for the client gametest and points the mod's {@code client.toml} at it, so
- * voice really connects and the user guide's screenshots show it working. It runs before the mod creates its engine,
- * which reads the config once. The server binary is the {@code yakvc.gametest.server} system property (see
+ * Starts a dev-mode {@code yakvc-server} for the client gametest and points the mod's {@code settings.json} at it, so
+ * voice really connects and the user guide's screenshots show it working. It runs before the mod reads its settings,
+ * which it does once. The server binary is the {@code yakvc.gametest.server} system property (see
  * build.gradle) and stops with the game.
  */
 public class DevRendezvous implements PreLaunchEntrypoint {
@@ -65,27 +65,24 @@ public class DevRendezvous implements PreLaunchEntrypoint {
 		String endpointId = value(readLine(out, dir), "endpoint id:", dir);
 		String issuerId = value(readLine(out, dir), "issuer id:", dir);
 
-		// Dev test audio stands in for the sound card the gametest client doesn't have, so push-to-talk produces
-		// real voice frames and the engine reports no device errors.
-		Path clientConfig = FabricLoader.getInstance().getConfigDir().resolve("yakvc/client.toml");
-		Files.createDirectories(clientConfig.getParent());
-		Files.writeString(clientConfig, """
-				dev_mode = true
-				trusted_issuers = ["%s"]
-
-				[rendezvous]
-				endpoint_id = "%s"
-				addrs = ["127.0.0.1:%d"]
-
-				[dev]
-				tone_hz = 440.0
-				null_output = true
+		// A partial settings file, exactly as a modpack's preset is: the rest takes the defaults. Dev test audio
+		// stands in for the sound card the gametest client doesn't have, so push-to-talk produces real voice frames
+		// and the engine reports no device errors.
+		Path settings = FabricLoader.getInstance().getConfigDir().resolve("yakvc/settings.json");
+		Files.createDirectories(settings.getParent());
+		Files.writeString(settings, """
+				{
+				  "dev_mode": true,
+				  "trusted_issuers": ["%s"],
+				  "rendezvous": {"endpoint_id": "%s", "addrs": ["127.0.0.1:%d"]},
+				  "dev": {"tone_hz": 440, "null_output": true}
+				}
 				""".formatted(issuerId, endpointId, port));
 		// A fixed client key, so the endpoint id in the debug overlay's screenshot is the same on every run. The engine
 		// otherwise makes a random one wherever the run directory is new.
 		byte[] nodeKey = new byte[32];
 		for (int i = 0; i < nodeKey.length; i++) nodeKey[i] = (byte) (i + 1);
-		Files.write(clientConfig.resolveSibling("node.key"), nodeKey);
+		Files.write(settings.resolveSibling("node.key"), nodeKey);
 	}
 
 	private static void run(String... command) throws IOException {

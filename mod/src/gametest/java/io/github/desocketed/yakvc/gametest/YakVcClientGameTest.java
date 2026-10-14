@@ -1,5 +1,7 @@
 package io.github.desocketed.yakvc.gametest;
 
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.mojang.authlib.GameProfile;
 import com.terraformersmc.modmenu.gui.ModsScreen;
 import com.terraformersmc.modmenu.gui.widget.ModListWidget;
@@ -10,9 +12,10 @@ import io.github.desocketed.yakvc.FarEchoes;
 import io.github.desocketed.yakvc.Room;
 import io.github.desocketed.yakvc.SoundPath;
 import io.github.desocketed.yakvc.YakVcClient;
-import io.github.desocketed.yakvc.config.ClientConfig;
 import io.github.desocketed.yakvc.config.PlayerVolumes;
+import io.github.desocketed.yakvc.config.Settings;
 import io.github.desocketed.yakvc.config.SoundTuning;
+import io.github.desocketed.yakvc.config.SpatialAudio;
 import io.github.desocketed.yakvc.natives.EngineEvent;
 import io.github.desocketed.yakvc.natives.NativeBridge;
 import io.github.desocketed.yakvc.natives.VoiceGroup;
@@ -54,6 +57,9 @@ import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.client.gui.screens.options.SoundOptionsScreen;
 import net.minecraft.client.gui.screens.options.controls.KeyBindsScreen;
 import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.input.MouseButtonInfo;
+import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.network.chat.Component;
 import org.jspecify.annotations.Nullable;
 import com.mojang.blaze3d.platform.InputConstants;
@@ -190,6 +196,7 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 			checkFarEchoes(context, singleplayer);
 			checkSoundPath(context, singleplayer);
 			checkSoundTuning(context, feeder);
+			checkSpatialAudio(context, singleplayer, feeder);
 
 			if (context.computeOnClient(mc -> feeder.errorEvents() != 0 || feeder.closed())) {
 				throw new AssertionError("engine reported errors; see the log");
@@ -275,7 +282,8 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		if (!(around.occlusion() > 0.4f && around.occlusion() < 0.875f && around.heardFrom().x > 41)) {
 			throw new AssertionError("round the wall: " + around);
 		}
-		// Wall the end off and cut a doorway beside the players: a closed door is no way round, an open one is.
+		// Wall the end off and cut a doorway beside the players: a closed door is no way round (the voice comes
+		// through the wall or the long way round the far end, either much more blocked), an open one is.
 		singleplayer.getServer().runCommand("fill 45 -60 43 47 -45 45 stone");
 		singleplayer.getServer().runCommand("fill 41 -59 43 41 -58 45 air");
 		singleplayer.getServer().runCommand("setblock 41 -59 44 oak_door[facing=north,half=lower]");
@@ -286,7 +294,7 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		singleplayer.getServer().runCommand("setblock 41 -58 44 oak_door[facing=north,half=upper,open=true]");
 		context.waitTicks(3);
 		SoundPath open = context.computeOnClient(mc -> SoundPath.between(mc.level, listener, speaker, SoundTuning.DEFAULT));
-		if (!(closed.heardFrom().equals(speaker) && open.occlusion() < 0.6f && open.heardFrom().x > 40.5)) {
+		if (!(closed.occlusion() > open.occlusion() + 0.3f && open.occlusion() < 0.6f && open.heardFrom().x > 40.5)) {
 			throw new AssertionError("doors: closed " + closed + ", open " + open);
 		}
 		singleplayer.getServer().runCommand("fill 20 -60 43 60 -45 45 stone");
@@ -298,23 +306,89 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		}
 	}
 
+	/**
+	 * A left click on a slider sets it where it was clicked, and a right click puts it back to its default. The two
+	 * were confused once: 26.3 numbers mouse buttons from 1, not as GLFW does.
+	 */
+	private static void clickSlider(ClientGameTestContext context, GameStateFeeder feeder) {
+		AbstractWidget slider = context.computeOnClient(mc -> ((SoundTuningScreen) mc.gui.screen()).widget("occlusion_attenuation"));
+		double x = slider.getX() + slider.getWidth() / 2.0;
+		double y = slider.getY() + slider.getHeight() / 2.0;
+
+		click(context, x, y, InputConstants.MOUSE_BUTTON_LEFT);
+		if (context.computeOnClient(mc -> feeder.settings().acoustics().occlusionAttenuation()) != 0.5) {
+			throw new AssertionError("a left click didn't set the slider: " + feeder.settings().acoustics());
+		}
+
+		click(context, x, y, InputConstants.MOUSE_BUTTON_RIGHT);
+		if (context.computeOnClient(mc -> feeder.settings().acoustics().occlusionAttenuation()) != Settings.Acoustics.DEFAULT.occlusionAttenuation()) {
+			throw new AssertionError("a right click didn't reset the slider: " + feeder.settings().acoustics());
+		}
+	}
+
+	private static void click(ClientGameTestContext context, double x, double y, int button) {
+		context.runOnClient(mc -> {
+			MouseButtonEvent event = new MouseButtonEvent(x, y, new MouseButtonInfo(button, 0));
+			mc.gui.screen().mouseClicked(event, false);
+			mc.gui.screen().mouseReleased(event);
+		});
+
+		context.waitTicks(2);
+	}
+
 	/** The tuning screen applies a changed value to the engine at once, and saves it on close. */
 	private static void checkSoundTuning(ClientGameTestContext context, GameStateFeeder feeder) {
 		context.runOnClient(mc -> mc.gui.setScreen(new SoundTuningScreen(null, mc.options, feeder)));
 		context.waitTicks(2);
 		context.takeScreenshot(TestScreenshotOptions.of("sound-tuning").disableCounterPrefix());
 		context.runOnClient(mc -> ((SoundTuningScreen) mc.gui.screen()).option("furnishing").set(90));
-		if (context.computeOnClient(mc -> feeder.config().acoustics("furnishing", -1)) != 0.9) {
+		if (context.computeOnClient(mc -> feeder.settings().acoustics().furnishing()) != 0.9) {
 			throw new AssertionError("the tuning didn't reach the engine");
 		}
+		clickSlider(context, feeder);
 		context.runOnClient(mc -> mc.gui.setScreen(null));
 		context.waitTicks(2);
-		if (!context.computeOnClient(mc -> feeder.config().toml()).contains("furnishing = 0.9")) {
+		if (settingsFile().getAsJsonObject("acoustics").get("furnishing").getAsDouble() != 0.9) {
 			throw new AssertionError("the tuning wasn't saved");
 		}
 		// Back to the defaults, so later runs start the same.
 		context.runOnClient(mc -> VoiceSettingsScreen.applyAndSave(feeder,
-				feeder.config().with("acoustics", "furnishing", null)));
+				feeder.settings().withAcoustic("furnishing", Settings.Acoustics.DEFAULT.furnishing())));
+	}
+
+	/**
+	 * In a stone box around the player, Simple (the default) still sends the engine open air, so no reverb; Full sends
+	 * the box's reverb.
+	 */
+	private static void checkSpatialAudio(ClientGameTestContext context, TestSingleplayerContext singleplayer,
+			GameStateFeeder feeder) {
+		if (context.computeOnClient(mc -> feeder.settings().spatialAudio()) != SpatialAudio.SIMPLE) {
+			throw new AssertionError("Spatial Audio isn't Simple by default");
+		}
+		singleplayer.getServer().runCommand("fill -2 -61 -2 2 -56 2 stone hollow");
+		context.waitTicks(5);
+		if (!context.computeOnClient(mc -> feeder.room()).equals(Room.OPEN_AIR)) {
+			throw new AssertionError("Simple sent a room: " + context.computeOnClient(mc -> feeder.room()));
+		}
+		context.runOnClient(mc -> VoiceSettingsScreen.applyAndSave(feeder,
+				feeder.settings().withSpatialAudio(SpatialAudio.FULL)));
+		context.waitFor(mc -> feeder.room().reverb() > 0.5f);
+		// With Full the settings show the Reverb slider, which applies while the screen is open and is saved.
+		context.runOnClient(mc -> mc.gui.setScreen(new VoiceSettingsScreen(null, mc.options, feeder)));
+		context.waitTicks(2);
+		context.runOnClient(mc -> ((VoiceSettingsScreen) mc.gui.screen()).acoustic("reverb_level").set(50));
+		context.waitFor(mc -> feeder.settings().acoustics().reverbLevel() == 0.5);
+		context.runOnClient(mc -> mc.gui.setScreen(null));
+		context.waitTicks(2);
+		if (settingsFile().getAsJsonObject("acoustics").get("reverb_level").getAsDouble() != 0.5) {
+			throw new AssertionError("the reverb wasn't saved");
+		}
+		// Back to the defaults, so later runs start the same.
+		context.runOnClient(mc -> VoiceSettingsScreen.applyAndSave(feeder,
+				feeder.settings().withSpatialAudio(SpatialAudio.SIMPLE)
+						.withAcoustic("reverb_level", Settings.Acoustics.DEFAULT.reverbLevel())));
+		singleplayer.getServer().runCommand("fill -2 -61 -2 2 -56 2 air");
+		singleplayer.getServer().runCommand("fill -2 -61 -2 2 -61 2 grass_block");
 	}
 
 	/** Two engine errors in a row both show, one after the other, rather than the second replacing the first. */
@@ -396,28 +470,38 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 
 	/**
 	 * Opens the voice menu, mutes the remote player there, and goes to the settings screen and back. The mute is saved
-	 * by UUID; closing the settings unchanged leaves {@code client.toml} alone.
+	 * by UUID; a setting applies as soon as it changes, and closing the settings writes nothing more to
+	 * {@code settings.json}.
 	 */
 	private static void checkVoiceMenu(ClientGameTestContext context, GameStateFeeder feeder) {
-		Path configFile = YakVcClient.configDir().resolve(ClientConfig.FILE_NAME);
-		// DevRendezvous writes a fresh config each run, so the first-run card shows; OK saves that it was seen.
+		Path settingsFile = YakVcClient.configDir().resolve(Settings.FILE_NAME);
+		// DevRendezvous writes a fresh preset each run, so the first-run card shows; OK saves that it was seen.
 		context.setScreen(() -> new VoiceMenuScreen(null, feeder));
 		screenshotScreen(context, "voice-menu-setup");
 		pressNestedButton(context, "yakvc.setup.ok");
-		context.waitFor(mc -> feeder.config().setupDone());
-		String configBefore = read(configFile);
-		if (!configBefore.contains("setup_done = true")) {
+		context.waitFor(mc -> feeder.settings().setupDone());
+		if (!settingsFile().get("setup_done").getAsBoolean()) {
 			throw new AssertionError("dismissing the setup card did not save setup_done");
 		}
 		screenshotScreen(context, "voice-menu");
 		pressNestedButton(context, "yakvc.menu.mute");
 		context.waitFor(mc -> feeder.volumes().get(REMOTE).muted());
+		pressNestedButton(context, "yakvc.menu.friend");
+		context.waitFor(mc -> feeder.volumes().get(REMOTE).friend());
 
 		context.clickScreenButton("yakvc.menu.settings");
 		context.waitForScreen(VoiceSettingsScreen.class);
 		// The device pickers fill once their worker thread has listed the devices.
 		context.waitFor(mc -> ((VoiceSettingsScreen) mc.gui.screen()).devicesListed());
 		screenshotScreen(context, "voice-settings");
+		// A change applies while the screen is still open, without waiting for it to close.
+		boolean voiceActivation = context.computeOnClient(mc -> feeder.settings().audio().voiceActivation());
+		pressOptionButton(context, "yakvc.settings.activation");
+		context.waitFor(mc -> feeder.settings().audio().voiceActivation() != voiceActivation);
+		pressOptionButton(context, "yakvc.settings.activation");
+		context.waitFor(mc -> feeder.settings().audio().voiceActivation() == voiceActivation);
+		// The toggle saved the file, so the one to compare with is the one it left.
+		String settingsBefore = read(settingsFile);
 		pressOptionButton(context, "yakvc.settings.input_device");
 		screenshotScreen(context, "voice-settings-microphone");
 		pressOptionButton(context, "yakvc.settings.input_device");
@@ -434,8 +518,8 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		if (!read(YakVcClient.configDir().resolve(PlayerVolumes.FILE_NAME)).contains(REMOTE.toString())) {
 			throw new AssertionError("the mute was not saved");
 		}
-		if (!read(configFile).equals(configBefore)) {
-			throw new AssertionError("closing the settings unchanged rewrote client.toml");
+		if (!read(settingsFile).equals(settingsBefore)) {
+			throw new AssertionError("closing the settings rewrote settings.json");
 		}
 		// The run directory is reused, so leave no mute behind for the next run.
 		context.runOnClient(mc -> {
@@ -685,6 +769,11 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		} catch (IOException e) {
 			throw new UncheckedIOException(e);
 		}
+	}
+
+	/** The saved settings, as written. */
+	private static JsonObject settingsFile() {
+		return JsonParser.parseString(read(YakVcClient.configDir().resolve(Settings.FILE_NAME))).getAsJsonObject();
 	}
 
 	/**

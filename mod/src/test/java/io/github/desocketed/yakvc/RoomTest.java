@@ -10,7 +10,10 @@ import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
 
 class RoomTest {
-	private static final SoundTuning TUNING = SoundTuning.DEFAULT;
+	// A furnished room, as the model was measured (the default furnishing of 1 stops every room ringing).
+	private static final SoundTuning TUNING = new SoundTuning(0.12, SoundTuning.DEFAULT.maxDecay(),
+			SoundTuning.DEFAULT.roomReach(), SoundTuning.DEFAULT.echoReach(), SoundTuning.DEFAULT.pathBend(),
+			SoundTuning.DEFAULT.pathPerBlock());
 	private static final double STONE = 0.02;
 	private static final double EYE = 1.62;
 
@@ -29,7 +32,8 @@ class RoomTest {
 	void aHallRingsLongerWithAnEcho() {
 		Room room = box(19, 11, 19);
 		assertBetween(2, 3, room.decay());
-		assertTrue(room.echo() > 0.1, "echo " + room.echo());
+		// Faint: its walls are barely far enough to echo apart.
+		assertBetween(0.02, 0.08, room.echo());
 	}
 
 	/** The test world's cavern, 48 × 24 × 48 inside. */
@@ -50,12 +54,20 @@ class RoomTest {
 		List<Room.Ray> rays = new ArrayList<>();
 		for (Vec3 d : Room.directions(48)) {
 			double ground = d.y < 0 ? EYE / -d.y : Double.MAX_VALUE;
-			rays.add(ground <= TUNING.roomReach() ? new Room.Ray(d.y <= -0.3, true, ground, -d.y, STONE)
+			rays.add(ground <= TUNING.roomReach() ? new Room.Ray(d.y <= -0.3, true, ground, -d.y, STONE, true)
 					: Room.Ray.miss(d.y <= -0.3));
 		}
 		Room room = Room.of(rays, TUNING);
 		// Only the ground near the horizon counts, a little.
 		assertTrue(room.reverb() < 0.15, "reverb " + room.reverb());
+		assertEquals(0, room.echo());
+	}
+
+	/** Flat ground, then stepping up a block every 2 m east and west from 8 m away: the steps' faces look back at the listener, but are too low to echo. */
+	@Test
+	void steppedGroundDoesNotEcho() {
+		Terrain hills = (x, y, z) -> y < Math.floorDiv(Math.max(0, Math.abs(x) - 8), 2);
+		Room room = Room.of(hills.rays(new Vec3(0.5, 1.62, 0.5), Room.directions(48), TUNING.roomReach()), TUNING);
 		assertEquals(0, room.echo());
 	}
 
@@ -90,7 +102,7 @@ class RoomTest {
 					incidence = Math.abs(v[axis]);
 				}
 			}
-			rays.add(new Room.Ray(d.y <= -0.3, true, nearest, incidence, absorption));
+			rays.add(new Room.Ray(d.y <= -0.3, true, nearest, incidence, absorption, true));
 		}
 		return rays;
 	}

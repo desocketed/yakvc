@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -18,19 +19,21 @@ class PlayerVolumesTest {
 	void settingsSurviveARestartByUuid(@TempDir Path dir) throws Exception {
 		PlayerVolumes volumes = PlayerVolumes.load(dir);
 		assertEquals(PlayerVolumes.DEFAULT, volumes.get(ALICE));
-		volumes.set(ALICE, new PlayerVolumes.Setting(1.5f, false));
-		volumes.set(BOB, new PlayerVolumes.Setting(1f, true));
+		volumes.set(ALICE, new PlayerVolumes.Setting(1.5f, false, false));
+		volumes.set(BOB, new PlayerVolumes.Setting(1f, true, true));
+		assertEquals(List.of(BOB), volumes.friends());
 		volumes.save();
 
 		PlayerVolumes reloaded = PlayerVolumes.load(dir);
-		assertEquals(new PlayerVolumes.Setting(1.5f, false), reloaded.get(ALICE));
-		assertEquals(new PlayerVolumes.Setting(1f, true), reloaded.get(BOB));
+		assertEquals(new PlayerVolumes.Setting(1.5f, false, false), reloaded.get(ALICE));
+		assertEquals(new PlayerVolumes.Setting(1f, true, true), reloaded.get(BOB));
+		assertEquals(List.of(BOB), reloaded.friends());
 	}
 
 	@Test
 	void defaultsAreNotStored(@TempDir Path dir) throws Exception {
 		PlayerVolumes volumes = PlayerVolumes.load(dir);
-		volumes.set(ALICE, new PlayerVolumes.Setting(0.5f, false));
+		volumes.set(ALICE, new PlayerVolumes.Setting(0.5f, false, false));
 		volumes.set(ALICE, PlayerVolumes.DEFAULT);
 		volumes.save();
 		assertFalse(Files.readString(dir.resolve(PlayerVolumes.FILE_NAME)).contains(ALICE.toString()));
@@ -44,12 +47,12 @@ class PlayerVolumesTest {
 		volumes.save();
 		assertFalse(Files.exists(dir.resolve(PlayerVolumes.FILE_NAME)), "nothing changed");
 
-		volumes.set(ALICE, new PlayerVolumes.Setting(0.5f, false));
+		volumes.set(ALICE, new PlayerVolumes.Setting(0.5f, false, false));
 		volumes.save();
 		Path file = dir.resolve(PlayerVolumes.FILE_NAME);
 		assertTrue(Files.exists(file));
 		Files.delete(file);
-		volumes.set(ALICE, new PlayerVolumes.Setting(0.5f, false));
+		volumes.set(ALICE, new PlayerVolumes.Setting(0.5f, false, false));
 		volumes.save();
 		assertFalse(Files.exists(file), "setting the same value again is not a change");
 	}
@@ -74,12 +77,12 @@ class PlayerVolumesTest {
 
 		PlayerVolumes volumes = PlayerVolumes.load(dir);
 		assertEquals(PlayerVolumes.DEFAULT, volumes.get(ALICE), "a null entry is dropped");
-		assertEquals(new PlayerVolumes.Setting(0f, true), volumes.get(BOB), "a negative volume is clamped");
-		assertEquals(new PlayerVolumes.Setting(PlayerVolumes.MAX_VOLUME, false), volumes.get(carol),
+		assertEquals(new PlayerVolumes.Setting(0f, true, false), volumes.get(BOB), "a negative volume is clamped");
+		assertEquals(new PlayerVolumes.Setting(PlayerVolumes.MAX_VOLUME, false, false), volumes.get(carol),
 				"an infinite volume is clamped and a missing field keeps its default");
 		assertEquals(PlayerVolumes.DEFAULT, volumes.get(dave), "NaN is dropped");
 		assertEquals(PlayerVolumes.DEFAULT, volumes.get(erin), "a malformed entry is dropped");
-		assertEquals(new PlayerVolumes.Setting(0.25f, false), volumes.get(frank), "good entries are kept");
+		assertEquals(new PlayerVolumes.Setting(0.25f, false, false), volumes.get(frank), "good entries are kept");
 	}
 
 	@Test
