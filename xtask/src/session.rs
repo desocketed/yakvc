@@ -181,7 +181,9 @@ fn client(
     set_talking(&settings, talk)?;
     write_once(
         &dir.join("options.txt"),
-        "onboardAccessibility:false\nskipMultiplayerWarning:true\njoinedFirstServer:true\n",
+        // No pause menu when another window takes focus: a session is several
+        // windows, and the one you aren't in should keep playing.
+        "onboardAccessibility:false\nskipMultiplayerWarning:true\njoinedFirstServer:true\npauseOnLostFocus:false\n",
     )?;
     // A nixpkgs Java can only load the host's GPU driver on NixOS; elsewhere
     // nixGL brings a matching one.
