@@ -39,10 +39,15 @@ public final class VoiceSession {
 		}
 	}
 
+	private boolean optedOut() {
+		if (serverData == null || serverData.motd == null) return false;
+		return serverData.motd.getString().contains(OPT_OUT_MARKER);
+	}
+
 	/** Called every client tick. */
 	public void tick() {
 		if (offReason != null) return;
-		if (serverData != null && serverData.motd != null && serverData.motd.getString().contains(OPT_OUT_MARKER)) {
+		if (optedOut()) {
 			offReason = "the server opted out with " + OPT_OUT_MARKER;
 			YakVcClient.LOGGER.info("Voice off: {}", offReason);
 			return;

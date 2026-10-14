@@ -449,13 +449,17 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	@Override
 	public boolean keyPressed(KeyEvent event) {
 		// Escape closes an open list rather than the screen.
-		if (event.isEscape() && (inputDevice.isOpen() || outputDevice.isOpen() || testSound.isOpen())) {
+		if (event.isEscape() && anyListOpen()) {
 			inputDevice.close();
 			outputDevice.close();
 			testSound.close();
 			return true;
 		}
 		return super.keyPressed(event);
+	}
+
+	private boolean anyListOpen() {
+		return inputDevice.isOpen() || outputDevice.isOpen() || testSound.isOpen();
 	}
 
 	/** A right click on the threshold, reverb or echo slider puts it back to its default; true if one was hit. */
