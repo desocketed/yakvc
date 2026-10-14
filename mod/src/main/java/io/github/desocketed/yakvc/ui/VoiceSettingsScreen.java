@@ -465,7 +465,8 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 			if (widget == null || !widget.isMouseOver(event.x(), event.y())) continue;
 			option.set(defaultValue(option));
 			throttle.changed();
-			showValues();
+			// The slider only reads its option when made; this makes it read it again, with no rebuild.
+			resetOption(option);
 			return true;
 		}
 		return false;
