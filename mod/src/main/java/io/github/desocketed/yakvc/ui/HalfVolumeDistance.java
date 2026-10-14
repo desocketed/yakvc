@@ -9,7 +9,7 @@ package io.github.desocketed.yakvc.ui;
 record HalfVolumeDistance(double full, double range) {
 	/** What the engine's config validation accepts for the exponent. */
 	private static final double MIN_ROLLOFF = 0.1;
-	private static final double MAX_ROLLOFF = 4;
+	private static final double MAX_ROLLOFF = 16;
 
 	double blocks(double rolloff) {
 		return range - (range - full) * Math.pow(0.5, 1 / rolloff);
