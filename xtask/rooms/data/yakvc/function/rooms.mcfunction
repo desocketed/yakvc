@@ -9,6 +9,9 @@ gamerule spawn_patrols false
 gamerule spawn_wandering_traders false
 gamerule advance_time false
 gamerule advance_weather false
+# Builds are announced in chat instead of every fill printing its block count.
+gamerule send_command_feedback false
+gamerule log_admin_commands false
 difficulty peaceful
 time set noon
 weather clear
