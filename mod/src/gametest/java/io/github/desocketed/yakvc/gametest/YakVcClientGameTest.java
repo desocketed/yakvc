@@ -282,7 +282,8 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		if (!(around.occlusion() > 0.4f && around.occlusion() < 0.875f && around.heardFrom().x > 41)) {
 			throw new AssertionError("round the wall: " + around);
 		}
-		// Wall the end off and cut a doorway beside the players: a closed door is no way round, an open one is.
+		// Wall the end off and cut a doorway beside the players: a closed door is no way round (the voice comes
+		// through the wall or the long way round the far end, either much more blocked), an open one is.
 		singleplayer.getServer().runCommand("fill 45 -60 43 47 -45 45 stone");
 		singleplayer.getServer().runCommand("fill 41 -59 43 41 -58 45 air");
 		singleplayer.getServer().runCommand("setblock 41 -59 44 oak_door[facing=north,half=lower]");
@@ -293,7 +294,7 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		singleplayer.getServer().runCommand("setblock 41 -58 44 oak_door[facing=north,half=upper,open=true]");
 		context.waitTicks(3);
 		SoundPath open = context.computeOnClient(mc -> SoundPath.between(mc.level, listener, speaker, SoundTuning.DEFAULT));
-		if (!(closed.heardFrom().equals(speaker) && open.occlusion() < 0.6f && open.heardFrom().x > 40.5)) {
+		if (!(closed.occlusion() > open.occlusion() + 0.3f && open.occlusion() < 0.6f && open.heardFrom().x > 40.5)) {
 			throw new AssertionError("doors: closed " + closed + ", open " + open);
 		}
 		singleplayer.getServer().runCommand("fill 20 -60 43 60 -45 45 stone");
