@@ -1,5 +1,5 @@
-# Builds the listening grounds, in a flat world whose ground is at y -61
-# (stand at y -60). Stand on one side of a wall or room and have someone talk
+# The prefab listening grounds, built by `/function yakvc:build` in the flat
+# dev world, whose ground is at y -61 (stand at y -60). Stand on one side of a wall or room and have someone talk
 # on the other, or play a test sound and listen to the room around you. A
 # sign at each spot says what it is. With the dev fly speed, the whole area is
 # a few seconds across.

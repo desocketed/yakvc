@@ -6,9 +6,9 @@ set shell := ["nix", "develop", "--quiet", "--command", "bash", "-euc"]
 default:
     @just --list
 
-# Dev session: a local rendezvous, a dev server with the listening grounds
-# (xtask/rooms: walls, houses, a cave, a cavern, a canyon, a hill...) and one
-# client window per name, flying fast.
+# Dev session: a local rendezvous, an empty flat dev server (no mobs, frozen
+# noon; `/function yakvc:build` adds the prefab listening grounds from
+# xtask/rooms) and one client window per name, flying fast.
 session *names:
     cargo xtask session {{names}}
 

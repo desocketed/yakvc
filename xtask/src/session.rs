@@ -21,8 +21,9 @@ const RENDEZVOUS_PORT: u16 = 7843;
 const SERVER_PORT: u16 = 25565;
 const FLY_SPEED: f64 = 0.1;
 
-/// A data pack that builds walls and rooms to listen through, in the flat
-/// dev world (`xtask/rooms`).
+/// A data pack that keeps the flat dev world quiet and, on request
+/// (`/function yakvc:build`), builds walls and rooms to listen through
+/// (`xtask/rooms`).
 const ROOMS: &[(&str, &str)] = &[
     ("pack.mcmeta", include_str!("../rooms/pack.mcmeta")),
     (
