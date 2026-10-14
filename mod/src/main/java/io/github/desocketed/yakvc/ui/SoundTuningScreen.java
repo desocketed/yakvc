@@ -1,10 +1,12 @@
 package io.github.desocketed.yakvc.ui;
 
+import com.mojang.blaze3d.platform.InputConstants;
 import io.github.desocketed.yakvc.GameStateFeeder;
 import io.github.desocketed.yakvc.config.Settings;
 import io.github.desocketed.yakvc.config.Settings.Acoustics;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.function.DoubleFunction;
 import java.util.function.ToDoubleFunction;
 import net.minecraft.client.OptionInstance;
@@ -25,8 +27,6 @@ import org.jspecify.annotations.Nullable;
  * and Echo sliders edit two of the same values.
  */
 public final class SoundTuningScreen extends OptionsSubScreen {
-	private static final int RIGHT_BUTTON = 1;
-
 	private final GameStateFeeder feeder;
 	private final Settings initial;
 	private final List<Slider> sliders = new ArrayList<>();
@@ -75,6 +75,11 @@ public final class SoundTuningScreen extends OptionsSubScreen {
 		sliders.add(new Slider(key, read, step, option));
 	}
 
+	/** The slider widget for an {@code acoustics} key, for the client gametest to click. */
+	public AbstractWidget widget(String key) {
+		return Objects.requireNonNull(list.findOption(option(key)));
+	}
+
 	@Override
 	protected void addOptions() {
 		list.addHeader(Component.translatable("yakvc.tuning.distance"));
@@ -97,7 +102,7 @@ public final class SoundTuningScreen extends OptionsSubScreen {
 	/** A right click on a slider puts just that one back to its default. */
 	@Override
 	public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
-		if (event.button() == RIGHT_BUTTON) {
+		if (event.button() == InputConstants.MOUSE_BUTTON_RIGHT) {
 			for (Slider slider : sliders) {
 				AbstractWidget widget = list.findOption(slider.option());
 				if (widget != null && widget.isMouseOver(event.x(), event.y())) {
