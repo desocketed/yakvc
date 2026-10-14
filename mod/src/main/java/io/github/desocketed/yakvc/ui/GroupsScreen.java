@@ -220,7 +220,7 @@ public final class GroupsScreen extends Screen {
 			for (int i = 0; i < shownFaces; i++) {
 				UUID member = members.get(i);
 				PlayerFaceExtractor.extractRenderState(graphics, skin(member), faceX, boxY + 3, FACE_SIZE);
-				if (mouseX >= faceX && mouseX < faceX + FACE_SIZE && mouseY >= boxY + 3 && mouseY < boxY + 3 + FACE_SIZE) {
+				if (Mouse.over(mouseX, mouseY, faceX, boxY + 3, FACE_SIZE, FACE_SIZE)) {
 					graphics.setTooltipForNextFrame(Component.literal(feeder.name(member)), mouseX, mouseY);
 				}
 				faceX += FACE_STEP;

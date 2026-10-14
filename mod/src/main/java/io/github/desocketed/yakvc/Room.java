@@ -2,7 +2,9 @@ package io.github.desocketed.yakvc;
 
 import io.github.desocketed.yakvc.config.SoundTuning;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.IntPredicate;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -163,17 +165,34 @@ public record Room(float reverb, float criticalDistance, float decay, float echo
 	static double absorption(BlockState state) {
 		if (state.is(BlockTags.LEAVES)) return 0.6;
 		if (state.is(BlockTags.WOOL) || state.is(BlockTags.WOOL_CARPETS)) return 0.5;
-		SoundType sound = state.getSoundType();
-		if (sound == SoundType.WOOL || sound == SoundType.SNOW || sound == SoundType.POWDER_SNOW) return 0.5;
-		if (sound == SoundType.GLASS) return 0.03;
-		if (sound == SoundType.WOOD || sound == SoundType.NETHER_WOOD || sound == SoundType.BAMBOO_WOOD
-				|| sound == SoundType.CHERRY_WOOD) return 0.1;
-		if (sound == SoundType.GRASS || sound == SoundType.GRAVEL || sound == SoundType.SAND
-				|| sound == SoundType.ROOTED_DIRT || sound == SoundType.MUD) return 0.15;
-		if (sound == SoundType.STONE || sound == SoundType.DEEPSLATE || sound == SoundType.DEEPSLATE_BRICKS
-				|| sound == SoundType.POLISHED_DEEPSLATE || sound == SoundType.TUFF || sound == SoundType.NETHER_BRICKS
-				|| sound == SoundType.CALCITE) return 0.02;
-		return 0.05;
+		return Absorption.BY_SOUND.getOrDefault(state.getSoundType(), 0.05);
+	}
+
+	/**
+	 * SoundType is a class, not an enum, so a table stands in for a switch. Its own class, so the sound types load
+	 * on the first lookup rather than with Room, which tests without a game can't.
+	 */
+	private static final class Absorption {
+		static final Map<SoundType, Double> BY_SOUND = bySound();
+
+		private static Map<SoundType, Double> bySound() {
+			Map<SoundType, Double> table = new HashMap<>();
+			for (SoundType soft : List.of(SoundType.WOOL, SoundType.SNOW, SoundType.POWDER_SNOW)) table.put(soft, 0.5);
+			table.put(SoundType.GLASS, 0.03);
+			for (SoundType wood : List.of(SoundType.WOOD, SoundType.NETHER_WOOD, SoundType.BAMBOO_WOOD,
+					SoundType.CHERRY_WOOD)) {
+				table.put(wood, 0.1);
+			}
+			for (SoundType ground : List.of(SoundType.GRASS, SoundType.GRAVEL, SoundType.SAND, SoundType.ROOTED_DIRT,
+					SoundType.MUD)) {
+				table.put(ground, 0.15);
+			}
+			for (SoundType rock : List.of(SoundType.STONE, SoundType.DEEPSLATE, SoundType.DEEPSLATE_BRICKS,
+					SoundType.POLISHED_DEEPSLATE, SoundType.TUFF, SoundType.NETHER_BRICKS, SoundType.CALCITE)) {
+				table.put(rock, 0.02);
+			}
+			return table;
+		}
 	}
 
 	/**
