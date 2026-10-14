@@ -93,9 +93,8 @@ public final class SoundTuningScreen extends OptionsSubScreen {
 		list.addSmall(option("room_reach"), option("echo_feedback"));
 		list.addSmall(option("echo_reach"), option("echo_level"));
 		list.addBig(Button.builder(Component.translatable("yakvc.tuning.reset"), button -> {
-			sliders.forEach(Slider::reset);
+			sliders.forEach(this::reset);
 			apply();
-			showValues();
 		}).tooltip(Tooltip.create(Component.translatable("yakvc.tuning.reset.tooltip"))).build());
 	}
 
@@ -106,9 +105,8 @@ public final class SoundTuningScreen extends OptionsSubScreen {
 			for (Slider slider : sliders) {
 				AbstractWidget widget = list.findOption(slider.option());
 				if (widget != null && widget.isMouseOver(event.x(), event.y())) {
-					slider.reset();
+					reset(slider);
 					apply();
-					showValues();
 					return true;
 				}
 			}
@@ -116,11 +114,14 @@ public final class SoundTuningScreen extends OptionsSubScreen {
 		return super.mouseClicked(event, doubleClick);
 	}
 
-	/** Rebuilds the sliders, which only read their option when made, keeping the list where it was scrolled to. */
-	private void showValues() {
-		double scroll = list.scrollAmount();
-		rebuildWidgets();
-		list.setScrollAmount(scroll);
+	/**
+	 * Puts a slider back to its default and shows it. The widget only reads its option when made, so it is told to
+	 * read it again instead of being rebuilt: rebuilding the screen runs {@code init} again, which adds a second
+	 * title, list and Done button to the layout, and the stacked lists drew their shading twice.
+	 */
+	private void reset(Slider slider) {
+		slider.reset();
+		resetOption(slider.option());
 	}
 
 	/** The slider for an {@code acoustics} key. Public for the client gametest. */
