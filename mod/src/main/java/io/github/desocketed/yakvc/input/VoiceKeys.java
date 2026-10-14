@@ -7,7 +7,8 @@ import net.minecraft.resources.Identifier;
 
 /**
  * Voice keybinds. Push-to-talk defaults to V and Group to B, which vanilla doesn't use. Mute, deafen and the voice
- * menu are unbound by default so they don't clash with minimap and utility mods; so is the debug overlay.
+ * menu are unbound by default so they don't clash with minimap and utility mods; so are the debug overlay and sound
+ * tuning.
  */
 public final class VoiceKeys {
 	/** Holds push-to-talk down for dev and test runs that have no keyboard. */
@@ -20,17 +21,20 @@ public final class VoiceKeys {
 	public final KeyMapping deafen;
 	public final KeyMapping openMenu;
 	public final KeyMapping debugOverlay;
+	/** Opens Sound Tuning straight from the game, so acoustics can be tuned while someone talks. */
+	public final KeyMapping soundTuning;
 	private boolean muted;
 	private boolean deafened;
 
 	private VoiceKeys(KeyMapping pushToTalk, KeyMapping group, KeyMapping mute, KeyMapping deafen,
-			KeyMapping openMenu, KeyMapping debugOverlay) {
+			KeyMapping openMenu, KeyMapping debugOverlay, KeyMapping soundTuning) {
 		this.pushToTalk = pushToTalk;
 		this.group = group;
 		this.mute = mute;
 		this.deafen = deafen;
 		this.openMenu = openMenu;
 		this.debugOverlay = debugOverlay;
+		this.soundTuning = soundTuning;
 	}
 
 	public static VoiceKeys register() {
@@ -47,7 +51,9 @@ public final class VoiceKeys {
 				KeyMappingHelper.registerKeyMapping(
 						new KeyMapping("key.yakvc.open_menu", InputConstants.UNKNOWN.getValue(), category)),
 				KeyMappingHelper.registerKeyMapping(
-						new KeyMapping("key.yakvc.debug_overlay", InputConstants.UNKNOWN.getValue(), category)));
+						new KeyMapping("key.yakvc.debug_overlay", InputConstants.UNKNOWN.getValue(), category)),
+				KeyMappingHelper.registerKeyMapping(
+						new KeyMapping("key.yakvc.sound_tuning", InputConstants.UNKNOWN.getValue(), category)));
 	}
 
 	/** Applies mute and deafen presses since the last tick. */
@@ -59,6 +65,11 @@ public final class VoiceKeys {
 	/** Whether the debug overlay key was pressed since the last call. */
 	public boolean debugOverlayPressed() {
 		return pressed(debugOverlay);
+	}
+
+	/** Whether the sound tuning key was pressed since the last call. */
+	public boolean soundTuningPressed() {
+		return pressed(soundTuning);
 	}
 
 	/** Whether the voice menu key was pressed since the last call. */

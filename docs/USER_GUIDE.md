@@ -45,8 +45,9 @@ The keys are in Options → Controls → Key Binds, under **Yak VC**.
 | Toggle Deafen | not bound | Stops you hearing anyone. Your microphone still works unless you mute it too. |
 | Open Voice Menu | not bound | Opens the [voice menu](#the-voice-menu), and from there the settings. The pause menu has a button for it too. |
 | Toggle Debug Overlay | not bound | Shows or hides the [debug overlay](#the-debug-overlay). |
+| Open Sound Tuning | not bound | Opens [Sound Tuning](#sound-tuning) straight from the game, handy while someone talks. |
 
-Mute, deafen, the voice menu and the debug overlay are unbound so they don't clash with other mods. The settings are always reachable without a key, from **Voice Chat…** in the game's Music & Sounds options (see [Settings](#settings)).
+Mute, deafen, the voice menu, the debug overlay and sound tuning are unbound so they don't clash with other mods. The settings are always reachable without a key, from **Voice Chat…** in the game's Music & Sounds options (see [Settings](#settings)).
 
 ## The HUD
 
