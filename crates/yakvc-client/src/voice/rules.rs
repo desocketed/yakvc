@@ -193,10 +193,10 @@ impl VoiceState {
     /// `ReceiveState` so it can stop sending when we don't. In a group,
     /// only group mates are heard.
     pub(crate) fn wants_audio_from(&self, peer: Uuid) -> bool {
-        !self.input.deafened
-            && !self.muted(peer)
-            && self.is_friend(peer)
-            && (self.group.is_none() || self.is_group_mate(peer))
+        if self.input.deafened || self.muted(peer) || !self.is_friend(peer) {
+            return false;
+        }
+        self.group.is_none() || self.is_group_mate(peer)
     }
 
     /// How the speakers play a frame from `peer`, with or without the

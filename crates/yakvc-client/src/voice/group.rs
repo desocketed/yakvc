@@ -163,11 +163,13 @@ impl VoiceState {
         let Some(pending) = &self.pending else {
             return;
         };
-        if self.group.is_some()
-            || !announced
-                .iter()
-                .any(|(uuid, announce)| pending.key.has_member(*uuid, announce))
-        {
+        if self.group.is_some() {
+            return;
+        }
+        let accepted = announced
+            .iter()
+            .any(|(uuid, announce)| pending.key.has_member(*uuid, announce));
+        if !accepted {
             return;
         }
         let group = OwnGroup::new(pending.key.clone(), pending.state.clone());
@@ -310,8 +312,13 @@ impl VoiceState {
         events: &mut Vec<Event>,
     ) {
         let id = key.id();
-        let already_in = self.group.as_ref().is_some_and(|g| g.id() == id);
-        if already_in || !state.is_valid() || self.muted(from) || !self.may_invite_us(from) {
+        if self.group.as_ref().is_some_and(|g| g.id() == id) {
+            return;
+        }
+        if !state.is_valid() {
+            return;
+        }
+        if self.muted(from) || !self.may_invite_us(from) {
             return;
         }
         self.invites.insert(
@@ -384,10 +391,10 @@ impl VoiceState {
             };
             let id = group.key.id();
             // Our own group is listed above, from our mates.
-            if groups.first().is_some_and(|own| own.id == id)
-                || !group.key.has_member(*uuid, announce)
-                || !label_fits(&group.label)
-            {
+            if groups.first().is_some_and(|own| own.id == id) {
+                continue;
+            }
+            if !group.key.has_member(*uuid, announce) || !label_fits(&group.label) {
                 continue;
             }
             match public.iter_mut().find(|g| g.id == id) {
@@ -433,10 +440,11 @@ impl VoiceState {
             }
             _ => told.state = None,
         }
-        if let Some(invite) = self.invites_sent.get(&peer)
-            && told.invite != Some(invite.sent)
-            && now.duration_since(invite.sent) < INVITE_LIFETIME
-        {
+        let Some(invite) = self.invites_sent.get(&peer) else {
+            return news;
+        };
+        let live = now.duration_since(invite.sent) < INVITE_LIFETIME;
+        if told.invite != Some(invite.sent) && live {
             news.push(VoiceMsg::Invite {
                 key: invite.key.clone(),
                 state: invite.state.clone(),
