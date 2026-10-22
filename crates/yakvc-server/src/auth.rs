@@ -77,12 +77,16 @@ impl Auth {
     ) -> Option<Ticket> {
         let now = SystemTime::now();
         let ticket = self.verifier.verify(cached, now).ok()?;
-        let fresh_enough = ticket.remaining(now) > RENEW_BEFORE || self.retry_after().is_some();
-        let reusable = ticket.endpoint_id == client
-            && ticket.uuid == hello.uuid
-            && ticket.name == hello.name
-            && fresh_enough;
-        reusable.then_some(ticket)
+        if ticket.endpoint_id != client {
+            return None;
+        }
+        if ticket.uuid != hello.uuid || ticket.name != hello.name {
+            return None;
+        }
+        if ticket.remaining(now) <= RENEW_BEFORE && self.retry_after().is_none() {
+            return None;
+        }
+        Some(ticket)
     }
 
     /// Signs a ticket. `verified` says whether the client proved the account

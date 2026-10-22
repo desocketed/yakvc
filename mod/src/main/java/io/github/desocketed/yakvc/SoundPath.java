@@ -101,7 +101,8 @@ public record SoundPath(Vec3 heardFrom, float occlusion) {
 	}
 
 	private static boolean inside(BlockPos pos, BlockPos min, BlockPos max) {
-		return pos.getX() >= min.getX() && pos.getX() <= max.getX() && pos.getY() >= min.getY()
-				&& pos.getY() <= max.getY() && pos.getZ() >= min.getZ() && pos.getZ() <= max.getZ();
+		if (pos.getX() < min.getX() || pos.getX() > max.getX()) return false;
+		if (pos.getY() < min.getY() || pos.getY() > max.getY()) return false;
+		return pos.getZ() >= min.getZ() && pos.getZ() <= max.getZ();
 	}
 }
