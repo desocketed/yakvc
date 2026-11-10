@@ -427,20 +427,28 @@ jobs:
           path: server
       - run: cargo xtask release
 
-  # Puts the release on the production relay with `cargo xtask deploy-relay`
-  # (see xtask/src/relay.rs). A manual run with "Deploy the relay" ticked
+  # Puts every commit on main that changed code and passed CI on the
+  # production relay with `cargo xtask deploy-relay` (see xtask/src/relay.rs),
+  # and every tagged release. A manual run with "Deploy the relay" ticked
   # does the same for any commit that passed CI. The secrets are the
   # command's flags: RELAY_DEPLOY_KEY (an SSH key that reads the host flake
   # and logs in to the box), RELAY_FLAKE, RELAY_TARGET and RELAY_KNOWN_HOSTS.
   deploy:
     # One reason per line not to deploy: the run was cancelled (release may be
-    # skipped on a manual deploy, so needs alone can't gate this), CI failed,
-    # or nothing asked for it (a tagged release, or the "Deploy the relay" tick).
+    # skipped outside a tag, so needs alone can't gate this), CI failed, or
+    # nothing asked for it (a tagged release, the "Deploy the relay" tick, or
+    # a push to main that changed code).
     if: >-
       !cancelled()
       && needs.ci-ok.result == 'success'
-      && (inputs.deploy_relay == true || (github.ref_type == 'tag' && needs.release.result == 'success'))
-    needs: [ci-ok, release]
+      && (inputs.deploy_relay == true
+          || (github.ref_type == 'tag' && needs.release.result == 'success')
+          || (github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.code == 'true'))
+    needs: [changes, ci-ok, release]
+    # One deploy at a time, in order: a later commit waits for the earlier one.
+    concurrency:
+      group: deploy-relay
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
