@@ -22,7 +22,8 @@ COPY --chown=0:0 state/ /var/lib/yakvc/
 
 # Mount config.toml here.
 WORKDIR /etc/yakvc
-# Relay HTTP (and ACME), relay HTTPS, QUIC address discovery, rendezvous.
+# Relay HTTP (captive-portal check), relay HTTPS (and ACME), QUIC address
+# discovery, rendezvous.
 EXPOSE 80/tcp 443/tcp 7842/udp 7843/udp
 ENTRYPOINT ["/usr/local/bin/yakvc-server"]
 CMD ["run", "--config", "/etc/yakvc/config.toml"]

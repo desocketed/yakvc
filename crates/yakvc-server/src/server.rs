@@ -49,8 +49,8 @@ pub struct ServerBuilder {
 /// Embedded relay settings.
 #[derive(Debug, Clone)]
 pub struct RelayOptions {
-    /// Plain HTTP: captive-portal probe, ACME challenges, and the relay itself
-    /// when `tls` is `None` (tests only).
+    /// Plain HTTP: the captive-portal probe, and the relay itself when `tls`
+    /// is `None` (tests only). ACME is answered on the HTTPS port.
     pub http_bind: SocketAddr,
     pub tls: Option<RelayTls>,
     /// QUIC address discovery.
