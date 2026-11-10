@@ -248,6 +248,7 @@ impl ServerSettings {
             .relay(RelayOptions {
                 http_bind: relay,
                 tls: None,
+                https_port: None,
                 quic_bind: None,
                 open: false,
             })

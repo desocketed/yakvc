@@ -86,13 +86,12 @@ fn server_code(config: &Config) -> anyhow::Result<ServerCode> {
     let relay = config
         .relay
         .as_ref()
-        .and_then(|relay| Some((relay.domain.as_ref()?, relay.https_bind?)))
+        .and_then(|relay| relay.url())
         .context("a server code needs relay.domain and relay.https_bind in the config")?;
-    let (domain, https_bind) = relay;
     Ok(ServerCode {
         endpoint_id: SecretKey::from_bytes(&read_key(&config.endpoint_key)?).public(),
         issuer_id: IssuerKey::from_bytes(&read_key(&config.issuer_key)?).id(),
-        relay: format!("https://{domain}:{}", https_bind.port()).parse()?,
+        relay: relay.parse()?,
     })
 }
 

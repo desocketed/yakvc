@@ -177,8 +177,8 @@ pub(crate) async fn spawn(
             format!("http://{}", dialable(addr))
         }
         Some(RelayTls::LetsEncrypt { domain, .. } | RelayTls::Files { domain, .. }) => {
-            let port = server.https_addr().expect("relay serves HTTPS").port();
-            format!("https://{domain}:{port}")
+            let bound = server.https_addr().expect("relay serves HTTPS").port();
+            format!("https://{domain}:{}", options.https_port.unwrap_or(bound))
         }
     };
     let url = url
@@ -343,6 +343,14 @@ mod tests {
 
     /// A relay with HTTP, HTTPS and QUIC listeners on `bind`'s address.
     async fn tls_relay(bind: &str) -> iroh_relay::server::Server {
+        tls_relay_at(bind, None).await.0
+    }
+
+    /// [`tls_relay`] with the HTTPS port its URL names, and that URL.
+    async fn tls_relay_at(
+        bind: &str,
+        https_port: Option<u16>,
+    ) -> (iroh_relay::server::Server, RelayUrl) {
         static NEXT: AtomicU32 = AtomicU32::new(0);
         let dir = std::env::temp_dir().join(format!(
             "yakvc-relay-tls-{}-{}",
@@ -362,13 +370,27 @@ mod tests {
                 cert,
                 key,
             }),
+            https_port,
             quic_bind: Some(bind.parse().unwrap()),
             open: false,
         };
         let gate = Arc::new(RelayGate::new(Arc::default(), id(0), GRACE_PERIOD));
-        let (server, _) = spawn(&options, gate, 0).await.unwrap();
+        let relay = spawn(&options, gate, 0).await.unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
-        server
+        relay
+    }
+
+    /// Behind a proxy that forwards port 443 to the HTTPS listener, clients
+    /// are told the proxy's port, not the one the listener bound.
+    #[tokio::test]
+    async fn the_relay_url_names_the_public_https_port() {
+        let (server, url) = tls_relay_at("127.0.0.1:0", None).await;
+        let bound = server.https_addr().unwrap().port();
+        assert_eq!(url.to_string(), format!("https://localhost:{bound}/"));
+
+        let (server, url) = tls_relay_at("127.0.0.1:0", Some(443)).await;
+        assert_ne!(server.https_addr().unwrap().port(), 443);
+        assert_eq!(url.to_string(), "https://localhost/");
     }
 
     /// A relay without TLS, as tests and dev sessions run it.
@@ -376,6 +398,7 @@ mod tests {
         let options = RelayOptions {
             http_bind: "127.0.0.1:0".parse().unwrap(),
             tls: None,
+            https_port: None,
             quic_bind: None,
             open: false,
         };

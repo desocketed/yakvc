@@ -32,6 +32,9 @@ pub struct RelayConfig {
     #[serde(default)]
     pub open: bool,
     pub https_bind: Option<SocketAddr>,
+    /// The HTTPS port clients dial, when a proxy listening there forwards to
+    /// `https_bind`. Defaults to the port of `https_bind`.
+    pub https_port: Option<u16>,
     pub quic_bind: Option<SocketAddr>,
     /// ACME via Let's Encrypt for this domain, or `cert` + `key` files.
     pub domain: Option<String>,
@@ -94,6 +97,13 @@ impl Config {
 }
 
 impl RelayConfig {
+    /// The URL clients reach the relay at, if it has a domain and serves
+    /// HTTPS. `run` prints the same URL from the port it actually bound.
+    pub fn url(&self) -> Option<String> {
+        let port = self.https_port.unwrap_or(self.https_bind?.port());
+        Some(format!("https://{}:{port}", self.domain.as_ref()?))
+    }
+
     fn into_options(self) -> Result<RelayOptions, ConfigError> {
         let tls = match (self.cert, self.key, self.domain) {
             (Some(cert), Some(key), domain) => Some(RelayTls::Files {
@@ -122,9 +132,13 @@ impl RelayConfig {
             }
             _ => return Err(invalid("relay.cert and relay.key go together")),
         };
+        if self.https_port.is_some() && tls.is_none() {
+            return Err(invalid("relay.https_port needs relay.https_bind"));
+        }
         Ok(RelayOptions {
             http_bind: self.http_bind,
             tls,
+            https_port: self.https_port,
             quic_bind: self.quic_bind,
             open: self.open,
         })
@@ -221,6 +235,7 @@ mod tests {
         ));
 
         for bad in [
+            "https_port = 443\n",
             "cert = \"c.pem\"\nkey = \"k.pem\"\n",
             "https_bind = \"0.0.0.0:443\"\ncert = \"c.pem\"\n",
             "https_bind = \"0.0.0.0:443\"\ncert = \"c.pem\"\nkey = \"k.pem\"\n",
@@ -232,6 +247,24 @@ mod tests {
                 "{bad}"
             );
         }
+    }
+
+    /// Behind a proxy on port 443 the listener binds a loopback port, and
+    /// the URL still names the port clients dial.
+    #[test]
+    fn https_port_replaces_the_bound_port_in_the_url() {
+        let base = "endpoint_key = \"a\"\nissuer_key = \"b\"\nbind = \"0.0.0.0:1\"\n[relay]\nhttp_bind = \"0.0.0.0:80\"\nhttps_bind = \"127.0.0.1:8443\"\ndomain = \"relay.example.com\"\nacme_contact = \"ops@example.com\"\nacme_cache_dir = \"/tmp/acme\"\n";
+        let url = |toml: &str| toml::from_str::<Config>(toml).unwrap().relay.unwrap().url();
+        assert_eq!(url(base).unwrap(), "https://relay.example.com:8443");
+
+        let proxied = format!("{base}https_port = 443\n");
+        assert_eq!(url(&proxied).unwrap(), "https://relay.example.com:443");
+        let options = relay(&proxied).unwrap().unwrap();
+        assert_eq!(options.https_port, Some(443));
+        assert!(matches!(
+            options.tls,
+            Some(RelayTls::LetsEncrypt { https_bind, .. }) if https_bind.port() == 8443
+        ));
     }
 
     #[test]
