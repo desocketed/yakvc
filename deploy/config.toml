@@ -15,7 +15,8 @@ bind = "[::]:7843"
 metrics_bind = "127.0.0.1:9100"
 
 [relay]
-# Plain HTTP; also answers Let's Encrypt.
+# Plain HTTP: only the clients' captive-portal check. Let's Encrypt is
+# answered on the HTTPS port.
 http_bind = "[::]:80"
 https_bind = "[::]:443"
 # QUIC address discovery (UDP), which tells clients their public address.

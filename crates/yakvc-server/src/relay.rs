@@ -251,9 +251,18 @@ fn dialable(addr: SocketAddr) -> SocketAddr {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpStream;
     use yakvc_proto::SecretKey;
 
     use super::*;
+
+    /// Longer than any deadline the relay gives a connection that hasn't
+    /// become a relay client. The tests run on a paused clock, so waiting
+    /// this long takes no time.
+    const PATIENCE: Duration = Duration::from_secs(300);
 
     fn id(n: u8) -> EndpointId {
         SecretKey::from_bytes(&[n; 32]).public()
@@ -332,32 +341,55 @@ mod tests {
         assert_eq!(gate.admit(id(1), later), Admission::Refused);
     }
 
-    /// Every relay listener bound to `[::]` serves IPv4 too. The rendezvous
-    /// and plain HTTP are covered in `tests.rs`; HTTPS and QUIC address
-    /// discovery need a certificate, which the rendezvous endpoint in those
-    /// tests wouldn't trust.
-    #[tokio::test]
-    async fn wildcard_ipv6_binds_serve_both_families() {
-        let dir = std::env::temp_dir().join(format!("yakvc-relay-tls-{}", std::process::id()));
+    /// A relay with HTTP, HTTPS and QUIC listeners on `bind`'s address.
+    async fn tls_relay(bind: &str) -> iroh_relay::server::Server {
+        static NEXT: AtomicU32 = AtomicU32::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "yakvc-relay-tls-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
         std::fs::create_dir_all(&dir).unwrap();
         let certified = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
         let (cert, key) = (dir.join("cert.pem"), dir.join("key.pem"));
         std::fs::write(&cert, certified.cert.pem()).unwrap();
         std::fs::write(&key, certified.signing_key.serialize_pem()).unwrap();
         let options = RelayOptions {
-            http_bind: "[::]:0".parse().unwrap(),
+            http_bind: bind.parse().unwrap(),
             tls: Some(RelayTls::Files {
-                https_bind: "[::]:0".parse().unwrap(),
+                https_bind: bind.parse().unwrap(),
                 domain: "localhost".into(),
                 cert,
                 key,
             }),
-            quic_bind: Some("[::]:0".parse().unwrap()),
+            quic_bind: Some(bind.parse().unwrap()),
             open: false,
         };
         let gate = Arc::new(RelayGate::new(Arc::default(), id(0), GRACE_PERIOD));
         let (server, _) = spawn(&options, gate, 0).await.unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
+        server
+    }
+
+    /// A relay without TLS, as tests and dev sessions run it.
+    async fn plain_relay() -> iroh_relay::server::Server {
+        let options = RelayOptions {
+            http_bind: "127.0.0.1:0".parse().unwrap(),
+            tls: None,
+            quic_bind: None,
+            open: false,
+        };
+        let gate = Arc::new(RelayGate::new(Arc::default(), id(0), GRACE_PERIOD));
+        spawn(&options, gate, 0).await.unwrap().0
+    }
+
+    /// Every relay listener bound to `[::]` serves IPv4 too. The rendezvous
+    /// and plain HTTP are covered in `tests.rs`; HTTPS and QUIC address
+    /// discovery need a certificate, which the rendezvous endpoint in those
+    /// tests wouldn't trust.
+    #[tokio::test]
+    async fn wildcard_ipv6_binds_serve_both_families() {
+        let server = tls_relay("[::]:0").await;
 
         let http = server.http_addr().unwrap().port();
         let https = server.https_addr().unwrap().port();
@@ -400,6 +432,96 @@ mod tests {
             Ok(Ok(len)) => len >= 5 && reply[0] & 0x80 != 0 && reply[1..5] == [0; 4],
             _ => false,
         }
+    }
+
+    /// Connects to `addr`, sends `sent` and nothing more, like a scanner or
+    /// a client that died, and keeps its end open.
+    async fn stalled(addr: SocketAddr, sent: &[u8]) -> TcpStream {
+        let mut stream = TcpStream::connect(dialable(addr)).await.unwrap();
+        stream.write_all(sent).await.unwrap();
+        stream
+    }
+
+    /// Lets the listeners accept what was just connected. The paused clock
+    /// stands still meanwhile: it only runs on when nothing else is going on.
+    async fn settle() {
+        tokio::task::spawn_blocking(|| std::thread::sleep(Duration::from_millis(100)))
+            .await
+            .unwrap();
+    }
+
+    /// Whether the server ends the connection (closes or resets it) within
+    /// [`PATIENCE`].
+    async fn closed_by_server(mut stream: TcpStream) -> bool {
+        let mut rest = Vec::new();
+        tokio::time::timeout(PATIENCE, stream.read_to_end(&mut rest))
+            .await
+            .is_ok()
+    }
+
+    /// The captive-portal probe iroh clients send over plain HTTP.
+    async fn probe_answered(addr: SocketAddr) -> bool {
+        let request = b"GET /generate_204 HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        let mut stream = stalled(addr, request).await;
+        let mut response = [0; 12];
+        tokio::time::timeout(PATIENCE, stream.read_exact(&mut response))
+            .await
+            .is_ok_and(|read| read.is_ok())
+            && response == *b"HTTP/1.1 204"
+    }
+
+    /// What a peer may have sent before going silent, per kind of listener.
+    const STALLED_HTTP: [&[u8]; 3] = [b"", b"GET /gener", b"GET / HTTP/1.1\r\nHost: x\r\n\r\n"];
+    /// Nothing, or the start of a TLS record that never completes.
+    const STALLED_TLS: [&[u8]; 2] = [b"", &[0x16, 0x03, 0x01, 0x02, 0x00, 0x01]];
+
+    /// A peer that connects and goes silent must not hold its socket for
+    /// good: enough of them use up the server's file descriptors, and then
+    /// nobody can connect.
+    #[tokio::test(start_paused = true)]
+    async fn stalled_connections_are_closed_on_every_tcp_listener() {
+        let tls = tls_relay("127.0.0.1:0").await;
+        let plain = plain_relay().await;
+        let mut stalls = Vec::new();
+        for sent in STALLED_HTTP {
+            let http = tls.http_addr().unwrap();
+            stalls.push(("HTTP beside HTTPS", sent, stalled(http, sent).await));
+            let relay = plain.http_addr().unwrap();
+            stalls.push(("HTTP relay", sent, stalled(relay, sent).await));
+        }
+        for sent in STALLED_TLS {
+            let https = tls.https_addr().unwrap();
+            stalls.push(("HTTPS", sent, stalled(https, sent).await));
+        }
+        settle().await;
+
+        let mut kept = Vec::new();
+        for (listener, sent, stream) in stalls {
+            if !closed_by_server(stream).await {
+                kept.push((listener, String::from_utf8_lossy(sent)));
+            }
+        }
+        assert!(kept.is_empty(), "silent connections kept open: {kept:?}");
+    }
+
+    /// The outage this guards against: silent connections piling up on the
+    /// plain HTTP listener. However many there are, a real client is served
+    /// while they are held, and none of them is held for good.
+    #[tokio::test(start_paused = true)]
+    async fn a_flood_of_idle_connections_passes() {
+        let server = tls_relay("127.0.0.1:0").await;
+        let http = server.http_addr().unwrap();
+        let mut flood = Vec::new();
+        for _ in 0..200 {
+            flood.push(stalled(http, b"").await);
+        }
+        settle().await;
+        assert!(probe_answered(http).await, "no answer during the flood");
+
+        for stream in flood {
+            assert!(closed_by_server(stream).await, "an idle connection stayed");
+        }
+        assert!(probe_answered(http).await, "no answer after the flood");
     }
 
     #[test]

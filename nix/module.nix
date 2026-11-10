@@ -91,6 +91,12 @@ in
         ExecStart = "${server} run --config ${configFile}";
         Restart = "on-failure";
 
+        # Every TCP connection is closed within 30 s unless it becomes a
+        # relay client, so this bounds the connection rate the listeners
+        # take before accept fails: about 2,000 new connections a second.
+        # systemd's default soft limit of 1024 allows 34.
+        LimitNOFILE = 65536;
+
         # A throwaway user, which may bind ports 80 and 443 and write only
         # /var/lib/yakvc (the keys and the ACME cache).
         DynamicUser = true;
