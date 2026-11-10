@@ -53,6 +53,9 @@ pub struct RelayOptions {
     /// is `None` (tests only). ACME is answered on the HTTPS port.
     pub http_bind: SocketAddr,
     pub tls: Option<RelayTls>,
+    /// The HTTPS port in the relay URL, when clients reach the HTTPS
+    /// listener through a proxy on another port. `None` is the bound port.
+    pub https_port: Option<u16>,
     /// QUIC address discovery.
     pub quic_bind: Option<SocketAddr>,
     /// Serve every client, not only those with a rendezvous session. For a

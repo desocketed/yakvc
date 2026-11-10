@@ -19,6 +19,11 @@ metrics_bind = "127.0.0.1:9100"
 # answered on the HTTPS port.
 http_bind = "[::]:80"
 https_bind = "[::]:443"
+# Behind a proxy that owns port 443 and forwards the relay's hostname here
+# untouched (TCP, by SNI: the relay ends TLS itself and answers Let's
+# Encrypt on this listener), bind a loopback port and name the public one:
+# https_bind = "127.0.0.1:8443"
+# https_port = 443
 # QUIC address discovery (UDP), which tells clients their public address.
 quic_bind = "[::]:7842"
 domain = "relay.yak.dsktd.net"

@@ -38,6 +38,7 @@ fn relay_options() -> RelayOptions {
     RelayOptions {
         http_bind: "127.0.0.1:0".parse().unwrap(),
         tls: None,
+        https_port: None,
         quic_bind: None,
         open: false,
     }
