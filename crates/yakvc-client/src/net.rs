@@ -144,10 +144,12 @@ impl ControlSend {
 }
 
 impl ControlRecv {
-    /// Next message on this protocol's control stream. `None` once closed or
-    /// after a malformed message.
-    pub async fn recv<M: serde::de::DeserializeOwned>(&mut self) -> Option<M> {
-        wire::read_msg(&mut self.0).await.ok().flatten()
+    /// Next message on this protocol's control stream: `None` once closed
+    /// or broken, `Some(None)` for a frame that doesn't decode (a newer
+    /// peer's message, say), after which the stream goes on.
+    pub async fn recv<M: serde::de::DeserializeOwned>(&mut self) -> Option<Option<M>> {
+        let body = wire::read_frame(&mut self.0).await.ok().flatten()?;
+        Some(wire::decode(&body).ok())
     }
 }
 

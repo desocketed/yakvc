@@ -578,7 +578,15 @@ async fn read_control(
 ) {
     let uuid = peer.uuid();
     let link_id = peer.link_id();
+    let mut skipped = false;
     while let Some(msg) = control.recv::<VoiceMsg>().await {
+        // A newer peer may send messages we don't know: skip them.
+        let Some(msg) = msg else {
+            if !std::mem::replace(&mut skipped, true) {
+                tracing::debug!(%uuid, "skipping control messages that don't decode");
+            }
+            continue;
+        };
         // An oversize label is as malformed as a message that won't decode,
         // and a peer sending one is off the protocol.
         if !group::labels_fit(&msg) {
@@ -1335,6 +1343,22 @@ mod tests {
             "{reason:?}"
         );
         assert!(shared.announced().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_message_that_does_not_decode_is_skipped() {
+        let (shared, mut bob, _served) = linked_to_probe().await;
+        // A variant far beyond ours, as a newer peer might send.
+        bob.control_send.send(&200u32).await.unwrap();
+        let group = announcement("Miners");
+        bob.control_send
+            .send(&VoiceMsg::Group(Some(group.clone())))
+            .await
+            .unwrap();
+        eventually("alice still reads the stream", || {
+            shared.announced() == [(uuid(2), group.clone())]
+        })
+        .await;
     }
 
     #[tokio::test]
