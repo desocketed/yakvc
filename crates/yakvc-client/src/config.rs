@@ -251,7 +251,7 @@ impl Config {
 /// The server used when `client.toml` names none, and its issuer. Reached
 /// through its relay by hostname, with no IP address, so the server can move
 /// to a new machine with a DNS change: Iroh finds the direct path from there.
-fn built_in_rendezvous() -> (RendezvousConfig, IssuerId) {
+pub(crate) fn built_in_rendezvous() -> (RendezvousConfig, IssuerId) {
     let rendezvous = RendezvousConfig {
         endpoint_id: "5c9578695b7b258c587bebc826f1091a95da2e75ef93a4b7aeff45f28e2cde60"
             .parse()

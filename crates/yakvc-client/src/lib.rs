@@ -13,6 +13,7 @@ mod config;
 mod engine;
 mod event;
 pub mod net;
+pub mod rooms;
 #[cfg(feature = "sim")]
 pub mod sim;
 mod voice;
