@@ -248,6 +248,10 @@ impl Voice {
             .update(|state, _| state.join_public(id, &announced))
     }
 
+    pub(crate) fn create_group(&self, public: bool) {
+        self.shared.update(|state, _| state.create_group(public));
+    }
+
     pub(crate) fn leave_group(&self) {
         self.shared.update(|state, _| state.set_group(None));
     }

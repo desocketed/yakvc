@@ -57,7 +57,7 @@ use crate::guard::{
 /// 11: `yakvc_push_world` takes the room's echo and echo delay.
 /// 12: `yakvc_set_voice_sink`.
 /// 15: `yakvc_push_world` takes the far echoes after the room.
-pub const YAKVC_ABI_VERSION: u32 = 15;
+pub const YAKVC_ABI_VERSION: u32 = 16;
 
 pub const YAKVC_OK: i32 = 0;
 /// A null pointer, bad UUID, invalid UTF-8 or out-of-range value.
@@ -741,6 +741,22 @@ pub unsafe extern "C" fn yakvc_join_group(
             let id = GroupId::from_hex(hex)
                 .ok_or_else(|| FfiError::invalid("id is not 64 hex characters"))?;
             e.engine.join_group(id).map_err(group_error)
+        })
+    }
+}
+
+/// Starts a group with only us in it yet, public (anyone may join it) or
+/// private, leaving any other.
+///
+/// # Safety
+/// `engine` must be live.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn yakvc_create_group(engine: *mut YakVcEngine, public_: bool) -> i32 {
+    // SAFETY: the caller guarantees `engine` is live.
+    unsafe {
+        with_engine(engine, |e| {
+            e.engine.create_group(public_);
+            Ok(())
         })
     }
 }

@@ -125,6 +125,14 @@ impl VoiceState {
         self.pending = None;
     }
 
+    /// Starts a new group with only us in it, public (anyone may join) or
+    /// private, leaving any other.
+    pub(crate) fn create_group(&mut self, public: bool) {
+        let mut state = GroupState::new(self.own_uuid.unwrap_or_default());
+        state.public = public;
+        self.set_group(Some(OwnGroup::new(GroupKey::random(), state)));
+    }
+
     /// Invites `target` to our group, or while we are in none, to a new
     /// group we join once someone accepts. The peer task delivers it.
     pub(crate) fn invite(&mut self, target: Uuid, now: Instant) {
@@ -734,6 +742,28 @@ mod tests {
         events.clear();
         dave.receive_invite(uuid(1), own.key, own.state, now, &mut events);
         assert!(events.is_empty());
+    }
+
+    #[test]
+    fn a_created_public_group_is_listed_and_joinable_at_once() {
+        let mut alice = client(1);
+        start_group(&mut alice);
+        let old = alice.group.as_ref().unwrap().id();
+        alice.create_group(true);
+        let own = alice.group.clone().unwrap();
+        assert_ne!(own.id(), old, "a new group, not the old one");
+        assert!(own.state.public);
+        assert!(alice.group_mates.is_empty());
+
+        let mut bob = client(2);
+        let announced = [announce(&alice)];
+        assert_eq!(bob.groups(&announced)[0].members, [uuid(1)]);
+        bob.join_public(own.id(), &announced).unwrap();
+        assert_eq!(bob.group.as_ref().unwrap().id(), own.id());
+
+        alice.create_group(false);
+        assert!(!alice.group.as_ref().unwrap().state.public);
+        assert!(client(3).groups(&[announce(&alice)]).is_empty());
     }
 
     #[test]

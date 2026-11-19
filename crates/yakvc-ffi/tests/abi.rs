@@ -115,6 +115,7 @@ fn every_engine_call_rejects_a_null_engine() {
             yakvc_invite(null, uuid.as_ptr()),
             yakvc_accept_invite(null, uuid.as_ptr()),
             yakvc_join_group(null, ptr::null(), 0),
+            yakvc_create_group(null, true),
             yakvc_leave_group(null),
             yakvc_set_group_public(null, true),
             yakvc_set_group_label(null, ptr::null(), 0),

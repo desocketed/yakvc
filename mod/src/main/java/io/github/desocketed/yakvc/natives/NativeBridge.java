@@ -34,7 +34,7 @@ import java.util.UUID;
  */
 public final class NativeBridge {
 	/** Must equal {@code YAKVC_ABI_VERSION} in {@code yakvc.h}. */
-	public static final int ABI_VERSION = 15;
+	public static final int ABI_VERSION = 16;
 	/** Doubles in {@link #pushWorld}'s listener: the pose, the room and four far echoes. */
 	public static final int LISTENER_LENGTH = 34;
 
@@ -70,6 +70,7 @@ public final class NativeBridge {
 	private final MethodHandle invite;
 	private final MethodHandle acceptInvite;
 	private final MethodHandle joinGroup;
+	private final MethodHandle createGroup;
 	private final MethodHandle leaveGroup;
 	private final MethodHandle setGroupPublic;
 	private final MethodHandle setGroupLabel;
@@ -114,6 +115,8 @@ public final class NativeBridge {
 				FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
 		joinGroup = linker.downcallHandle(find(library, "yakvc_join_group"),
 				FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, SIZE_T));
+		createGroup = linker.downcallHandle(find(library, "yakvc_create_group"),
+				FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_BOOLEAN));
 		leaveGroup = linker.downcallHandle(find(library, "yakvc_leave_group"), FunctionDescriptor.of(JAVA_INT, ADDRESS));
 		setGroupPublic = linker.downcallHandle(find(library, "yakvc_set_group_public"),
 				FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_BOOLEAN));
@@ -280,6 +283,11 @@ public final class NativeBridge {
 			MemorySegment bytes = utf8(arena, id);
 			check((int) invoke(joinGroup, engine, bytes, bytes.byteSize()));
 		}
+	}
+
+	/** Starts a group with only us in it yet, public (anyone may join) or private, leaving any other. */
+	public void createGroup(MemorySegment engine, boolean isPublic) {
+		check((int) invoke(createGroup, engine, isPublic));
 	}
 
 	public void leaveGroup(MemorySegment engine) {

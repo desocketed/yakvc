@@ -427,6 +427,11 @@ public final class GameStateFeeder {
 		return groupCall(() -> bridge.joinGroup(engine, id));
 	}
 
+	/** Starts a group with only us in it yet, leaving any other. False if the engine is stopped. */
+	public boolean createGroup(boolean isPublic) {
+		return groupCall(() -> bridge.createGroup(engine, isPublic));
+	}
+
 	public void leaveGroup() {
 		groupCall(() -> bridge.leaveGroup(engine));
 	}

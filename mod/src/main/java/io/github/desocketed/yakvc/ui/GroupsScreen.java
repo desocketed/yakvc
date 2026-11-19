@@ -75,7 +75,16 @@ public final class GroupsScreen extends Screen {
 		list = layout.addToContents(new GroupList(minecraft));
 		for (VoiceGroup group : shown) list.add(new GroupRow(group));
 
-		layout.addToFooter(Button.builder(CommonComponents.GUI_DONE, button -> onClose()).width(200).build());
+		LinearLayout footer = layout.addToFooter(LinearLayout.horizontal().spacing(8));
+		if (shown.isEmpty() || !shown.getFirst().mine()) {
+			footer.addChild(Button.builder(Component.translatable("yakvc.groups.create_public"), button -> {
+				applyLabel();
+				typedLabel = null;
+				if (!feeder.createGroup(true)) error = Component.translatable("yakvc.hud.stopped");
+				rebuildWidgets();
+			}).width(150).tooltip(Tooltip.create(Component.translatable("yakvc.groups.create_public.tooltip"))).build());
+		}
+		footer.addChild(Button.builder(CommonComponents.GUI_DONE, button -> onClose()).width(150).build());
 		layout.visitWidgets(this::addRenderableWidget);
 		repositionElements();
 	}

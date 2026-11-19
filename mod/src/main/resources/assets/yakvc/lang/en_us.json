@@ -49,6 +49,8 @@
 	"yakvc.groups.status.none": "Not in a group. Look at a player and press %s to invite them.",
 	"yakvc.groups.status.in": "Your group hears only each other, at any distance.",
 	"yakvc.groups.join": "Join",
+	"yakvc.groups.create_public": "Create Public Group",
+	"yakvc.groups.create_public.tooltip": "Start a group that everyone on the server sees and may join.",
 	"yakvc.groups.leave": "Leave",
 	"yakvc.groups.public": "Public",
 	"yakvc.groups.private": "Private",

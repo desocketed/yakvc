@@ -24,7 +24,7 @@
  * 12: `yakvc_set_voice_sink`.
  * 15: `yakvc_push_world` takes the far echoes after the room.
  */
-#define YAKVC_ABI_VERSION 15
+#define YAKVC_ABI_VERSION 16
 
 #define YAKVC_OK 0
 
@@ -438,6 +438,15 @@ int32_t yakvc_accept_invite(struct YakVcEngine *engine, const uint8_t *from);
  * `engine` must be live; `id_hex` must be readable for `len` bytes.
  */
 int32_t yakvc_join_group(struct YakVcEngine *engine, const uint8_t *id_hex, size_t len);
+
+/**
+ * Starts a group with only us in it yet, public (anyone may join it) or
+ * private, leaving any other.
+ *
+ * # Safety
+ * `engine` must be live.
+ */
+int32_t yakvc_create_group(struct YakVcEngine *engine, bool public_);
 
 /**
  * # Safety

@@ -262,6 +262,12 @@ impl Engine {
         self.voice.join_group(id)
     }
 
+    /// Starts a group with only us in it yet, public (anyone may join it
+    /// from the list) or private, leaving any other.
+    pub fn create_group(&self, public: bool) {
+        self.voice.create_group(public);
+    }
+
     pub fn leave_group(&self) {
         self.voice.leave_group();
     }

@@ -97,7 +97,13 @@ class NativeBridgeTest {
 			YakVcException notHex = assertThrows(YakVcException.class, () -> bridge.joinGroup(engine, "z".repeat(64)));
 			assertEquals(-1, notHex.code());
 			assertEquals(-1, assertThrows(YakVcException.class, () -> bridge.joinGroup(engine, "00")).code());
+			bridge.createGroup(engine, true);
+			List<VoiceGroup> groups = VoiceGroup.parse(bridge.listGroups(engine));
+			assertEquals(1, groups.size());
+			assertTrue(groups.getFirst().mine() && groups.getFirst().isPublic());
+			assertEquals(List.of(me), groups.getFirst().members());
 			bridge.leaveGroup(engine);
+			assertEquals("[]", bridge.listGroups(engine));
 		} finally {
 			bridge.destroy(engine);
 		}
