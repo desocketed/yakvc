@@ -21,6 +21,7 @@
 //! | [`YAKVC_EVENT_MIC_LEVEL`] | `f32` dBFS |
 //! | [`YAKVC_EVENT_ERROR`] | message as UTF-8 |
 //! | [`YAKVC_EVENT_INVITE`] | `uuid[16]` of the player who invited us |
+//! | [`YAKVC_EVENT_INVITE_REQUEST`] | `uuid[16]` of the player who asks us to invite them |
 //! | [`YAKVC_EVENT_GROUP_NOTICE`] | `u8 YAKVC_GROUP_*`, `uuid[16]` the member it is about, `uuid[16] by` who made the change; all-zero when not applicable |
 
 #![allow(unsafe_code)]
@@ -33,8 +34,9 @@ use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 
 use yakvc_client::{
-    Config, ConfigError, Engine, FarEcho, GroupError, GroupId, Input, JoinId, MonoFrame, PeerAudio,
-    Placement, Player, Pose, Room, StartError, Uuid, Vec3, VoiceFrame, VoiceSink, World,
+    Config, ConfigError, Engine, FarEcho, GroupError, GroupId, Input, InviteKind, JoinId,
+    MonoFrame, PeerAudio, Placement, Player, Pose, Room, StartError, Uuid, Vec3, VoiceFrame,
+    VoiceSink, World,
 };
 
 use crate::events::EventQueue;
@@ -57,7 +59,7 @@ use crate::guard::{
 /// 11: `yakvc_push_world` takes the room's echo and echo delay.
 /// 12: `yakvc_set_voice_sink`.
 /// 15: `yakvc_push_world` takes the far echoes after the room.
-pub const YAKVC_ABI_VERSION: u32 = 16;
+pub const YAKVC_ABI_VERSION: u32 = 17;
 
 pub const YAKVC_OK: i32 = 0;
 /// A null pointer, bad UUID, invalid UTF-8 or out-of-range value.
@@ -94,6 +96,7 @@ pub const YAKVC_EVENT_MIC_LEVEL: u16 = 5;
 pub const YAKVC_EVENT_ERROR: u16 = 6;
 pub const YAKVC_EVENT_INVITE: u16 = 7;
 pub const YAKVC_EVENT_GROUP_NOTICE: u16 = 8;
+pub const YAKVC_EVENT_INVITE_REQUEST: u16 = 9;
 
 /// `uuid` became a group mate.
 pub const YAKVC_GROUP_JOINED: u8 = 0;
@@ -688,16 +691,27 @@ fn group_error(err: GroupError) -> FfiError {
 /// proximity voice. Sent over the peer's link if there is one; the invite
 /// lasts two minutes.
 ///
+/// When `target` is in a group we aren't in, asks it to invite us instead
+/// (`YAKVC_EVENT_INVITE_REQUEST` on its side), unless it asked us first, and
+/// joins its invite at once. `*requested` says which was sent.
+///
 /// # Safety
-/// `engine` must be live; `target` must point to 16 bytes.
+/// `engine` must be live; `target` must point to 16 bytes; `requested`
+/// must be writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn yakvc_invite(engine: *mut YakVcEngine, target: *const u8) -> i32 {
+pub unsafe extern "C" fn yakvc_invite(
+    engine: *mut YakVcEngine,
+    target: *const u8,
+    requested: *mut bool,
+) -> i32 {
     // SAFETY: the caller guarantees `engine` is live.
     unsafe {
         with_engine(engine, |e| {
+            // SAFETY: the caller guarantees `requested` is writable.
+            let requested = out_arg(requested, "requested")?;
             // SAFETY: the caller guarantees `target` points to 16 bytes.
             let target = uuids_arg(target, 1, "target")?[0];
-            e.engine.invite(target);
+            *requested = e.engine.invite(target) == InviteKind::Request;
             Ok(())
         })
     }

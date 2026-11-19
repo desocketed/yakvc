@@ -4,6 +4,7 @@ import static java.lang.foreign.ValueLayout.ADDRESS;
 import static java.lang.foreign.ValueLayout.JAVA_BOOLEAN;
 import static java.lang.foreign.ValueLayout.JAVA_INT;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -87,7 +88,8 @@ class NativeBridgeTest {
 			UUID other = UUID.randomUUID();
 			bridge.setIdentity(engine, me, "alice");
 			// Inviting doesn't put us in a group until they accept.
-			bridge.invite(engine, other);
+			// They announce no group, so it is a plain invite, not a request.
+			assertFalse(bridge.invite(engine, other));
 			assertEquals("[]", bridge.listGroups(engine));
 
 			assertUnavailable(() -> bridge.acceptInvite(engine, other));

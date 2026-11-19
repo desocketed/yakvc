@@ -54,6 +54,7 @@ class EngineEventTest {
 		byte[] nil = new byte[16];
 		ByteArrayOutputStream out = new ByteArrayOutputStream();
 		record(out, 7, UUID_BYTES);
+		record(out, 9, UUID_BYTES);
 		record(out, 8, new byte[] {0}, UUID_BYTES, nil);
 		record(out, 8, new byte[] {4}, nil, otherBytes);
 		record(out, 8, new byte[] {9}, UUID_BYTES, nil);
@@ -61,6 +62,7 @@ class EngineEventTest {
 
 		assertEquals(List.of(
 				new EngineEvent.Invite(ID),
+				new EngineEvent.InviteRequest(ID),
 				new EngineEvent.GroupNotice(EngineEvent.NoticeKind.JOINED, ID, new UUID(0, 0)),
 				new EngineEvent.GroupNotice(EngineEvent.NoticeKind.LABEL_CHANGED, new UUID(0, 0), other)),
 				EngineEvent.decode(buf, buf.length));

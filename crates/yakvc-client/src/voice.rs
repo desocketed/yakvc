@@ -34,7 +34,7 @@ use crate::net::{ControlRecv, Peer, PeerLink, Protocol};
 use crate::world::{Input, Vec3, World};
 
 use self::group::Told;
-pub use self::group::{GroupError, GroupInfo};
+pub use self::group::{GroupError, GroupInfo, InviteKind};
 pub(crate) use self::rules::VoiceState;
 use self::rules::{Heard, plan_send};
 pub use self::sink::{Placement, VoiceFrame, VoiceSink};
@@ -230,9 +230,10 @@ impl Voice {
 
     /// Invites `target` to our group, or while we are in none, to a new
     /// group we join once it accepts. Its peer task delivers the invite.
-    pub(crate) fn invite(&self, target: Uuid) {
+    pub(crate) fn invite(&self, target: Uuid) -> InviteKind {
+        let announced = self.shared.announced();
         self.shared
-            .update(|state, _| state.invite(target, Instant::now()));
+            .update(|state, _| state.invite_or_request(target, &announced, Instant::now()))
     }
 
     /// Joins the group `from` invited us to, leaving any other.
@@ -609,6 +610,9 @@ async fn read_control(
             }),
             VoiceMsg::GroupState(state) => shared.update(|voice, events| {
                 voice.receive_group_state(uuid, state, events);
+            }),
+            VoiceMsg::InviteRequest => shared.update(|voice, events| {
+                voice.receive_invite_request(uuid, Instant::now(), events);
             }),
         }
     }

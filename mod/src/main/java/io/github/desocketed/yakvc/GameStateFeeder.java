@@ -252,6 +252,7 @@ public final class GameStateFeeder {
 		LocalPlayer player = minecraft.player;
 		boolean active = inWorld(session, minecraft);
 		if (keys.groupPressed() && active) step(() -> groupChat.groupKeyPressed(minecraft));
+		step(() -> groupChat.tick(minecraft));
 
 		Set<UUID> players = active ? new HashSet<>(session.connection.getOnlinePlayerIds()) : Set.of();
 		refreshBlocked(minecraft, players);
@@ -412,9 +413,17 @@ public final class GameStateFeeder {
 		return groups.isEmpty() || !groups.getFirst().mine() ? null : groups.getFirst();
 	}
 
-	/** Invites a player to our group, or to a new one if we are in none. False if the engine is stopped. */
-	public boolean invite(UUID target) {
-		return groupCall(() -> bridge.invite(engine, target));
+	/** What {@link #invite} sent. */
+	public enum InviteSent { NOTHING, INVITE, REQUEST }
+
+	/**
+	 * Invites a player to our group, or to a new one if we are in none; asks them to invite us instead when they are
+	 * in a group we aren't in. Nothing if the engine is stopped.
+	 */
+	public InviteSent invite(UUID target) {
+		boolean[] requested = {false};
+		if (!groupCall(() -> requested[0] = bridge.invite(engine, target))) return InviteSent.NOTHING;
+		return requested[0] ? InviteSent.REQUEST : InviteSent.INVITE;
 	}
 
 	/** Joins the group of {@code from}'s invite. False if there was none in the last two minutes. */
@@ -702,6 +711,10 @@ public final class GameStateFeeder {
 			case EngineEvent.Invite invite -> {
 				YakVcClient.LOGGER.info("Group invite from {} {}", invite.from(), name(invite.from()));
 				groupChat.invited(invite.from());
+			}
+			case EngineEvent.InviteRequest request -> {
+				YakVcClient.LOGGER.info("Invite request from {} {}", request.from(), name(request.from()));
+				groupChat.inviteRequested(request.from());
 			}
 			case EngineEvent.GroupNotice notice -> {
 				YakVcClient.LOGGER.info("Group {}: {} {}, by {}", notice.kind(), notice.uuid(), name(notice.uuid()),

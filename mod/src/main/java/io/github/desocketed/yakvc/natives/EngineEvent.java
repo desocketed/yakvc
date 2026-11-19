@@ -34,6 +34,9 @@ public sealed interface EngineEvent {
 	/** {@code from} invited us to their group; {@code NativeBridge.acceptInvite} accepts it within two minutes. */
 	record Invite(UUID from) implements EngineEvent {}
 
+	/** {@code from} asked us to invite them to our group; inviting them within two minutes lets them in. */
+	record InviteRequest(UUID from) implements EngineEvent {}
+
 	/**
 	 * Something another player changed in our group. {@code uuid} is the member it is about (joined or left);
 	 * {@code by} is who made the group public or private or changed its label. The unused one is all zeros.
@@ -82,6 +85,7 @@ public sealed interface EngineEvent {
 					case 5 -> new MicLevel(payload.getFloat());
 					case 6 -> new Error(utf8(payload));
 					case 7 -> new Invite(uuid(payload));
+					case 9 -> new InviteRequest(uuid(payload));
 					case 8 -> {
 						NoticeKind kind = lookup(NoticeKind.values(), payload.get());
 						UUID uuid = uuid(payload);

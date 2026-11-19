@@ -4,8 +4,11 @@ import io.github.desocketed.yakvc.GameStateFeeder;
 import io.github.desocketed.yakvc.input.LookTarget;
 import io.github.desocketed.yakvc.natives.EngineEvent;
 import io.github.desocketed.yakvc.natives.VoiceGroup;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.AbstractClientPlayer;
@@ -24,6 +27,8 @@ public final class GroupChat {
 	private final GameStateFeeder feeder;
 	/** Invites to us not accepted yet, by who sent them, with when they came. */
 	private final Map<UUID, Long> invites = new HashMap<>();
+	/** Requests to invite us we sent and nobody answered yet, by who we asked, with when. */
+	private final Map<UUID, Long> asked = new HashMap<>();
 
 	public GroupChat(GameStateFeeder feeder) {
 		this.feeder = feeder;
@@ -32,11 +37,38 @@ public final class GroupChat {
 	/** Forgets invites, which belong to one server. */
 	public void clear() {
 		invites.clear();
+		asked.clear();
+	}
+
+	/** Says so when a request to invite us goes unanswered for as long as an invite lasts. */
+	public void tick(Minecraft minecraft) {
+		LocalPlayer player = minecraft.player;
+		for (UUID target : unanswered(asked, System.nanoTime(), feeder.groupMates())) {
+			if (player != null) {
+				player.sendOverlayMessage(Component.translatable("yakvc.group.no_answer", feeder.name(target)));
+			}
+		}
 	}
 
 	/**
-	 * The Group key: accepts the invite of the player looked at, if they sent one, and otherwise invites them. A group
-	 * is made face to face, so only players in view count.
+	 * Takes the requests in {@code asked} that ran out by {@code now} out of it and returns them; requests answered by
+	 * letting us into the group of a player in {@code mates} go without a word.
+	 */
+	static List<UUID> unanswered(Map<UUID, Long> asked, long now, Set<UUID> mates) {
+		asked.keySet().removeAll(mates);
+		List<UUID> expired = new ArrayList<>();
+		asked.entrySet().removeIf(entry -> {
+			boolean over = now - entry.getValue() >= INVITE_NANOS;
+			if (over) expired.add(entry.getKey());
+			return over;
+		});
+		return expired;
+	}
+
+	/**
+	 * The Group key: accepts the invite of the player looked at, if they sent one, and otherwise invites them, or asks
+	 * them for an invite when they are in a group we aren't in. A group is made face to face, so only players in view
+	 * count.
 	 */
 	public void groupKeyPressed(Minecraft minecraft) {
 		LocalPlayer player = minecraft.player;
@@ -66,7 +98,14 @@ public final class GroupChat {
 			player.sendOverlayMessage(Component.translatable("yakvc.group.no_voice", name));
 			return;
 		}
-		if (feeder.invite(target)) player.sendSystemMessage(Component.translatable("yakvc.group.invited", name));
+		switch (feeder.invite(target)) {
+			case INVITE -> player.sendSystemMessage(Component.translatable("yakvc.group.invited", name));
+			case REQUEST -> {
+				asked.putIfAbsent(target, System.nanoTime());
+				player.sendSystemMessage(Component.translatable("yakvc.group.requested", name));
+			}
+			case NOTHING -> {}
+		}
 	}
 
 	/** An invite goes only over a voice connection, so without one it would be lost without a word. */
@@ -82,6 +121,12 @@ public final class GroupChat {
 		invites.values().removeIf(at -> now - at >= INVITE_NANOS);
 		invites.put(from, now);
 		chat(Component.translatable("yakvc.group.invite", feeder.name(from),
+				feeder.keys().group.getTranslatedKeyMessage()));
+	}
+
+	/** {@code from} asked us to invite them: says so in chat, with the key that does. */
+	public void inviteRequested(UUID from) {
+		chat(Component.translatable("yakvc.group.request", feeder.name(from),
 				feeder.keys().group.getTranslatedKeyMessage()));
 	}
 

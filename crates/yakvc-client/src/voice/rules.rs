@@ -74,6 +74,10 @@ pub(crate) struct VoiceState {
     pub invites_sent: HashMap<Uuid, SentInvite>,
     /// The latest invite from each player.
     pub invites: HashMap<Uuid, Invite>,
+    /// When we asked each player to invite us, for its peer task to send.
+    pub requests_sent: HashMap<Uuid, Instant>,
+    /// When each player asked us to invite them.
+    pub requests: HashMap<Uuid, Instant>,
 }
 
 /// Who a frame is heard from, before any panning or acoustics.
@@ -142,6 +146,8 @@ impl VoiceState {
             mates_of: None,
             pending: None,
             invites_sent: HashMap::new(),
+            requests_sent: HashMap::new(),
+            requests: HashMap::new(),
             invites: HashMap::new(),
         }
     }

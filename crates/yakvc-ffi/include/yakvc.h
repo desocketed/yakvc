@@ -24,7 +24,7 @@
  * 12: `yakvc_set_voice_sink`.
  * 15: `yakvc_push_world` takes the far echoes after the room.
  */
-#define YAKVC_ABI_VERSION 16
+#define YAKVC_ABI_VERSION 17
 
 #define YAKVC_OK 0
 
@@ -95,6 +95,8 @@
 #define YAKVC_EVENT_INVITE 7
 
 #define YAKVC_EVENT_GROUP_NOTICE 8
+
+#define YAKVC_EVENT_INVITE_REQUEST 9
 
 /**
  * `uuid` became a group mate.
@@ -414,10 +416,15 @@ int32_t yakvc_complete_join(struct YakVcEngine *engine, uint32_t request_id, boo
  * proximity voice. Sent over the peer's link if there is one; the invite
  * lasts two minutes.
  *
+ * When `target` is in a group we aren't in, asks it to invite us instead
+ * (`YAKVC_EVENT_INVITE_REQUEST` on its side), unless it asked us first, and
+ * joins its invite at once. `*requested` says which was sent.
+ *
  * # Safety
- * `engine` must be live; `target` must point to 16 bytes.
+ * `engine` must be live; `target` must point to 16 bytes; `requested`
+ * must be writable.
  */
-int32_t yakvc_invite(struct YakVcEngine *engine, const uint8_t *target);
+int32_t yakvc_invite(struct YakVcEngine *engine, const uint8_t *target, bool *requested);
 
 /**
  * Joins the group of the last invite (`YAKVC_EVENT_INVITE`) from `from`,

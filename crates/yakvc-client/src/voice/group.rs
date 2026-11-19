@@ -15,6 +15,15 @@ use super::rules::VoiceState;
 use crate::config::InvitesFrom;
 use crate::event::{Event, GroupNoticeKind};
 
+/// What [`VoiceState::invite_or_request`] sent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InviteKind {
+    /// An invite to our group, or to a new one.
+    Invite,
+    /// A request that the target, in a group of its own, invite us.
+    Request,
+}
+
 /// How long a received invite can be accepted.
 const INVITE_LIFETIME: Duration = Duration::from_secs(120);
 /// How far ahead of ours a mate's state version may be. Versions grow by one
@@ -89,6 +98,8 @@ pub(crate) struct Told {
     pub state: Option<GroupState>,
     /// When the latest invite we delivered to the peer was made.
     pub invite: Option<Instant>,
+    /// When the request to invite us that we delivered to the peer was made.
+    pub request: Option<Instant>,
 }
 
 impl Default for Told {
@@ -100,6 +111,7 @@ impl Default for Told {
             group: None,
             state: None,
             invite: None,
+            request: None,
         }
     }
 }
@@ -131,6 +143,52 @@ impl VoiceState {
         let mut state = GroupState::new(self.own_uuid.unwrap_or_default());
         state.public = public;
         self.set_group(Some(OwnGroup::new(GroupKey::random(), state)));
+    }
+
+    /// Invites `target`, or, when `announced` shows it in a group we aren't
+    /// in, asks it to invite us instead, unless it asked us first. A request
+    /// is sent once while it lasts, like an invite.
+    pub(crate) fn invite_or_request(
+        &mut self,
+        target: Uuid,
+        announced: &[(Uuid, GroupAnnounce)],
+        now: Instant,
+    ) -> InviteKind {
+        let fresh = |at: &Instant| now.duration_since(*at) < INVITE_LIFETIME;
+        let asked_us = self.requests.remove(&target).is_some_and(|at| fresh(&at));
+        let in_other_group =
+            announced.iter().any(|(uuid, _)| *uuid == target) && !self.is_group_mate(target);
+        if in_other_group && !asked_us {
+            self.requests_sent.retain(|_, at| fresh(at));
+            self.requests_sent.entry(target).or_insert(now);
+            return InviteKind::Request;
+        }
+        self.invite(target, now);
+        InviteKind::Invite
+    }
+
+    /// Remembers that `from` asked us to invite it, if we are in a group it
+    /// isn't in and it may invite us; one request per player while it lasts.
+    pub(crate) fn receive_invite_request(
+        &mut self,
+        from: Uuid,
+        now: Instant,
+        events: &mut Vec<Event>,
+    ) {
+        if self.group.is_none()
+            || self.is_group_mate(from)
+            || self.muted(from)
+            || !self.may_invite_us(from)
+        {
+            return;
+        }
+        self.requests
+            .retain(|_, at| now.duration_since(*at) < INVITE_LIFETIME);
+        if self.requests.contains_key(&from) {
+            return;
+        }
+        self.requests.insert(from, now);
+        events.push(Event::InviteRequest { from });
     }
 
     /// Invites `target` to our group, or while we are in none, to a new
@@ -326,7 +384,19 @@ impl VoiceState {
         if !state.is_valid() {
             return;
         }
-        if self.muted(from) || !self.may_invite_us(from) {
+        if self.muted(from) {
+            return;
+        }
+        // An invite we asked for is joined at once.
+        let asked = self
+            .requests_sent
+            .remove(&from)
+            .is_some_and(|at| now.duration_since(at) < INVITE_LIFETIME);
+        if asked {
+            self.set_group(Some(OwnGroup::new(key, state)));
+            return;
+        }
+        if !self.may_invite_us(from) {
             return;
         }
         self.invites.insert(
@@ -448,16 +518,22 @@ impl VoiceState {
             }
             _ => told.state = None,
         }
-        let Some(invite) = self.invites_sent.get(&peer) else {
-            return news;
-        };
-        let live = now.duration_since(invite.sent) < INVITE_LIFETIME;
-        if told.invite != Some(invite.sent) && live {
+        if let Some(invite) = self.invites_sent.get(&peer)
+            && told.invite != Some(invite.sent)
+            && now.duration_since(invite.sent) < INVITE_LIFETIME
+        {
             news.push(VoiceMsg::Invite {
                 key: invite.key.clone(),
                 state: invite.state.clone(),
             });
             told.invite = Some(invite.sent);
+        }
+        if let Some(&asked) = self.requests_sent.get(&peer)
+            && told.request != Some(asked)
+            && now.duration_since(asked) < INVITE_LIFETIME
+        {
+            news.push(VoiceMsg::InviteRequest);
+            told.request = Some(asked);
         }
         news
     }
@@ -468,7 +544,7 @@ impl VoiceState {
 /// a peer's stored announcement to be cloned on every refresh.
 pub(crate) fn labels_fit(msg: &VoiceMsg) -> bool {
     match msg {
-        VoiceMsg::ReceiveState { .. } => true,
+        VoiceMsg::ReceiveState { .. } | VoiceMsg::InviteRequest => true,
         VoiceMsg::Group(group) => group
             .as_ref()
             .and_then(|group| group.public.as_ref())
@@ -877,6 +953,91 @@ mod tests {
             key,
             state: state(&too_long),
         }));
+    }
+
+    #[test]
+    fn inviting_someone_in_another_group_requests_an_invite() {
+        let now = Instant::now();
+        let clients = group_of(2);
+        let announced = [announce(&clients[0]), announce(&clients[1])];
+        let mut carol = client(3);
+        // Bob is in a group carol isn't: she asks instead of inviting.
+        assert_eq!(
+            carol.invite_or_request(uuid(2), &announced, now),
+            InviteKind::Request
+        );
+        assert!(carol.invites_sent.is_empty());
+        // Someone in no group gets a plain invite, as before.
+        assert_eq!(
+            carol.invite_or_request(uuid(4), &announced, now),
+            InviteKind::Invite
+        );
+        assert!(carol.invites_sent.contains_key(&uuid(4)));
+
+        // The request goes once while it lasts, and a second press keeps it.
+        let mut told = Told::default();
+        let asked = |news: &[VoiceMsg]| {
+            news.iter()
+                .filter(|m| matches!(m, VoiceMsg::InviteRequest))
+                .count()
+        };
+        assert_eq!(asked(&carol.news_for(uuid(2), &mut told, now)), 1);
+        carol.invite_or_request(uuid(2), &announced, now + Duration::from_secs(5));
+        assert_eq!(
+            asked(&carol.news_for(uuid(2), &mut told, now + Duration::from_secs(5))),
+            0
+        );
+    }
+
+    #[test]
+    fn an_answered_request_joins_the_group() {
+        let now = Instant::now();
+        let mut clients = group_of(2);
+        let mut carol = client(3);
+        let announced = [announce(&clients[0]), announce(&clients[1])];
+        carol.invite_or_request(uuid(2), &announced, now);
+
+        // Bob hears it once, however often it comes.
+        let mut events = Vec::new();
+        clients[1].receive_invite_request(uuid(3), now, &mut events);
+        clients[1].receive_invite_request(uuid(3), now, &mut events);
+        assert_eq!(events, [Event::InviteRequest { from: uuid(3) }]);
+        // Carol is in a group of her own by now: bob's answer still invites.
+        start_group(&mut carol);
+        let announced = [announce(&clients[0]), announce(&carol)];
+        assert_eq!(
+            clients[1].invite_or_request(uuid(3), &announced, now),
+            InviteKind::Invite
+        );
+
+        // Carol joins the invite she asked for at once, without asking.
+        let sent = clients[1].invites_sent[&uuid(3)].clone();
+        let mut events = Vec::new();
+        carol.receive_invite(uuid(2), sent.key, sent.state, now, &mut events);
+        assert!(events.is_empty());
+        assert_eq!(
+            carol.group.as_ref().unwrap().id(),
+            clients[1].group.as_ref().unwrap().id()
+        );
+    }
+
+    #[test]
+    fn requests_follow_the_invite_rules() {
+        let now = Instant::now();
+        let mut events = Vec::new();
+        // Outside a group there is nothing to invite to.
+        client(1).receive_invite_request(uuid(3), now, &mut events);
+        let mut clients = group_of(2);
+        // A group mate is in already.
+        clients[0].receive_invite_request(uuid(2), now, &mut events);
+        clients[0].invites_from = InvitesFrom::Nobody;
+        clients[0].receive_invite_request(uuid(3), now, &mut events);
+        assert!(events.is_empty());
+        clients[0].invites_from = InvitesFrom::Everyone;
+        clients[0].receive_invite_request(uuid(3), now, &mut events);
+        // Once expired, a new request is heard again.
+        clients[0].receive_invite_request(uuid(3), now + INVITE_LIFETIME, &mut events);
+        assert_eq!(events.len(), 2);
     }
 
     #[test]

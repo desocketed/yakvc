@@ -5,8 +5,10 @@ use serde::{Deserialize, Serialize};
 use crate::group::{GroupAnnounce, GroupKey, GroupState};
 
 /// 2 added group voice chat. 3 replaced named groups with random keys,
-/// invites, shared group state and kick votes. 4 dropped kick votes.
-pub const VERSION: u16 = 4;
+/// invites, shared group state and kick votes. 4 dropped kick votes. 5
+/// added invite requests; from 5 on, a receiver skips a control message it
+/// can't decode, so new messages need no new version.
+pub const VERSION: u16 = 5;
 
 /// Messages on the voice control stream.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,6 +25,9 @@ pub enum VoiceMsg {
     /// The group's shared state, sent to group mates when they become mates
     /// and whenever it changes.
     GroupState(GroupState),
+    /// Asks the receiver, who is in a group, to invite the sender to it.
+    /// Answered, if at all, with an [`Invite`](Self::Invite).
+    InviteRequest,
 }
 
 /// Header at the start of each voice datagram, after the peer layer's
