@@ -181,6 +181,14 @@
 #define YAKVC_VOICE_SELF (1 << 2)
 
 /**
+ * A `YAKVC_VOICE_UNPOSITIONED` frame that still has a direction: group
+ * voice from a tracked mate, to be panned towards `heard_from` (the mate's
+ * eye) at full volume, with no distance falloff, occlusion or reverb. A
+ * sink that ignores this flag plays it centred.
+ */
+#define YAKVC_VOICE_DIRECTIONAL (1 << 3)
+
+/**
  * Opaque engine handle.
  */
 typedef struct YakVcEngine YakVcEngine;
@@ -218,7 +226,8 @@ typedef struct YakVcVoiceFrame {
   uint32_t flags;
   /**
    * Where the speakers would place the voice, `x, y, z`: the speaker's
-   * eye, or the opening it comes round through. Zero when unpositioned.
+   * eye, or the opening it comes round through. Zero when unpositioned,
+   * unless `YAKVC_VOICE_DIRECTIONAL`.
    */
   double heard_from[3];
   /**

@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::time::{Instant, sleep};
-use yakvc_client::{Event, MonoFrame, PeerState, Uuid, Vec3, VoiceFrame, VoiceSink};
+use yakvc_client::{Event, MonoFrame, PeerState, Placement, Uuid, Vec3, VoiceFrame, VoiceSink};
 use yakvc_testkit::{TestClient, TestNet, see_each_other};
 
 /// Peak level above which a frame counts as audible: -60 dBFS.
@@ -82,7 +82,7 @@ impl VoiceSink for Recorder {
             volume: frame.volume,
             range: frame.range,
             group: frame.group,
-            positioned: frame.positioned,
+            positioned: frame.placement == Placement::Positioned,
             heard_from: frame.heard_from,
             occlusion: frame.occlusion,
         });

@@ -34,7 +34,7 @@ use std::sync::atomic::AtomicBool;
 
 use yakvc_client::{
     Config, ConfigError, Engine, FarEcho, GroupError, GroupId, Input, JoinId, MonoFrame, PeerAudio,
-    Player, Pose, Room, StartError, Uuid, Vec3, VoiceFrame, VoiceSink, World,
+    Placement, Player, Pose, Room, StartError, Uuid, Vec3, VoiceFrame, VoiceSink, World,
 };
 
 use crate::events::EventQueue;
@@ -138,6 +138,11 @@ pub const YAKVC_VOICE_UNPOSITIONED: u32 = 1 << 1;
 /// must not play it dry. Also `YAKVC_VOICE_UNPOSITIONED`, with volume 1 and
 /// the player's UUID. Paced by the microphone, not `wants_frame`.
 pub const YAKVC_VOICE_SELF: u32 = 1 << 2;
+/// A `YAKVC_VOICE_UNPOSITIONED` frame that still has a direction: group
+/// voice from a tracked mate, to be panned towards `heard_from` (the mate's
+/// eye) at full volume, with no distance falloff, occlusion or reverb. A
+/// sink that ignores this flag plays it centred.
+pub const YAKVC_VOICE_DIRECTIONAL: u32 = 1 << 3;
 
 /// Opaque engine handle.
 #[derive(Debug)]
@@ -168,7 +173,8 @@ pub struct YakVcVoiceFrame {
     /// A combination of `YAKVC_VOICE_*`.
     pub flags: u32,
     /// Where the speakers would place the voice, `x, y, z`: the speaker's
-    /// eye, or the opening it comes round through. Zero when unpositioned.
+    /// eye, or the opening it comes round through. Zero when unpositioned,
+    /// unless `YAKVC_VOICE_DIRECTIONAL`.
     pub heard_from: [f64; 3],
     /// How much of the way the speakers would block, from 0 (open air) to 1;
     /// 0 when unpositioned.
@@ -598,8 +604,10 @@ impl VoiceSink for ForeignSink {
         if frame.group {
             flags |= YAKVC_VOICE_GROUP;
         }
-        if !frame.positioned {
-            flags |= YAKVC_VOICE_UNPOSITIONED;
+        match frame.placement {
+            Placement::Positioned => {}
+            Placement::Centred => flags |= YAKVC_VOICE_UNPOSITIONED,
+            Placement::Directional => flags |= YAKVC_VOICE_UNPOSITIONED | YAKVC_VOICE_DIRECTIONAL,
         }
         let frame = YakVcVoiceFrame {
             uuid: *frame.uuid.as_bytes(),

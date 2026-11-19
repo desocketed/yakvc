@@ -79,8 +79,12 @@ pub(crate) struct VoiceState {
 /// Who a frame is heard from, before any panning or acoustics.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum Heard {
-    /// Not positional: group voice, or a direct call.
+    /// Not positional: group voice from a mate who isn't tracked, or a
+    /// direct call.
     Centred,
+    /// Group voice from a tracked mate: from the direction of this eye
+    /// position, at full volume whatever the distance.
+    Directional(Vec3),
     /// From this player's place in the world.
     Positioned(Player),
 }
@@ -217,14 +221,26 @@ impl VoiceState {
             return None;
         }
         let heard = if group {
-            // Group voice isn't positional, so range and spectating don't
-            // matter: it plays centred, and only from a group mate.
-            self.is_group_mate(peer).then_some(Heard::Centred)?
+            // Group voice has direction but no falloff, so range and
+            // spectating don't matter; it plays only from a group mate.
+            if !self.is_group_mate(peer) {
+                return None;
+            }
+            self.group_direction(world, peer)
         } else {
             self.nearby(world, peer)?
         };
         let volume = self.peer_audio.get(&peer).map_or(1.0, |audio| audio.volume);
         Some(Playback { heard, volume })
+    }
+
+    /// Which way group voice from `peer` comes: from the mate when they are
+    /// tracked, else centred.
+    fn group_direction(&self, world: &World, peer: Uuid) -> Heard {
+        match world.players.iter().find(|p| p.uuid == peer) {
+            Some(player) if !self.ignore_world => Heard::Directional(player.pos),
+            _ => Heard::Centred,
+        }
     }
 
     /// Where a positional frame from `peer` is heard from. In a group,
@@ -249,6 +265,17 @@ impl VoiceState {
     pub(crate) fn through_speakers(&self, world: &World, playback: Playback) -> Option<Spatial> {
         let spatial = match playback.heard {
             Heard::Centred => CENTRED,
+            Heard::Directional(source) => {
+                let (dx, dz) = (
+                    source.x - world.listener.pos.x,
+                    source.z - world.listener.pos.z,
+                );
+                let (pan, _) = pan_and_front(&world.listener, dx, dz);
+                Spatial {
+                    pan: pan as f32,
+                    ..CENTRED
+                }
+            }
             Heard::Positioned(player) => {
                 let spatial = spatial(
                     &world.listener,
@@ -896,6 +923,63 @@ mod tests {
     }
 
     #[test]
+    fn tracked_group_mates_have_direction_but_no_falloff() {
+        let mut state = in_group();
+        state.group_mates.insert(uuid(3));
+        state.world.players = vec![
+            // Near, to the left (facing +Z, left is +X).
+            Player::new(uuid(1), at(2.0, 0.0)),
+            // Far beyond the voice range, to the right, behind a wall.
+            Player {
+                occlusion: 1.0,
+                ..Player::new(uuid(3), at(-500.0, 0.0))
+            },
+        ];
+        let near = state.playback(&state.world, uuid(1), true).unwrap();
+        let far = state.playback(&state.world, uuid(3), true).unwrap();
+        assert_eq!(near.gain, 1.0);
+        assert_eq!(far.gain, 1.0);
+        assert!(near.pan < -0.99 && far.pan > 0.99, "{near:?} {far:?}");
+        // Dry: no muffle, reverb or echo.
+        assert_eq!(
+            far,
+            Spatial {
+                pan: far.pan,
+                ..CENTRED
+            }
+        );
+        // Behind the listener: no gain cut either.
+        state.world.players[0].pos = at(0.0, -20.0);
+        let behind = state.playback(&state.world, uuid(1), true).unwrap();
+        assert_eq!(behind.gain, 1.0);
+        // The per-player volume still applies.
+        state.peer_audio.insert(
+            uuid(1),
+            PeerAudio {
+                volume: 0.5,
+                muted: false,
+            },
+        );
+        assert_eq!(
+            state.playback(&state.world, uuid(1), true).unwrap().gain,
+            0.5
+        );
+    }
+
+    #[test]
+    fn positional_voice_still_falls_off() {
+        let mut state = state();
+        state.world.players = vec![
+            Player::new(uuid(1), at(2.0, 0.0)),
+            Player::new(uuid(2), at(40.0, 0.0)),
+        ];
+        let near = nearby(&state, 1).unwrap();
+        let far = nearby(&state, 2).unwrap();
+        assert_eq!(near.gain, 1.0);
+        assert!(far.gain < 0.5, "{far:?}");
+    }
+
+    #[test]
     fn a_group_cuts_nearby_players_off_both_ways() {
         let state = in_group();
         assert_eq!(nearby(&state, 2), None);
@@ -955,6 +1039,11 @@ mod tests {
         let state = in_group();
         let mate = state.heard(&state.world, uuid(1), true).unwrap();
         assert_eq!(mate.heard, Heard::Centred);
+        let mut tracked = in_group();
+        tracked.group_mates.insert(uuid(2));
+        let eye = tracked.world.players[0].pos;
+        let mate = tracked.heard(&tracked.world, uuid(2), true).unwrap();
+        assert_eq!(mate.heard, Heard::Directional(eye));
         assert_eq!(state.heard(&state.world, uuid(2), true), None);
 
         let mut call = self::state();

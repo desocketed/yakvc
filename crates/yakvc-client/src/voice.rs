@@ -37,7 +37,7 @@ use self::group::Told;
 pub use self::group::{GroupError, GroupInfo};
 pub(crate) use self::rules::VoiceState;
 use self::rules::{Heard, plan_send};
-pub use self::sink::{VoiceFrame, VoiceSink};
+pub use self::sink::{Placement, VoiceFrame, VoiceSink};
 
 /// How often the audio thread wakes to move frames.
 const AUDIO_TICK: Duration = Duration::from_millis(5);
@@ -1065,20 +1065,25 @@ impl AudioLoop {
                     // The sink does its own acoustics, so it gets the frame
                     // as decoded.
                     Some(sink) => {
-                        let (positioned, heard_from, occlusion) = match playback.heard {
+                        let (placement, heard_from, occlusion) = match playback.heard {
                             Heard::Positioned(player) => {
-                                (true, player.heard_from, player.occlusion)
+                                (Placement::Positioned, player.heard_from, player.occlusion)
                             }
-                            Heard::Centred => (false, Vec3::default(), 0.0),
+                            Heard::Directional(eye) => (Placement::Directional, eye, 0.0),
+                            Heard::Centred => (Placement::Centred, Vec3::default(), 0.0),
                         };
                         sink.frame(&VoiceFrame {
                             uuid,
                             pcm: &frame,
                             tick: self.plays,
                             volume: playback.volume,
-                            range: if positioned { state.voice_range } else { 0.0 },
+                            range: if placement == Placement::Positioned {
+                                state.voice_range
+                            } else {
+                                0.0
+                            },
                             group: remote.group,
-                            positioned,
+                            placement,
                             heard_from,
                             occlusion,
                         });
