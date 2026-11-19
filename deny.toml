@@ -17,6 +17,10 @@ ignore = [
     # paste is unmaintained. It is a build-time proc macro used by the netlink
     # crates under iroh's netwatch; nothing to fix on our side.
     "RUSTSEC-2024-0436",
+    # chrono is unmaintained. It comes in through iroh: tokio-rustls-acme under
+    # iroh-relay, and wmi (default feature) under netwatch on Windows. We do
+    # not use it ourselves; nothing to fix on our side.
+    "RUSTSEC-2026-0543",
 ]
 
 [licenses]
