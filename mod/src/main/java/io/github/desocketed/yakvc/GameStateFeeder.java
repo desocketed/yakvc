@@ -149,6 +149,7 @@ public final class GameStateFeeder {
 	private final Map<UUID, EngineEvent.PeerState> peers = new HashMap<>();
 	private final Set<UUID> verifiedPeers = new HashSet<>();
 	private final Set<UUID> talking = new LinkedHashSet<>();
+	private Set<UUID> groupMates = Set.of();
 	/** Peers on another Yak VC version we already told the player about this server session. */
 	private final Set<UUID> versionWarned = new HashSet<>();
 	private int errorEvents;
@@ -201,6 +202,13 @@ public final class GameStateFeeder {
 		step(this::drainEvents);
 		step(this::answerJoins);
 		step(this::refreshStats);
+		step(this::refreshGroupMates);
+	}
+
+	/** Polled each tick, so every view that shows players can mark our group mates without asking the engine. */
+	private void refreshGroupMates() {
+		Identity self = identity;
+		groupMates = self == null ? Set.of() : VoiceGroup.mates(groups(), self.uuid());
 	}
 
 	/** A dev world is big: with dev.fly_speed set, creative flight goes that fast. Set every tick, as the server resets it. */
@@ -778,6 +786,11 @@ public final class GameStateFeeder {
 	/** Whether a peer proved its Mojang account. */
 	public boolean peerVerified(UUID uuid) {
 		return verifiedPeers.contains(uuid);
+	}
+
+	/** The other members of our voice group, as of the last tick; empty in no group. */
+	public Set<UUID> groupMates() {
+		return groupMates;
 	}
 
 	/** Who is talking right now, the local player included. */

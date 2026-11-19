@@ -4,7 +4,9 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -25,5 +27,13 @@ public record VoiceGroup(String id, String label, boolean isPublic, boolean mine
 					fields.get("public").getAsBoolean(), fields.get("mine").getAsBoolean(), List.copyOf(members)));
 		}
 		return groups;
+	}
+
+	/** The other members of our own group in {@code groups}, as {@link #parse} orders it; empty in no group. */
+	public static Set<UUID> mates(List<VoiceGroup> groups, UUID self) {
+		if (groups.isEmpty() || !groups.getFirst().mine()) return Set.of();
+		Set<UUID> mates = new HashSet<>(groups.getFirst().members());
+		mates.remove(self);
+		return Set.copyOf(mates);
 	}
 }

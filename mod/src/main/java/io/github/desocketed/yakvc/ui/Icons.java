@@ -20,6 +20,8 @@ public final class Icons {
 	public static final Component SIGNAL = icon('');
 	/** Shown next to players whose account is verified with Mojang. */
 	public static final Component VERIFIED = icon('');
+	/** Shown next to players in the same voice group as us. */
+	public static final Component GROUP = icon('');
 
 	private Icons() {}
 
