@@ -357,14 +357,16 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 	}
 
 	/**
-	 * In a stone box around the player, Simple (the default) still sends the engine open air, so no reverb; Full sends
+	 * In a stone box around the player, Simple still sends the engine open air, so no reverb; Full (the default) sends
 	 * the box's reverb.
 	 */
 	private static void checkSpatialAudio(ClientGameTestContext context, TestSingleplayerContext singleplayer,
 			GameStateFeeder feeder) {
-		if (context.computeOnClient(mc -> feeder.settings().spatialAudio()) != SpatialAudio.SIMPLE) {
-			throw new AssertionError("Spatial Audio isn't Simple by default");
+		if (context.computeOnClient(mc -> feeder.settings().spatialAudio()) != SpatialAudio.FULL) {
+			throw new AssertionError("Spatial Audio isn't Full by default");
 		}
+		context.runOnClient(mc -> VoiceSettingsScreen.applyAndSave(feeder,
+				feeder.settings().withSpatialAudio(SpatialAudio.SIMPLE)));
 		singleplayer.getServer().runCommand("fill -2 -61 -2 2 -56 2 stone hollow");
 		context.waitTicks(5);
 		if (!context.computeOnClient(mc -> feeder.room()).equals(Room.OPEN_AIR)) {
@@ -385,7 +387,7 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		}
 		// Back to the defaults, so later runs start the same.
 		context.runOnClient(mc -> VoiceSettingsScreen.applyAndSave(feeder,
-				feeder.settings().withSpatialAudio(SpatialAudio.SIMPLE)
+				feeder.settings().withSpatialAudio(SpatialAudio.FULL)
 						.withAcoustic("reverb_level", Settings.Acoustics.DEFAULT.reverbLevel())));
 		singleplayer.getServer().runCommand("fill -2 -61 -2 2 -56 2 air");
 		singleplayer.getServer().runCommand("fill -2 -61 -2 2 -61 2 grass_block");

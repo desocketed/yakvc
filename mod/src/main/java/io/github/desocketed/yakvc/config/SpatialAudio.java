@@ -25,11 +25,11 @@ public enum SpatialAudio {
 		return name().toLowerCase(Locale.ROOT);
 	}
 
-	/** The level written as {@code key}, or {@link #SIMPLE}, the default, for anything else. */
+	/** The level written as {@code key}, or {@link #FULL}, the default, for anything else. */
 	public static SpatialAudio of(@Nullable String key) {
 		for (SpatialAudio level : values()) {
 			if (level.key().equals(key)) return level;
 		}
-		return SIMPLE;
+		return FULL;
 	}
 }
