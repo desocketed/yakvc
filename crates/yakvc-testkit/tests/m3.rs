@@ -181,13 +181,13 @@ async fn audio_stays_continuous_under_bursty_loss_and_jitter() {
     sleep(SETTLE).await;
     let played = bob.recording().take();
 
-    // One unbroken run of audible frames: every lost or late frame was
-    // filled by FEC or PLC instead of dropping to silence.
+    // That no frame drops to silence is checked on a simulated clock in
+    // `yakvc_client::sim`: here, on the wall clock, a stall of the test
+    // process (sender and receiver alike) of 60 ms or more loses frames
+    // the impairment never did, and their concealment fades out.
     let audible = audible_frames(&played);
     let first = audible.iter().position(|&a| a).expect("bob heard alice");
     let last = audible.iter().rposition(|&a| a).unwrap();
-    let gaps: Vec<usize> = (first..=last).filter(|&i| !audible[i]).collect();
-    assert!(gaps.is_empty(), "silent frames at {gaps:?}");
     // 5 s is 250 frames; allow for push-to-talk and playout edges.
     let run = last - first + 1;
     assert!((235..=265).contains(&run), "talk spurt was {run} frames");
