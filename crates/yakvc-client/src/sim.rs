@@ -180,4 +180,73 @@ mod tests {
         let duplicated = delays.iter().filter(|d| d.len() == 2).count();
         assert!((400..600).contains(&duplicated), "duplicated {duplicated}");
     }
+
+    /// The M3 impairment through the jitter buffer on a simulated clock: a
+    /// 5 s talk spurt plays as one unbroken run of audible frames. The
+    /// end-to-end M3 test runs on the wall clock, where a stall of the test
+    /// process itself loses more than this impairment does.
+    #[test]
+    fn bursty_loss_and_jitter_leave_no_silent_frame() {
+        use std::time::Instant;
+
+        use yakvc_audio::{
+            Encoder, FRAME_DURATION, FRAME_SAMPLES, JitterConfig, MonoFrame, Packet, ReceiveStream,
+            SAMPLE_RATE,
+        };
+
+        const FRAMES: u32 = 250;
+        let mut impairer = Impairer::new(Impairment {
+            loss: Loss::Bursty {
+                rate: 0.05,
+                mean_burst: 2.0,
+            },
+            jitter: Duration::from_millis(30),
+            seed: 3,
+            ..Impairment::default()
+        });
+        let mut encoder = Encoder::new(24_000).unwrap();
+        let mut arrivals = Vec::new();
+        for n in 0..=FRAMES {
+            let ts = n * FRAME_SAMPLES as u32;
+            let frame: MonoFrame = std::array::from_fn(|i| {
+                let t = (ts + i as u32) as f32 / SAMPLE_RATE as f32;
+                0.3 * (std::f32::consts::TAU * 440.0 * t).sin()
+            });
+            let payload = encoder.encode(&frame).unwrap().unwrap().to_vec();
+            let sent = FRAME_DURATION * n;
+            for delay in impairer.delays() {
+                arrivals.push((sent + delay, n, ts, payload.clone()));
+            }
+        }
+        arrivals.sort_by_key(|&(at, ..)| at);
+
+        // Playout pulls a frame every 20 ms, out of phase with the sender.
+        let start = Instant::now();
+        let mut stream = ReceiveStream::new(JitterConfig::default());
+        let mut arrivals = arrivals.into_iter().peekable();
+        let mut audible = Vec::new();
+        for pull in 0..FRAMES + 20 {
+            let now = FRAME_DURATION * pull + Duration::from_millis(7);
+            while let Some((_, seq, ts, payload)) = arrivals.next_if(|a| a.0 <= now) {
+                let packet = Packet {
+                    seq,
+                    ts,
+                    end_of_talk: seq == FRAMES,
+                    payload: &payload,
+                };
+                stream.push(packet, start + now);
+            }
+            let mut out = [0.0; FRAME_SAMPLES];
+            stream.pull(&mut out, start + now);
+            audible.push(out.iter().any(|s| s.abs() > 0.001));
+        }
+
+        let first = audible.iter().position(|&a| a).unwrap();
+        let last = audible.iter().rposition(|&a| a).unwrap();
+        let gaps: Vec<usize> = (first..=last).filter(|&i| !audible[i]).collect();
+        assert!(gaps.is_empty(), "silent frames at {gaps:?}");
+        assert_eq!(last - first + 1, FRAMES as usize + 1);
+        let stats = stream.stats();
+        assert!(stats.fec_recovered + stats.concealed > 0, "{stats:?}");
+    }
 }
