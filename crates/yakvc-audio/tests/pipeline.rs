@@ -1,16 +1,21 @@
 //! The whole send and receive path through the public API, as the voice loop
 //! drives it, with test I/O instead of hardware.
 
+use std::f32::consts::TAU;
 use std::time::{Duration, Instant};
 
 use yakvc_audio::{
-    Encoder, FRAME_SAMPLES, FrameSink, FrameSource, InputConfig, InputProcessor, JitterConfig,
-    Mixer, NullSink, Packet, Pulled, ReceiveStream, Spatial, ToneSource,
+    Encoder, FRAME_DURATION, FRAME_SAMPLES, InputConfig, InputProcessor, JitterConfig, Mixer,
+    MonoFrame, Packet, Pulled, ReceiveStream, SAMPLE_RATE, Spatial,
 };
 
+/// Runs on a simulated clock: 30 frames, one every 20 ms, with playout out of
+/// phase with capture. The real-time pacing of the test sources and sinks
+/// has its own tests; on the wall clock a stall of the test process itself
+/// drops frames.
 #[test]
 fn tone_reaches_the_sink() {
-    let mut source = ToneSource::new(440.0);
+    const FRAMES: u32 = 30;
     let mut input = InputProcessor::new(InputConfig {
         noise_suppression: false,
         ..InputConfig::default()
@@ -18,50 +23,46 @@ fn tone_reaches_the_sink() {
     let mut encoder = Encoder::new(24_000).unwrap();
     let mut stream = ReceiveStream::new(JitterConfig::default());
     let mut mixer = Mixer::new();
-    let (mut sink, recording) = NullSink::new();
 
-    let mut captured = [0.0; FRAME_SAMPLES];
     let mut decoded = [0.0; FRAME_SAMPLES];
     let mut mixed = [[0.0; 2]; FRAME_SAMPLES];
-    let (mut seq, mut ts) = (0u32, 0u32);
+    let mut audible = 0;
     let start = Instant::now();
-    while start.elapsed() < Duration::from_millis(600) {
-        if source.read(&mut captured) {
-            let activity = input.process(&mut captured);
-            assert!(activity.voice);
-            if let Some(payload) = encoder.encode(&captured).unwrap() {
-                let packet = Packet {
-                    seq,
-                    ts,
-                    end_of_talk: false,
-                    payload,
-                };
-                stream.push(packet, Instant::now());
-                seq += 1;
-            }
-            ts += FRAME_SAMPLES as u32;
+    for n in 0..FRAMES {
+        let ts = n * FRAME_SAMPLES as u32;
+        let mut captured: MonoFrame = std::array::from_fn(|i| {
+            let t = (ts + i as u32) as f32 / SAMPLE_RATE as f32;
+            0.25 * (TAU * 440.0 * t).sin()
+        });
+        let activity = input.process(&mut captured);
+        assert!(activity.voice);
+        if let Some(payload) = encoder.encode(&captured).unwrap() {
+            let packet = Packet {
+                seq: n,
+                ts,
+                end_of_talk: false,
+                payload,
+            };
+            stream.push(packet, start + FRAME_DURATION * n);
         }
-        if sink.wants_frame() {
-            let pulled = stream.pull(&mut decoded, Instant::now());
-            let sources = (pulled == Pulled::Voice).then_some((
-                &decoded,
-                Spatial {
-                    gain: 1.0,
-                    pan: 0.0,
-                    muffle: 0.0,
-                    reverb: 0.0,
-                    echo: 0.0,
-                },
-            ));
-            mixer.mix(sources, &mut mixed);
-            sink.write(&mixed);
-        }
-        std::thread::sleep(Duration::from_millis(2));
+
+        let now = start + FRAME_DURATION * n + Duration::from_millis(7);
+        let pulled = stream.pull(&mut decoded, now);
+        let sources = (pulled == Pulled::Voice).then_some((
+            &decoded,
+            Spatial {
+                gain: 1.0,
+                pan: 0.0,
+                muffle: 0.0,
+                reverb: 0.0,
+                echo: 0.0,
+            },
+        ));
+        mixer.mix(sources, &mut mixed);
+        audible += usize::from(mixed.iter().flatten().any(|s| s.abs() > 0.001));
     }
 
-    // About 30 frames in 600 ms, all but the first couple audible.
-    let frames = recording.frames();
-    assert!((25..=35).contains(&frames), "{frames}");
-    assert!(recording.audible_frames() >= frames - 5);
+    // All but the first couple audible.
+    assert!(audible >= FRAMES as usize - 5, "{audible}");
     assert_eq!(stream.stats().concealed, 0);
 }
