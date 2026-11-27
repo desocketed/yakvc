@@ -77,6 +77,8 @@ A green speaker floats over the head of every player who is talking, above their
 
 ![A speaker over a talking player](guide/talking-indicator.png)
 
+While someone talks, their head moves with their voice: it nods on stressed syllables, sways a little more the louder they are, and tilts up slightly when their voice rises. Only standing players move this way; **Speaking Heads** in the [settings](#settings) turns it off.
+
 ## The voice menu
 
 Press **Esc** and the microphone button next to **Back to Game**, or your **Open Voice Menu** key. The top line says whether voice is connected. Below it is every other player on the server, players with voice first.
@@ -290,6 +292,24 @@ A few more are only in the file:
 | --- | --- | --- |
 | `setup_done` | `false` | Set once the voice menu's first-run card is dismissed, so it shows only once. |
 | `server` | `null` | Voice Server: a code from `yakvc-server code`, for [another voice server](#using-another-voice-server). |
+
+| `voice_range` | `256.0` | How far away players can hear you and you can hear them, in blocks, up to your render distance (16 blocks per chunk) |
+| `spatial_audio` | `"full"` | How much of the world's acoustics to hear: `"off"` (volume and left or right only), `"simple"` (walls muffle voices and voices come round them) or `"full"` (rooms also reverberate and echo) |
+| `relay_only` | `false` | Never connect to peers directly, so they don't learn your IP address |
+| `respect_chat_restrictions` | `true` | Voice off while your account or launcher disables chat |
+| `mute_blocked_players` | `true` | Players blocked in Social Interactions are muted both ways |
+| `verified_only` | `false` | Only talk with players whose account is verified |
+| `invites` | `"everyone"` | Who may invite you to a group: `"everyone"` or `"nobody"` |
+| `speaking_heads` | `true` | Other players' heads nod and sway with their voices while they talk, standing |
+| `audio.activation` | `"push_to_talk"` | `"push_to_talk"` or `"voice"` |
+| `audio.vad_threshold_db` | `-45.0` | Voice activation threshold, from -100 (everything) to 0 (very loud only) |
+| `audio.bitrate` | `24000` | Sound quality, in bits per second |
+| `audio.noise_suppression` | `true` | Filters fans, hum and room noise out of your microphone |
+| `audio.input_gain` | `1.0` | Microphone volume, from 0 to 10 |
+| `audio.input_device` | `null` | Microphone, by device id; `null` follows the system |
+| `audio.output_device` | `null` | Speakers, by device id; `null` follows the game's sound device |
+| `acoustics` | | How voices carry through the world; see below |
+| `server` | `null` | A code from `yakvc-server code`, for [another voice server](#using-another-voice-server) |
 | `rendezvous`, `trusted_issuers` | the Yak VC server | Another voice server, spelled out for those who [run their own](../deploy/README.md) without a relay. A `server` code beats them. |
 
 `audio.activation` means the `activation` key inside the `audio` object:

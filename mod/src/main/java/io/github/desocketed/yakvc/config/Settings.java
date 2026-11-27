@@ -32,6 +32,7 @@ import org.jspecify.annotations.Nullable;
  * @param setupDone               the voice menu's first-run card was dismissed
  * @param checkForUpdates         ask GitHub for a newer Yak VC at startup
  * @param friendsOnly             only the players marked as friends in the voice menu are heard and sent to
+ * @param speakingHeads           other players' heads move with their voices
  * @param devMode                 accept dev tickets and test audio, for development against a local server
  * @param rendezvous              another voice server than the built-in one
  * @param trustedIssuers          issuers whose tickets are accepted; a {@code rendezvous} needs its issuer listed
@@ -40,11 +41,11 @@ import org.jspecify.annotations.Nullable;
  */
 public record Settings(double voiceRange, SpatialAudio spatialAudio, boolean relayOnly, boolean respectChatRestrictions,
 		boolean muteBlockedPlayers, boolean verifiedOnly, String invites, boolean friendsOnly, boolean setupDone,
-		boolean checkForUpdates, Audio audio, Acoustics acoustics, boolean devMode, Dev dev,
+		boolean checkForUpdates, Audio audio, Acoustics acoustics, boolean speakingHeads, boolean devMode, Dev dev,
 		@Nullable Rendezvous rendezvous, List<String> trustedIssuers, @Nullable String server) {
 	public static final String FILE_NAME = "settings.json";
 	public static final Settings DEFAULT = new Settings(256, SpatialAudio.FULL, false, true, true, false, "everyone",
-			false, false, true, Audio.DEFAULT, Acoustics.DEFAULT, false, Dev.DEFAULT, null, List.of(), null);
+			false, false, true, Audio.DEFAULT, Acoustics.DEFAULT, true, false, Dev.DEFAULT, null, List.of(), null);
 	/** Nulls are written too, so the file shows every key, and the JSON keys are the engine's snake case. */
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().serializeNulls()
 			.setFieldNamingPolicy(FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES).create();
