@@ -483,9 +483,9 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		return inputDevice.isOpen() || outputDevice.isOpen() || testSound.isOpen();
 	}
 
-	/** A right click on the threshold, reverb or echo slider puts it back to its default; true if one was hit. */
+	/** A right click on the threshold, head strength, reverb or echo slider puts it back to its default; true if one was hit. */
 	private boolean resetSlider(MouseButtonEvent event) {
-		for (OptionInstance<Integer> option : List.of(vadThresholdDb, reverbPercent, echoPercent)) {
+		for (OptionInstance<Integer> option : List.of(vadThresholdDb, headsStrength, reverbPercent, echoPercent)) {
 			AbstractWidget widget = list.findOption(option);
 			if (widget == null || !widget.isMouseOver(event.x(), event.y())) continue;
 			option.set(defaultValue(option));
@@ -499,6 +499,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 
 	private int defaultValue(OptionInstance<Integer> option) {
 		if (option == vadThresholdDb) return vadThresholdDb(Settings.DEFAULT);
+		if (option == headsStrength) return headsStrength(Settings.DEFAULT);
 		return acousticsPercent(Settings.DEFAULT, option == reverbPercent ? Acoustics::reverbLevel : Acoustics::echoLevel);
 	}
 

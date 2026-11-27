@@ -77,7 +77,7 @@ A green speaker floats over the head of every player who is talking, above their
 
 ![A speaker over a talking player](guide/talking-indicator.png)
 
-While someone talks, their head moves with their voice: it nods on stressed syllables, sways a little more the louder they are, and tilts up slightly when their voice rises. Only standing players move this way; **Speaking Heads** in the [settings](#settings) turns it off, **Head Style** picks another way of moving and **Head Strength** scales it from still to four times as far. `/yakvc heads <style> [strength]` in chat switches both at once, for example `/yakvc heads bobble 2`.
+While someone talks, their head moves with their voice: it nods on stressed syllables, sways a little more the louder they are, and tilts up slightly when their voice rises. Only standing players move this way; **Speaking Heads** in the [settings](#settings) turns it off, **Head Style** picks another way of moving and **Head Strength** scales it from still (0) to exaggerated (4, default 2). Both only change how your game shows other players; nobody else sees your choice. `/yakvc heads <style> [strength]` in chat switches both at once, for example `/yakvc heads bobble 2`.
 
 ## The voice menu
 
@@ -276,7 +276,7 @@ The keys that the settings screen shows:
 | `invites` | `"everyone"` | Group Invites (`"everyone"`, `"friends"` or `"nobody"`) |
 | `friends_only` | `false` | Friends Only |
 | `speaking_heads_style` | `"nod"` | Head Style (`"nod"`, `"bobble"`, `"prosody"`, `"jaw"` or `"wobble"`) |
-| `speaking_heads_strength` | `1.0` | Head Strength, from 0 (still) to 4 (exaggerated) |
+| `speaking_heads_strength` | `2.0` | Head Strength, from 0 (still) to 4 (exaggerated) |
 | `audio.activation` | `"push_to_talk"` | Activation (`"push_to_talk"` or `"voice"`) |
 | `audio.vad_threshold_db` | `-45.0` | Voice Activation Threshold, from -100 (everything) to 0 (very loud only) |
 | `audio.bitrate` | `24000` | Bitrate, in bits per second |
@@ -304,7 +304,7 @@ A few more are only in the file:
 | `invites` | `"everyone"` | Who may invite you to a group: `"everyone"` or `"nobody"` |
 | `speaking_heads` | `true` | Other players' heads nod and sway with their voices while they talk, standing |
 | `speaking_heads_style` | `"nod"` | How: `"nod"` (nods on stressed syllables), `"bobble"` (a cartoon bounce), `"prosody"` (follows the voice's melody), `"jaw"` (dips on every syllable) or `"wobble"` (wobbles sideways on emphasis) |
-| `speaking_heads_strength` | `1.0` | How far, from 0 (still) to 4 (exaggerated) |
+| `speaking_heads_strength` | `2.0` | How far, from 0 (still) to 4 (exaggerated) |
 | `audio.activation` | `"push_to_talk"` | `"push_to_talk"` or `"voice"` |
 | `audio.vad_threshold_db` | `-45.0` | Voice activation threshold, from -100 (everything) to 0 (very loud only) |
 | `audio.bitrate` | `24000` | Sound quality, in bits per second |

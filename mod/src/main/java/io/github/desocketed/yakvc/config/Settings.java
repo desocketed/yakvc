@@ -35,8 +35,8 @@ import org.jspecify.annotations.Nullable;
  * @param checkForUpdates         ask GitHub for a newer Yak VC at startup
  * @param friendsOnly             only the players marked as friends in the voice menu are heard and sent to
  * @param speakingHeads           other players' heads move with their voices
- * @param speakingHeadsStrength   how far they move: 1 as designed, 0 still, up to {@link #MAX_HEADS_STRENGTH}
- * @param speakingHeadsStyle      how they move
+ * @param speakingHeadsStrength   how far they move: 1 as each style is tuned, 0 still, up to {@link #MAX_HEADS_STRENGTH}
+ * @param speakingHeadsStyle      how they move; this and the strength only change how this client draws others
  * @param devMode                 accept dev tickets and test audio, for development against a local server
  * @param rendezvous              another voice server than the built-in one
  * @param trustedIssuers          issuers whose tickets are accepted; a {@code rendezvous} needs its issuer listed
@@ -51,7 +51,7 @@ public record Settings(double voiceRange, SpatialAudio spatialAudio, boolean rel
 	public static final String FILE_NAME = "settings.json";
 	public static final double MAX_HEADS_STRENGTH = 4;
 	public static final Settings DEFAULT = new Settings(256, SpatialAudio.FULL, false, true, true, false, "everyone",
-			false, false, true, Audio.DEFAULT, Acoustics.DEFAULT, true, 1, HeadStyle.NOD,
+			false, false, true, Audio.DEFAULT, Acoustics.DEFAULT, true, 2, HeadStyle.NOD,
 			false, Dev.DEFAULT, null, List.of(), null);
 	/** Nulls are written too, so the file shows every key, and the JSON keys are the engine's snake case. */
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().serializeNulls()
@@ -300,7 +300,7 @@ public record Settings(double voiceRange, SpatialAudio spatialAudio, boolean rel
 
 	/** {@code speaking_heads_strength} within 0 to {@link #MAX_HEADS_STRENGTH}, whatever the file says. */
 	public double headsStrength() {
-		return Double.isNaN(speakingHeadsStrength) ? 1 : Math.clamp(speakingHeadsStrength, 0, MAX_HEADS_STRENGTH);
+		return Double.isNaN(speakingHeadsStrength) ? DEFAULT.speakingHeadsStrength : Math.clamp(speakingHeadsStrength, 0, MAX_HEADS_STRENGTH);
 	}
 
 	public Settings withActivation(String activation) {

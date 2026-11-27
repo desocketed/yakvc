@@ -153,7 +153,7 @@
 	"yakvc.settings.speaking_heads_style.jaw": "Jaw",
 	"yakvc.settings.speaking_heads_style.wobble": "Wobble",
 	"yakvc.settings.speaking_heads_strength": "Head Strength",
-	"yakvc.settings.speaking_heads_strength.tooltip": "How far voices move heads: 1 as designed, 0 still, up to 4 for exaggerated.",
+	"yakvc.settings.speaking_heads_strength.tooltip": "How far voices move other players' heads on your screen: 0 still, 2 by default, up to 4 for exaggerated.",
 	"yakvc.settings.speaking_heads_strength.value": "%s×",
 	"yakvc.command.heads": "Speaking heads: %s, strength %s",
 	"yakvc.settings.input_device": "Microphone",

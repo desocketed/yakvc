@@ -26,7 +26,7 @@ class SettingsTest {
 	@Test
 	void speakingHeadsStyleAndStrength() throws Exception {
 		assertEquals(HeadStyle.NOD, Settings.DEFAULT.speakingHeadsStyle());
-		assertEquals(1, Settings.DEFAULT.headsStrength());
+		assertEquals(2, Settings.DEFAULT.headsStrength());
 		Settings bobble = Settings.parse("""
 				{"speaking_heads_style": "bobble", "speaking_heads_strength": 2.5}""");
 		assertEquals(HeadStyle.BOBBLE, bobble.speakingHeadsStyle());
