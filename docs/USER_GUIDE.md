@@ -43,11 +43,11 @@ The keys are in Options → Controls → Key Binds, under **Yak VC**.
 | Group | G | Look at a player and press it to invite them to a [group](#groups), or to accept their invite. |
 | Toggle Mute | not bound | Turns your microphone off and on. |
 | Toggle Deafen | not bound | Stops you hearing anyone. Your microphone still works unless you mute it too. |
-| Open Voice Menu | none | Opens the [voice menu](#the-voice-menu), and from there the settings. Unbound by default; the pause menu has a button for it too. |
+| Open Voice Menu | none | Opens the [voice menu](#the-voice-menu), and from there the settings. Unbound by default; the pause menu has a button for it too, and `/yakvc menu` in chat opens it. |
 | Toggle Debug Overlay | not bound | Shows or hides the [debug overlay](#the-debug-overlay). |
 | Open Sound Tuning | not bound | Opens [Sound Tuning](#sound-tuning) straight from the game, handy while someone talks. |
 
-Mute, deafen, the debug overlay and sound tuning are unbound so they don't clash with other mods. The settings are always reachable without a key, from **Voice Chat…** in the game's Music & Sounds options (see [Settings](#settings)).
+The voice menu, mute, deafen, the debug overlay and sound tuning are unbound so they don't clash with other mods; bind them in Controls if you want keys. The voice menu is always reachable from the pause menu's microphone button or `/yakvc menu`, and the settings from **Voice Chat…** in the game's Music & Sounds options or `/yakvc` (see [Settings](#settings)).
 
 ## The HUD
 
@@ -133,7 +133,7 @@ The game's own Voice/Speech slider (Options → Music & Sounds) sets the volume 
 
 ## Settings
 
-Open the settings from **Options → Music & Sounds → Voice Chat…**, at the end of the sound options, which works on the title screen as well as in game. **Settings…** in the voice menu opens them too, and so does [Mod Menu](https://modrinth.com/mod/modmenu) if you have it installed: in its **Mods** list, select Yak VC and press the small settings button at the right of its name. **Done** goes back to where you came from. Like the game's own options, a change applies and is saved as soon as you make it, so you can hear it right away; if Yak VC can't use a value, a toast says why and the setting goes back to what was in effect.
+Open the settings from **Options → Music & Sounds → Voice Chat…**, at the end of the sound options, which works on the title screen as well as in game. **Settings…** in the voice menu and `/yakvc` (or `/yakvc settings`) in chat open them too, and so does [Mod Menu](https://modrinth.com/mod/modmenu) if you have it installed: in its **Mods** list, select Yak VC and press the small settings button at the right of its name. **Done** goes back to where you came from. Like the game's own options, a change applies and is saved as soon as you make it, so you can hear it right away; if Yak VC can't use a value, a toast says why and the setting goes back to what was in effect.
 
 ![Voice Chat… in the Music & Sounds options](guide/sound-options.png)
 

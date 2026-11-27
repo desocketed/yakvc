@@ -36,9 +36,11 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Supplier;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.client.multiplayer.PlayerInfo;
 import net.minecraft.client.player.AbstractClientPlayer;
@@ -157,6 +159,8 @@ public final class GameStateFeeder {
 	/** settings.json, looked at once a second for edits by hand. */
 	private final SettingsWatch settingsWatch = new SettingsWatch(YakVcClient.configDir());
 	private int ticksUntilSettingsCheck;
+	/** A screen a command asked for, opened on the next tick, once the chat that ran it has closed. */
+	private @Nullable Supplier<Screen> screenSoon;
 	private Set<UUID> groupMates = Set.of();
 	/** Peers on another Yak VC version we already told the player about this server session. */
 	private final Set<UUID> versionWarned = new HashSet<>();
@@ -258,6 +262,9 @@ public final class GameStateFeeder {
 		flyFaster(minecraft);
 		if (settings.devMode()) devCommands.tick(minecraft);
 		if (keys.debugOverlayPressed()) setDebugOverlay(!debugOverlay);
+		Supplier<Screen> soon = screenSoon;
+		screenSoon = null;
+		if (soon != null) minecraft.gui.setScreen(soon.get());
 		if (keys.menuPressed() && minecraft.gui.screen() == null) {
 			minecraft.gui.setScreen(new VoiceMenuScreen(null, this));
 		}
@@ -844,6 +851,11 @@ public final class GameStateFeeder {
 	/** The other members of our voice group, as of the last tick; empty in no group. */
 	public Set<UUID> groupMates() {
 		return groupMates;
+	}
+
+	/** Opens {@code screen} on the next tick, for a command: the chat that ran it closes after it. */
+	public void openSoon(Supplier<Screen> screen) {
+		screenSoon = screen;
 	}
 
 	/** How talking players' heads move with their voices. */
