@@ -97,6 +97,11 @@ fn server_code(config: &Config) -> anyhow::Result<ServerCode> {
 
 #[tokio::main]
 async fn run(config: &Path) -> anyhow::Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
+        )
+        .init();
     let config = Config::load(config)?;
     create_missing_key(&config.endpoint_key, "endpoint", || {
         SecretKey::generate().to_bytes()
@@ -124,7 +129,9 @@ async fn run(config: &Path) -> anyhow::Result<()> {
         result = tokio::signal::ctrl_c() => result?,
         _ = sigterm.recv() => {}
     }
+    tracing::info!("shutting down");
     server.shutdown().await;
+    tracing::info!("stopped");
     Ok(())
 }
 
@@ -138,7 +145,7 @@ fn notify_systemd_ready() {
     let sent = std::os::unix::net::UnixDatagram::unbound()
         .and_then(|socket| socket.send_to(b"READY=1", &path));
     if let Err(e) = sent {
-        eprintln!("could not notify systemd at {}: {e}", path.display());
+        tracing::warn!(path = %path.display(), "could not notify systemd: {e}");
     }
 }
 
@@ -155,9 +162,9 @@ fn create_missing_key(
         .with_context(|| format!("check {}", path.display()))?;
     if !exists {
         write_key(path, &generate())?;
-        eprintln!(
-            "created a new {kind} key at {}; back it up, because clients are configured with its id",
-            path.display()
+        tracing::warn!(
+            path = %path.display(),
+            "created a new {kind} key; back it up, because clients are configured with its id"
         );
     }
     Ok(())
