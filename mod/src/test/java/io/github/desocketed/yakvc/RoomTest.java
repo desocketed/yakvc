@@ -12,8 +12,7 @@ import org.junit.jupiter.api.Test;
 class RoomTest {
 	// A furnished room, as the model was measured (the default furnishing of 1 stops every room ringing).
 	private static final SoundTuning TUNING = new SoundTuning(0.12, SoundTuning.DEFAULT.maxDecay(),
-			SoundTuning.DEFAULT.roomReach(), SoundTuning.DEFAULT.echoReach(), SoundTuning.DEFAULT.pathBend(),
-			SoundTuning.DEFAULT.pathPerBlock());
+			SoundTuning.DEFAULT.roomReach(), SoundTuning.DEFAULT.pathBend(), SoundTuning.DEFAULT.pathPerBlock());
 	private static final double STONE = 0.02;
 	private static final double EYE = 1.62;
 
@@ -38,7 +37,7 @@ class RoomTest {
 
 	/** The test world's cavern, 48 × 24 × 48 inside. */
 	@Test
-	void aCavernRingsForSecondsAndLeavesItsFarWallsToFarEchoes() {
+	void aCavernRingsForSecondsWithoutAnEcho() {
 		Room room = box(48, 24, 48);
 		assertBetween(4, 6, room.decay());
 		assertEquals(0, room.echo());
@@ -87,7 +86,7 @@ class RoomTest {
 
 	@Test
 	void decayIsCappedByTheTuning() {
-		Room room = Room.of(rays(200, 100, 200, 0), new SoundTuning(0, 6, 128, 200, 0, 0));
+		Room room = Room.of(rays(200, 100, 200, 0), new SoundTuning(0, 6, 128, 0, 0));
 		assertEquals(6, room.decay(), 1e-6);
 	}
 

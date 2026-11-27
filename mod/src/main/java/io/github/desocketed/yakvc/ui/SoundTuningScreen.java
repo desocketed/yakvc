@@ -103,8 +103,6 @@ public final class SoundTuningScreen extends OptionsSubScreen {
 		slider("furnishing", Acoustics::furnishing, 0, 100, Scale.linear(0.01), SoundTuningScreen::percent);
 		slider("max_decay", Acoustics::maxDecay, 5, 100, Scale.linear(0.1), value -> label("seconds", "%.1f", value));
 		slider("echo_feedback", Acoustics::echoFeedback, 0, 90, Scale.linear(0.01), SoundTuningScreen::percent);
-		slider("echo_reach", Acoustics::echoReach, 32, 256, Scale.linear(1), SoundTuningScreen::blocks);
-		slider("echo_level", Acoustics::echoLevel, 0, 400, Scale.linear(0.01), SoundTuningScreen::percent);
 	}
 
 	private void slider(String key, ToDoubleFunction<Acoustics> read, int min, int max, Scale scale,
@@ -133,7 +131,6 @@ public final class SoundTuningScreen extends OptionsSubScreen {
 		list.addSmall(option("reverb_level"), option("reverb_damping"));
 		list.addSmall(option("furnishing"), option("max_decay"));
 		list.addSmall(option("room_reach"), option("echo_feedback"));
-		list.addSmall(option("echo_reach"), option("echo_level"));
 		list.addBig(Button.builder(Component.translatable("yakvc.tuning.reset"), button -> {
 			sliders.forEach(this::reset);
 			apply();

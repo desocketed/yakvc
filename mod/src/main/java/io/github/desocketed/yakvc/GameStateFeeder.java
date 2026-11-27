@@ -116,8 +116,6 @@ public final class GameStateFeeder {
 	private boolean worldEmpty = true;
 	/** The listener's surroundings, smoothed from tick to tick. */
 	private Room room = Room.OPEN_AIR;
-	private final FarEchoes farEchoes = new FarEchoes();
-	private List<FarEchoes.Echo> echoes = List.of();
 	/** Only with dev_mode: a file of commands to send, for tools steering a dev session. */
 	private final DevCommands devCommands = new DevCommands(FabricLoader.getInstance().getGameDir());
 	/** The mod's half of the {@code acoustics} tuning, read again whenever the settings change. */
@@ -513,7 +511,6 @@ public final class GameStateFeeder {
 		tracked = List.of();
 		worldEmpty = true;
 		room = Room.OPEN_AIR;
-		farEchoes.clear();
 		detours.clear();
 		bridge.pushWorld(engine, new double[NativeBridge.LISTENER_LENGTH], new byte[0], new double[0]);
 	}
@@ -547,25 +544,15 @@ public final class GameStateFeeder {
 		Vec3 eye = camera.isInitialized() ? camera.position() : player.getEyePosition();
 		float yaw = camera.isInitialized() ? camera.yRot() : player.getYRot();
 		float pitch = camera.isInitialized() ? camera.xRot() : player.getXRot();
-		// Below Full the rooms and far echoes aren't cast at all: open air and no echoes leave the engine's mix dry.
-		echoes = List.of();
+		// Below Full the room isn't cast at all: open air leaves the engine's mix dry.
 		if (spatialAudio == SpatialAudio.FULL) {
 			SoundTuning roomTuning = minecraft.level.dimension() == Level.NETHER ? tuning.forNether() : tuning;
 			room = room.towards(Room.around(minecraft.level, eye, roomTuning));
-			echoes = farEchoes.update(minecraft.level, eye, tuning);
 		} else {
 			room = Room.OPEN_AIR;
-			farEchoes.clear();
 		}
-		double[] listener = new double[NativeBridge.LISTENER_LENGTH];
-		System.arraycopy(new double[] {eye.x, eye.y, eye.z, yaw, pitch, room.reverb(), room.criticalDistance(),
-				room.decay(), room.echo(), room.echoDelay()}, 0, listener, 0, 10);
-		// Unused slots stay zero: silent. The engine glides each echo from tick to tick.
-		for (int i = 0; i < echoes.size(); i++) {
-			FarEchoes.Echo echo = echoes.get(i);
-			System.arraycopy(new double[] {echo.direction().x, echo.direction().y, echo.direction().z, echo.delay(),
-					echo.gain(), echo.cutoff()}, 0, listener, 10 + 6 * i, 6);
-		}
+		double[] listener = {eye.x, eye.y, eye.z, yaw, pitch, room.reverb(), room.criticalDistance(), room.decay(),
+				room.echo(), room.echoDelay()};
 
 		List<UUID> uuids = new ArrayList<>();
 		List<double[]> players = new ArrayList<>();
@@ -831,11 +818,6 @@ public final class GameStateFeeder {
 	/** The listener's surroundings as last sent. For tests. */
 	public Room room() {
 		return room;
-	}
-
-	/** The far echoes as last sent, for the debug overlay. */
-	public List<FarEchoes.Echo> echoes() {
-		return echoes;
 	}
 
 	public boolean debugOverlay() {

@@ -32,4 +32,4 @@ pub use crate::event::{Event, Events, GroupNoticeKind, JoinId, PeerState, Rendez
 pub use crate::voice::{
     AudioStats, GroupError, GroupInfo, InviteKind, Placement, VoiceFrame, VoiceSink,
 };
-pub use crate::world::{FarEcho, Input, Player, Pose, Room, Vec3, World};
+pub use crate::world::{Input, Player, Pose, Room, Vec3, World};

@@ -78,7 +78,6 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	private final OptionInstance<SpatialAudio> spatialAudio;
 	/** The room reverb's and the far echoes' loudness, in percent. Shown only with Spatial Audio on Full. */
 	private final OptionInstance<Integer> reverbPercent;
-	private final OptionInstance<Integer> echoPercent;
 	/** Whether the reverb and echo sliders are in the list, so a Spatial Audio change can rebuild it. */
 	private boolean acousticsShown;
 	private final Dropdown inputDevice;
@@ -151,7 +150,6 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 				new OptionInstance.Enum<>(List.of(SpatialAudio.values()), Codec.STRING.xmap(SpatialAudio::of, SpatialAudio::key)),
 				initial.spatialAudio(), value -> throttle.changed());
 		reverbPercent = acousticsOption("reverb_level", initial, Acoustics::reverbLevel);
-		echoPercent = acousticsOption("echo_level", initial, Acoustics::echoLevel);
 		inputGainPercent = new OptionInstance<>("yakvc.settings.input_gain",
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.input_gain.tooltip")),
 				(caption, value) -> Options.genericValueLabel(caption, Component.translatable("yakvc.tuning.percent", value)),
@@ -217,9 +215,9 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 				value -> throttle.changed());
 	}
 
-	/** The Reverb ({@code reverb_level}) or Echo ({@code echo_level}) slider. Public for the client gametest. */
-	public OptionInstance<Integer> acoustic(String key) {
-		return key.equals("reverb_level") ? reverbPercent : echoPercent;
+	/** The Reverb ({@code reverb_level}) slider. Public for the client gametest. */
+	public OptionInstance<Integer> reverb() {
+		return reverbPercent;
 	}
 
 	/** A saved acoustics level as its slider shows it, so an untouched slider never rewrites it. */
@@ -324,9 +322,9 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		list.addBig(new MicLevelMeter(feeder::micLevelDb, () -> vadThresholdDb.get()));
 		list.addBig(outputDevice);
 		list.addSmall(spatialAudio);
-		// Only Full has reverb and echo: the other levels send the engine open air and no echoes.
+		// Only Full has reverb and echo: the other levels send the engine open air.
 		acousticsShown = spatialAudio.get() == SpatialAudio.FULL;
-		if (acousticsShown) list.addSmall(reverbPercent, echoPercent);
+		if (acousticsShown) list.addBig(reverbPercent);
 		list.addHeader(Component.translatable("yakvc.settings.privacy"));
 		list.addBig(new MultiLineTextWidget(Component.translatable("yakvc.settings.ip_note"), font)
 				.setMaxWidth(310).setCentered(true));
@@ -462,9 +460,9 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		return inputDevice.isOpen() || outputDevice.isOpen() || testSound.isOpen();
 	}
 
-	/** A right click on the threshold, reverb or echo slider puts it back to its default; true if one was hit. */
+	/** A right click on the threshold or reverb slider puts it back to its default; true if one was hit. */
 	private boolean resetSlider(MouseButtonEvent event) {
-		for (OptionInstance<Integer> option : List.of(vadThresholdDb, reverbPercent, echoPercent)) {
+		for (OptionInstance<Integer> option : List.of(vadThresholdDb, reverbPercent)) {
 			AbstractWidget widget = list.findOption(option);
 			if (widget == null || !widget.isMouseOver(event.x(), event.y())) continue;
 			option.set(defaultValue(option));
@@ -478,7 +476,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 
 	private int defaultValue(OptionInstance<Integer> option) {
 		if (option == vadThresholdDb) return vadThresholdDb(Settings.DEFAULT);
-		return acousticsPercent(Settings.DEFAULT, option == reverbPercent ? Acoustics::reverbLevel : Acoustics::echoLevel);
+		return acousticsPercent(Settings.DEFAULT, Acoustics::reverbLevel);
 	}
 
 	/** Rebuilds the controls, which only read their option when made, keeping the list where it was scrolled to. */
@@ -526,9 +524,6 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		if (vadThresholdDb.get() != vadThresholdDb(current)) changed = changed.withVadThresholdDb(vadThresholdDb.get());
 		if (reverbPercent.get() != acousticsPercent(current, Acoustics::reverbLevel)) {
 			changed = changed.withAcoustic("reverb_level", reverbPercent.get() / 100.0);
-		}
-		if (echoPercent.get() != acousticsPercent(current, Acoustics::echoLevel)) {
-			changed = changed.withAcoustic("echo_level", echoPercent.get() / 100.0);
 		}
 		return changed.equals(current) || applyAndSave(feeder, changed);
 	}

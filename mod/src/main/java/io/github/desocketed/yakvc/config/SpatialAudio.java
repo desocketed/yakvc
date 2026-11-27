@@ -16,7 +16,7 @@ public enum SpatialAudio {
 	/** Plus walls: muffling through them and voices coming round them, through doorways. */
 	@SerializedName("simple")
 	SIMPLE,
-	/** Plus the room's reverb and echo and far echoes off cliffs. */
+	/** Plus the room's reverb and echo. */
 	@SerializedName("full")
 	FULL;
 

@@ -71,10 +71,9 @@ public record Settings(double voiceRange, SpatialAudio spatialAudio, boolean rel
 	 * the rest the mod's ({@link SoundTuning}: how it reads rooms and walls from the world).
 	 */
 	public record Acoustics(double fullVolumeDistance, double distanceRolloff, double occlusionAttenuation,
-			double muffledCutoffHz, double reverbLevel, double reverbDamping, double echoFeedback, double echoLevel,
-			double furnishing, double maxDecay, double roomReach, double echoReach, double pathBend, double pathPerBlock) {
-		public static final Acoustics DEFAULT = new Acoustics(4, 4, 1, 100, 0.35, 0.25, 0.12, 1, 1, 6, 64, 200, 0.1,
-				1 / 24.0);
+			double muffledCutoffHz, double reverbLevel, double reverbDamping, double echoFeedback,
+			double furnishing, double maxDecay, double roomReach, double pathBend, double pathPerBlock) {
+		public static final Acoustics DEFAULT = new Acoustics(4, 4, 1, 100, 0.35, 0.25, 0.12, 1, 6, 64, 0.1, 1 / 24.0);
 	}
 
 	/**
@@ -175,7 +174,6 @@ public record Settings(double voiceRange, SpatialAudio spatialAudio, boolean rel
 		key(toml, "reverb_level", acoustics.reverbLevel());
 		key(toml, "reverb_damping", acoustics.reverbDamping());
 		key(toml, "echo_feedback", acoustics.echoFeedback());
-		key(toml, "echo_level", acoustics.echoLevel());
 
 		if (rendezvous != null) {
 			toml.append("\n[rendezvous]\n");

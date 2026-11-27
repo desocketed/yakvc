@@ -1,6 +1,5 @@
 package io.github.desocketed.yakvc.ui;
 
-import io.github.desocketed.yakvc.FarEchoes;
 import io.github.desocketed.yakvc.GameStateFeeder;
 import io.github.desocketed.yakvc.Room;
 import io.github.desocketed.yakvc.config.SpatialAudio;
@@ -90,12 +89,6 @@ public final class DebugOverlay implements HudElement {
 			Room room = feeder.room();
 			lines.add(String.format("Room: reverb %.2f, decay %05.2f s, critical %05.1f m, echo %.2f at %03.0f ms",
 					room.reverb(), room.decay(), room.criticalDistance(), room.echo(), room.echoDelay() * 1000));
-			List<FarEchoes.Echo> echoes = feeder.echoes();
-			StringBuilder far = new StringBuilder("Far echoes: " + echoes.size());
-			for (FarEchoes.Echo echo : echoes) {
-				far.append(String.format(", %03.0f ms ×%.2f <%05.0f Hz", echo.delay() * 1000, echo.gain(), echo.cutoff()));
-			}
-			lines.add(far.toString());
 		}
 
 		Map<UUID, VoiceStats.Peer> peerStats = stats == null ? Map.of() : stats.peers();

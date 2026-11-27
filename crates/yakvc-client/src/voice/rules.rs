@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
-use yakvc_audio::{DeviceChoice, ECHO_TAPS, EchoTap, Spatial};
+use yakvc_audio::{DeviceChoice, Spatial};
 use yakvc_proto::{GroupId, Uuid};
 
 use super::group::{Invite, OwnGroup, PendingGroup, SentInvite};
@@ -381,7 +381,6 @@ const CENTRED: Spatial = Spatial {
     pan: 0.0,
     muffle: 0.0,
     reverb: 0.0,
-    echo: 0.0,
 };
 
 /// Gain and pan for a source at `source`, heard by `listener` with voice
@@ -419,7 +418,6 @@ pub(crate) fn spatial(
         pan: pan as f32,
         muffle: 0.0,
         reverb: 0.0,
-        echo: 1.0,
     })
 }
 
@@ -439,20 +437,6 @@ fn pan_and_front(listener: &Pose, dx: f64, dz: f64) -> (f64, f64) {
         (dx * right_x + dz * right_z) / horizontal,
         (dx * forward_x + dz * forward_z) / horizontal,
     )
-}
-
-/// The room's far echoes as the mixer plays them: each panned to where its
-/// wall is from the way the listener faces now, scaled by `level`.
-pub(crate) fn echo_taps(world: &World, level: f32) -> [EchoTap; ECHO_TAPS] {
-    world.room.far_echoes.map(|echo| {
-        let (pan, _) = pan_and_front(&world.listener, echo.direction.x, echo.direction.z);
-        EchoTap {
-            delay: echo.delay,
-            gain: echo.gain * level,
-            pan: pan as f32,
-            cutoff_hz: echo.cutoff_hz,
-        }
-    })
 }
 
 /// How much of a voice `distance` metres away goes to the reverb. A room's
@@ -529,7 +513,6 @@ mod tests {
     use yakvc_proto::{GroupKey, GroupState};
 
     use super::*;
-    use crate::world::FarEcho;
 
     fn uuid(n: u8) -> Uuid {
         Uuid::from_bytes([n; 16])
@@ -742,27 +725,6 @@ mod tests {
             None,
             "untracked"
         );
-    }
-
-    #[test]
-    fn far_echoes_follow_the_listener_turning() {
-        let mut world = World::default();
-        // A cliff to the west (-X).
-        world.room.far_echoes[0] = FarEcho {
-            direction: Vec3::new(-1.0, 0.0, 0.0),
-            delay: 0.3,
-            gain: 0.2,
-            cutoff_hz: 4000.0,
-        };
-        // Facing +Z, -X is on the right; turned round, on the left.
-        world.listener = listener(0.0);
-        let taps = echo_taps(&world, 0.5);
-        assert!((taps[0].pan - 1.0).abs() < 1e-6);
-        assert!((taps[0].gain - 0.1).abs() < 1e-6);
-        assert_eq!((taps[0].delay, taps[0].cutoff_hz), (0.3, 4000.0));
-        assert_eq!(taps[1].gain, 0.0);
-        world.listener = listener(180.0);
-        assert!((echo_taps(&world, 0.5)[0].pan + 1.0).abs() < 1e-6);
     }
 
     #[test]
@@ -1114,10 +1076,8 @@ mod tests {
         assert_eq!(peer.heard, Heard::Centred);
     }
 
-    /// The echo levels `Room` and `FarEchoes` give the test world's spaces.
+    /// The echo level `Room` gives the test world's hall.
     const HALL_ECHO: f32 = 0.045;
-    const CAVERN_ECHO: f32 = 0.07;
-    const CANYON_ECHO: f32 = 0.048;
 
     /// How loud a room's reverb and echoes are next to a voice `distance`
     /// metres away, in dB: a voice-like signal (a 150 Hz buzz spoken in
@@ -1126,10 +1086,6 @@ mod tests {
     fn wet_db(room: Room, distance: f64) -> f32 {
         use yakvc_audio::{FRAME_SAMPLES, Mixer, SAMPLE_RATE};
         let config = AcousticsConfig::default();
-        let world = World {
-            room,
-            ..World::default()
-        };
         let mut wet_mixer = Mixer::new();
         wet_mixer.set_acoustics(yakvc_audio::Acoustics {
             decay: room.decay,
@@ -1138,7 +1094,6 @@ mod tests {
             echo_feedback: config.echo_feedback,
             reverb_level: config.reverb_level,
             reverb_damping: config.reverb_damping,
-            taps: echo_taps(&world, config.echo_level),
         });
         let mut dry_mixer = Mixer::new();
         let wet = Spatial {
@@ -1146,13 +1101,8 @@ mod tests {
             pan: 0.0,
             muffle: 0.0,
             reverb: reverb_send(room, distance),
-            echo: 1.0,
         };
-        let dry = Spatial {
-            reverb: 0.0,
-            echo: 0.0,
-            ..wet
-        };
+        let dry = Spatial { reverb: 0.0, ..wet };
         let (mut dry_energy, mut wet_energy) = (0.0, 0.0);
         for frame in 0..300 {
             let mut voice = [0.0; FRAME_SAMPLES];
@@ -1178,7 +1128,7 @@ mod tests {
         (10.0 * (wet_energy / dry_energy).log10()) as f32
     }
 
-    /// The test world's spaces, as `Room` and `FarEchoes` measure them
+    /// The test world's spaces, as `Room` measures them
     /// (DESIGN.md "Room reverb and echo").
     fn small_room() -> Room {
         Room {
@@ -1196,7 +1146,6 @@ mod tests {
             decay: 2.45,
             echo: HALL_ECHO,
             echo_delay: 0.065,
-            ..Room::default()
         }
     }
 
@@ -1205,24 +1154,6 @@ mod tests {
             reverb: 1.0,
             critical_distance: 8.3,
             decay: 5.24,
-            far_echoes: [0.0, 1.0, 2.0, 3.0].map(|n: f64| FarEcho {
-                direction: Vec3::new(n.cos(), 0.0, n.sin()),
-                delay: 0.14,
-                gain: CAVERN_ECHO,
-                cutoff_hz: 6000.0,
-            }),
-            ..Room::default()
-        }
-    }
-
-    fn canyon() -> Room {
-        Room {
-            far_echoes: [1.0, -1.0, 0.0, 0.0].map(|x: f64| FarEcho {
-                direction: Vec3::new(x, 0.0, 0.0),
-                delay: 0.2,
-                gain: CANYON_ECHO * x.abs() as f32,
-                cutoff_hz: 4800.0,
-            }),
             ..Room::default()
         }
     }
@@ -1234,15 +1165,13 @@ mod tests {
         let small_far = wet_db(small_room(), 5.0);
         let hall = wet_db(hall(), 5.0);
         let cavern = wet_db(cavern(), 8.0);
-        let canyon = wet_db(canyon(), 5.0);
         // Small rooms nearly dry, a hall a light tail, a cavern clearly
-        // ringing and a canyon a clear echo, all under the voice. Measured
+        // and ringing cavern, all under the voice. Measured
         // when this was set: -41, -14, -6 and -23 dB.
         for db in [small_near, small, small_far] {
             assert!(db < -20.0, "small room {db:.1} dB");
         }
         assert!((-18.0..-10.0).contains(&hall), "hall {hall:.1} dB");
         assert!((-10.0..-3.0).contains(&cavern), "cavern {cavern:.1} dB");
-        assert!((-28.0..-18.0).contains(&canyon), "canyon {canyon:.1} dB");
     }
 }

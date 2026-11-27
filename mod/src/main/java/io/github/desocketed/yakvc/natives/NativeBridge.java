@@ -34,9 +34,9 @@ import java.util.UUID;
  */
 public final class NativeBridge {
 	/** Must equal {@code YAKVC_ABI_VERSION} in {@code yakvc.h}. */
-	public static final int ABI_VERSION = 17;
+	public static final int ABI_VERSION = 18;
 	/** Doubles in {@link #pushWorld}'s listener: the pose, the room and four far echoes. */
-	public static final int LISTENER_LENGTH = 34;
+	public static final int LISTENER_LENGTH = 10;
 
 	public static final int INPUT_PUSH_TO_TALK = 1;
 	public static final int INPUT_MUTED = 1 << 1;

@@ -13,16 +13,6 @@ interface Terrain {
 
 	boolean solid(int x, int y, int z);
 
-	/** What {@link FarEchoes} would keep from rays cast from {@code eye} in each of {@code directions}. */
-	default List<FarEchoes.Hit> hits(Vec3 eye, Vec3[] directions, double reach) {
-		List<FarEchoes.Hit> hits = new ArrayList<>();
-		for (Vec3 direction : directions) {
-			Cast cast = cast(eye, direction, reach);
-			if (cast != null) hits.add(new FarEchoes.Hit(direction, cast.distance, cast.incidence, STONE, cast.tall));
-		}
-		return hits;
-	}
-
 	/** What {@link Room} would see from {@code eye}. */
 	default List<Room.Ray> rays(Vec3 eye, Vec3[] directions, double reach) {
 		List<Room.Ray> rays = new ArrayList<>();

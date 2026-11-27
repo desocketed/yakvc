@@ -228,10 +228,8 @@ class NativeBridgeTest {
 		return seen;
 	}
 
-	/** A listener at y 64 facing west in open air, with one far echo straight ahead and three silent ones. */
+	/** A listener at y 64 facing west in open air. */
 	private static double[] listener() {
-		double[] listener = new double[NativeBridge.LISTENER_LENGTH];
-		System.arraycopy(new double[] {0, 64, 0, 90, 0, 0, 1, 1, 0, 0, -1, 0, 0, 0.2, 0.1, 5000}, 0, listener, 0, 16);
-		return listener;
+		return new double[] {0, 64, 0, 90, 0, 0, 1, 1, 0, 0};
 	}
 }

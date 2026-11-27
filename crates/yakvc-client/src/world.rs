@@ -1,4 +1,3 @@
-use yakvc_audio::ECHO_TAPS;
 use yakvc_proto::Uuid;
 
 /// A position in block coordinates.
@@ -40,29 +39,11 @@ pub struct Room {
     pub critical_distance: f32,
     /// Seconds until the reverb fades by 60 dB: longer in bigger spaces.
     pub decay: f32,
-    /// How loud the distinct echo off the far walls is, from 0: loud in a
-    /// big hall or a canyon, nothing in a small room or out in the open.
+    /// How loud the room's echo is, from 0: loud in a big hall, nothing in a
+    /// small room or out in the open.
     pub echo: f32,
     /// Seconds until that echo comes back, by how far the walls are.
     pub echo_delay: f32,
-    /// The distinct echoes off far cliffs and walls, loudest first; unused
-    /// ones are silent.
-    pub far_echoes: [FarEcho; ECHO_TAPS],
-}
-
-/// A far surface that sends the listener a distinct echo, as the game found
-/// it.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct FarEcho {
-    /// The way to the surface from the listener, a unit vector in world
-    /// coordinates.
-    pub direction: Vec3,
-    /// Seconds until the echo comes back.
-    pub delay: f32,
-    /// How loud it comes back, from 0.
-    pub gain: f32,
-    /// Its highs above this fade on the long way through the air.
-    pub cutoff_hz: f32,
 }
 
 /// Another player as the listener hears them.
@@ -153,9 +134,6 @@ pub(crate) fn interpolate(from: &World, to: &World, t: f64) -> World {
             f64::from(from.room.echo_delay),
             f64::from(to.room.echo_delay),
         ) as f32,
-        // Not blended: a slot may hold another wall next tick, and the mixer
-        // glides each echo from frame to frame anyway.
-        far_echoes: to.room.far_echoes,
     };
     World {
         listener,

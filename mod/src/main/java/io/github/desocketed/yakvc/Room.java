@@ -22,8 +22,7 @@ import net.minecraft.world.phys.shapes.CollisionContext;
  * How the space around the listener rings, measured like a real room, taking a block as a metre: how walled in it is
  * ({@code reverb}, 0 in open air up to 1 shut in), its critical distance ({@code criticalDistance}, metres at which a
  * voice's reverb is as loud as the voice), how long the reverb lasts ({@code decay}, seconds until it fades by 60 dB)
- * and the echo off walls a little way off ({@code echo}, its loudness, and {@code echoDelay}, seconds until it returns;
- * walls further than {@link FarEchoes#MIN_DISTANCE} each echo apart, in {@link FarEchoes}).
+ * and the echo off walls a little way off ({@code echo}, its loudness, and {@code echoDelay}, seconds until it returns).
  *
  * <p>Rays cast evenly in every direction measure the room: each stands for an equal cone of it, so together they give
  * its volume, its surface and how much that surface absorbs. From those, Eyring's formula gives the decay. The ground
@@ -40,6 +39,8 @@ public record Room(float reverb, float criticalDistance, float decay, float echo
 	private static final double MAX_ECHO_DELAY = 0.45;
 	/** The shortest round trip the ear hears as an echo apart from the voice (about 50 ms): walls 8.5 m away. */
 	private static final double ECHO_MIN_DISTANCE = 8.5;
+	/** Walls further than this (a round trip of about 100 ms) are too far to echo at all. */
+	private static final double ECHO_MAX_DISTANCE = 17;
 	/** How loud an echo off a hard wall just far enough to stand apart is. */
 	private static final double ECHO_LEVEL = 0.2;
 	/** Metres past {@link #ECHO_MIN_DISTANCE} over which the echo fades in: only big spaces echo in full. */
@@ -124,8 +125,7 @@ public record Room(float reverb, float criticalDistance, float decay, float echo
 			if (!ray.hit) continue;
 			walls++;
 			wallDistance += ray.distance;
-			// Further walls echo apart, each from its own direction: FarEchoes.
-			if (!ray.tall || ray.incidence < FACING || ray.distance > FarEchoes.MIN_DISTANCE) continue;
+			if (!ray.tall || ray.incidence < FACING || ray.distance > ECHO_MAX_DISTANCE) continue;
 			facing++;
 			facingDistance += ray.distance;
 			facingAbsorption += absorption;
