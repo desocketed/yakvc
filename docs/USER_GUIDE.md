@@ -77,7 +77,7 @@ A green speaker floats over the head of every player who is talking, above their
 
 ![A speaker over a talking player](guide/talking-indicator.png)
 
-While someone talks, their head moves with their voice: it nods on stressed syllables, sways a little more the louder they are, and tilts up slightly when their voice rises. Only standing players move this way; **Speaking Heads** in the [settings](#settings) turns it off, **Head Style** picks another way of moving and **Head Strength** scales it from still to four times as far.
+While someone talks, their head moves with their voice: it nods on stressed syllables, sways a little more the louder they are, and tilts up slightly when their voice rises. Only standing players move this way; **Speaking Heads** in the [settings](#settings) turns it off, **Head Style** picks another way of moving and **Head Strength** scales it from still to four times as far. `/yakvc heads <style> [strength]` in chat switches both at once, for example `/yakvc heads bobble 2`.
 
 ## The voice menu
 
