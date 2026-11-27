@@ -62,10 +62,7 @@ pub(crate) async fn serve(shared: Arc<Shared>, incoming: Incoming) {
         Some(ip) => match shared.unregistered_per_ip.take(ip) {
             Some(slot) => Some(slot),
             None => {
-                tracing::debug!(
-                    ?ip,
-                    "refused a connection: too many unregistered for its IP"
-                );
+                tracing::debug!("refused a connection: too many unregistered for its IP");
                 incoming.refuse();
                 return;
             }
