@@ -15,6 +15,10 @@ use crate::world::{Input, Player, Pose, Room, Vec3, World, distance, interpolate
 /// Snapshots further apart than this are not interpolated: the game paused
 /// or lagged, so gliding would only move voices late.
 const MAX_SNAPSHOT_GAP: Duration = Duration::from_millis(250);
+
+/// How long a change in occlusion takes to be heard in full, so a voice
+/// fades behind a wall or back in rather than cutting.
+const OCCLUSION_RAMP: Duration = Duration::from_millis(400);
 /// Directly behind the listener a speaker is this much quieter.
 const BEHIND_ATTENUATION: f64 = 0.3;
 /// Seconds of decay below which a space sounds dry: houses, small rooms,
@@ -153,7 +157,15 @@ impl VoiceState {
     }
 
     pub(crate) fn set_world(&mut self, world: World, now: Instant) {
+        // A ramp in progress carries on from what is heard now, not from
+        // where the last snapshot said it was going.
+        let heard = self.world_at(now);
         self.previous_world = std::mem::replace(&mut self.world, world);
+        for player in &mut self.previous_world.players {
+            if let Some(h) = heard.players.iter().find(|p| p.uuid == player.uuid) {
+                player.occlusion = h.occlusion;
+            }
+        }
         self.previous_at = std::mem::replace(&mut self.world_at, now);
     }
 
@@ -162,12 +174,28 @@ impl VoiceState {
     /// pan don't step at every 20 Hz tick.
     pub(crate) fn world_at(&self, now: Instant) -> World {
         let interval = self.world_at.saturating_duration_since(self.previous_at);
-        if interval.is_zero() || interval > MAX_SNAPSHOT_GAP {
-            return self.world.clone();
-        }
+        let mut world = if interval.is_zero() || interval > MAX_SNAPSHOT_GAP {
+            self.world.clone()
+        } else {
+            let since = now.saturating_duration_since(self.world_at);
+            let t = since.as_secs_f64() / interval.as_secs_f64();
+            interpolate(&self.previous_world, &self.world, t.min(1.0))
+        };
+        // Occlusion ramps on its own, slower clock.
         let since = now.saturating_duration_since(self.world_at);
-        let t = since.as_secs_f64() / interval.as_secs_f64();
-        interpolate(&self.previous_world, &self.world, t.min(1.0))
+        let t = (since.as_secs_f32() / OCCLUSION_RAMP.as_secs_f32()).min(1.0);
+        for player in &mut world.players {
+            let latest = self.world.players.iter().find(|p| p.uuid == player.uuid);
+            let before = self
+                .previous_world
+                .players
+                .iter()
+                .find(|p| p.uuid == player.uuid);
+            if let (Some(latest), Some(before)) = (latest, before) {
+                player.occlusion = before.occlusion + (latest.occlusion - before.occlusion) * t;
+            }
+        }
+        world
     }
 
     pub(crate) fn input_device(&self) -> DeviceChoice {
@@ -821,6 +849,34 @@ mod tests {
             state.world_at(start + Duration::from_secs(5)).players[0].pos,
             at(40.0, 0.0)
         );
+    }
+
+    #[test]
+    fn occlusion_ramps_over_time() {
+        let mut state = state();
+        let start = Instant::now();
+        let world = |occlusion: f32| World {
+            listener: listener(0.0),
+            players: vec![Player {
+                occlusion,
+                ..Player::new(uuid(1), at(5.0, 0.0))
+            }],
+            ..World::default()
+        };
+        let heard =
+            |state: &VoiceState, t: Duration| state.world_at(start + t).players[0].occlusion;
+        state.set_world(world(0.0), start);
+        state.set_world(world(1.0), start);
+        let half = OCCLUSION_RAMP / 2;
+        assert_eq!(heard(&state, Duration::ZERO), 0.0);
+        assert!((heard(&state, half) - 0.5).abs() < 1e-6);
+        assert_eq!(heard(&state, OCCLUSION_RAMP * 2), 1.0);
+
+        // Open again halfway up: falls from where it was heard.
+        state.set_world(world(0.0), start + half);
+        assert!((heard(&state, half) - 0.5).abs() < 1e-6);
+        assert!((heard(&state, half + half) - 0.25).abs() < 1e-6);
+        assert_eq!(heard(&state, half + OCCLUSION_RAMP), 0.0);
     }
 
     #[test]
