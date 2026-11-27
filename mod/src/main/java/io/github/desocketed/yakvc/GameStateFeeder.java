@@ -189,7 +189,7 @@ public final class GameStateFeeder {
 		this.startedRelayOnly = settings.relayOnly();
 		this.tuning = SoundTuning.of(settings.acoustics());
 		this.spatialAudio = settings.spatialAudio();
-		heads.style(settings.speakingHeadsStyle());
+		heads.style(settings.speakingHeadsStyle(), settings.speakingHeadsDistort());
 		this.keys = keys;
 		this.joiner = joiner;
 		this.volumes = volumes;
@@ -364,7 +364,7 @@ public final class GameStateFeeder {
 		settings = changed;
 		tuning = SoundTuning.of(changed.acoustics());
 		spatialAudio = changed.spatialAudio();
-		heads.style(changed.speakingHeadsStyle());
+		heads.style(changed.speakingHeadsStyle(), changed.speakingHeadsDistort());
 		ticksUntilBlockedRefresh = 0;
 		return null;
 	}

@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import io.github.desocketed.yakvc.heads.HeadDistort;
 import io.github.desocketed.yakvc.heads.HeadStyle;
 import io.github.desocketed.yakvc.natives.NativeBridge;
 import io.github.desocketed.yakvc.natives.NativeLoader;
@@ -36,6 +37,17 @@ class SettingsTest {
 		assertEquals(Settings.DEFAULT.withSpeakingHeadsStyle(HeadStyle.JAW).withSpeakingHeadsStrength(3),
 				Settings.parse("{\"speaking_heads_style\": \"jaw\", \"speaking_heads_strength\": 3}"));
 		assertThrows(IOException.class, () -> Settings.parse("{\"speaking_heads_style\": \"spin\"}"));
+	}
+
+	@Test
+	void speakingHeadsDistort() throws Exception {
+		assertEquals(HeadDistort.NONE, Settings.DEFAULT.speakingHeadsDistort());
+		assertEquals(1, Settings.DEFAULT.distortStrength());
+		assertEquals(Settings.DEFAULT.withSpeakingHeadsDistort(HeadDistort.JELLY).withSpeakingHeadsDistortStrength(1.5),
+				Settings.parse("{\"speaking_heads_distort\": \"jelly\", \"speaking_heads_distort_strength\": 1.5}"));
+		assertEquals(Settings.MAX_DISTORT_STRENGTH, Settings.parse("{\"speaking_heads_distort_strength\": 99}").distortStrength());
+		assertEquals(0, Settings.parse("{\"speaking_heads_distort_strength\": -1}").distortStrength());
+		assertThrows(IOException.class, () -> Settings.parse("{\"speaking_heads_distort\": \"melt\"}"));
 	}
 
 	@Test

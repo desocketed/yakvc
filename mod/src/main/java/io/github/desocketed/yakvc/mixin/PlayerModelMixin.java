@@ -2,6 +2,7 @@ package io.github.desocketed.yakvc.mixin;
 
 import io.github.desocketed.yakvc.GameStateFeeder;
 import io.github.desocketed.yakvc.YakVcClient;
+import io.github.desocketed.yakvc.heads.Distortion;
 import io.github.desocketed.yakvc.heads.HeadMotion;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.model.HumanoidModel;
@@ -36,5 +37,12 @@ abstract class PlayerModelMixin {
 		head.xRot += strength * motion.xRot();
 		head.yRot += strength * motion.yRot();
 		head.zRot += strength * motion.zRot();
+		Distortion distortion = feeder.heads().distortion(entity.getUUID());
+		if (distortion == null) return;
+		float distort = (float) feeder.settings().distortStrength();
+		// Kept from inverting or exploding the head.
+		head.xScale *= Math.clamp(1 + distort * distortion.xScale(), 0.3f, 2f);
+		head.yScale *= Math.clamp(1 + distort * distortion.yScale(), 0.3f, 2f);
+		head.zScale *= Math.clamp(1 + distort * distortion.zScale(), 0.3f, 2f);
 	}
 }
