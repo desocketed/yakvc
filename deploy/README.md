@@ -139,3 +139,7 @@ Without a relay, or to list direct addresses as well, spell it out in `config/ya
 List both addresses so that clients on IPv6-only networks can reach the rendezvous directly; one alone works too.
 
 Keep the keys: a new endpoint key changes the endpoint id, and a new issuer key invalidates every ticket and every client's `trusted_issuers`.
+
+## Logging
+
+The server logs to stderr (so to the journal) through `tracing`. `RUST_LOG` sets the level, default `info`: registrations, departures, sign-in failures, Mojang errors and a one-line summary a minute. `RUST_LOG=yakvc_server=debug` adds relay admissions and refusals, limiter hits and group (pair) updates. Logs carry short endpoint ids and UUIDs, never names or addresses.

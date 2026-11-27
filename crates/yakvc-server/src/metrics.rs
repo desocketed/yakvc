@@ -158,7 +158,7 @@ pub(crate) async fn serve(
             Err(e) => {
                 // Usually EMFILE under load, which passes. The pending
                 // connection stays queued, so retrying at once would spin.
-                eprintln!("metrics: accept failed: {e}");
+                tracing::warn!("metrics accept failed: {e}");
                 tokio::time::sleep(ACCEPT_RETRY).await;
             }
         }

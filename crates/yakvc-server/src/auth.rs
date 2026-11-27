@@ -125,10 +125,12 @@ impl Auth {
                 let wait = retry_after
                     .unwrap_or(DEFAULT_RETRY_AFTER)
                     .min(MAX_RETRY_AFTER);
+                tracing::warn!(?wait, "Mojang rate limited us");
                 *self.mojang_blocked_until.lock().unwrap() = Some(Instant::now() + wait);
                 JoinCheck::RetryAfter(secs_rounded_up(wait))
             }
-            Err(MojangError::Unavailable(_)) => {
+            Err(MojangError::Unavailable(e)) => {
+                tracing::warn!("Mojang unavailable: {e}");
                 JoinCheck::RetryAfter(secs_rounded_up(DEFAULT_RETRY_AFTER))
             }
         }
