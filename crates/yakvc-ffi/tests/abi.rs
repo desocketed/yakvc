@@ -112,9 +112,10 @@ fn every_engine_call_rejects_a_null_engine() {
             yakvc_update_config(null, ptr::null(), 0),
             yakvc_list_devices(null, buf.as_mut_ptr(), buf.len(), &mut len),
             yakvc_stats(null, buf.as_mut_ptr(), buf.len(), &mut len),
-            yakvc_invite(null, uuid.as_ptr()),
+            yakvc_invite(null, uuid.as_ptr(), &mut false),
             yakvc_accept_invite(null, uuid.as_ptr()),
             yakvc_join_group(null, ptr::null(), 0),
+            yakvc_create_group(null, true),
             yakvc_leave_group(null),
             yakvc_set_group_public(null, true),
             yakvc_set_group_label(null, ptr::null(), 0),
@@ -396,7 +397,10 @@ fn groups_through_the_c_abi() {
             YAKVC_OK
         );
         // Inviting needs no group, and doesn't put us in one.
-        assert_eq!(yakvc_invite(engine, bob.as_ptr()), YAKVC_OK);
+        let mut requested = true;
+        assert_eq!(yakvc_invite(engine, bob.as_ptr(), &mut requested), YAKVC_OK);
+        // Bob announces no group, so it is a plain invite.
+        assert!(!requested);
         yakvc_list_groups(engine, buf.as_mut_ptr(), buf.len(), &mut len);
         assert_eq!(&buf[..len], b"[]");
 

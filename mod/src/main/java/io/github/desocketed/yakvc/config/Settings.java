@@ -43,7 +43,7 @@ public record Settings(double voiceRange, SpatialAudio spatialAudio, boolean rel
 		boolean checkForUpdates, Audio audio, Acoustics acoustics, boolean devMode, Dev dev,
 		@Nullable Rendezvous rendezvous, List<String> trustedIssuers, @Nullable String server) {
 	public static final String FILE_NAME = "settings.json";
-	public static final Settings DEFAULT = new Settings(256, SpatialAudio.SIMPLE, false, true, true, false, "everyone",
+	public static final Settings DEFAULT = new Settings(256, SpatialAudio.FULL, false, true, true, false, "everyone",
 			false, false, true, Audio.DEFAULT, Acoustics.DEFAULT, false, Dev.DEFAULT, null, List.of(), null);
 	/** Nulls are written too, so the file shows every key, and the JSON keys are the engine's snake case. */
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().serializeNulls()

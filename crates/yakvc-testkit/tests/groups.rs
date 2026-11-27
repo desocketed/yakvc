@@ -5,7 +5,7 @@
 use std::time::Duration;
 
 use tokio::time::{Instant, sleep};
-use yakvc_client::{Event, InvitesFrom, PeerState, Vec3};
+use yakvc_client::{Event, InviteKind, InvitesFrom, PeerState, Vec3};
 use yakvc_testkit::{TestClient, TestNet, see_each_other};
 
 /// Peak level above which a sample counts as audible: -60 dBFS.
@@ -210,4 +210,32 @@ async fn invites_from_nobody_are_dropped() {
     .await;
     assert!(!matches!(invited, Ok(Ok(_))), "the invite got through");
     assert!(bob.engine().accept_invite(from).is_err());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_answered_invite_request_joins_the_group() {
+    let net = TestNet::start().await;
+    let [alice, mut bob, carol]: [TestClient; 3] = clients(&net, &["alice", "bob", "carol"])
+        .await
+        .try_into()
+        .unwrap();
+    invite(&alice, &mut bob).await;
+    wait_for_group(&bob, &[&alice, &bob]).await;
+    sleep(SETTLE).await;
+
+    // Bob is in a group carol isn't: she asks him instead of inviting.
+    assert_eq!(
+        carol.engine().invite(bob.uuid()),
+        InviteKind::Request,
+        "carol invited bob"
+    );
+    let from = carol.uuid();
+    bob.wait_for("an invite request", |e| *e == Event::InviteRequest { from })
+        .await
+        .unwrap();
+
+    // Bob answers with an ordinary invite, which carol joins at once.
+    assert_eq!(bob.engine().invite(from), InviteKind::Invite);
+    wait_for_group(&carol, &[&alice, &bob, &carol]).await;
+    wait_for_group(&alice, &[&alice, &bob, &carol]).await;
 }

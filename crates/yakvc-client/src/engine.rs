@@ -12,7 +12,7 @@ use yakvc_proto::{GroupId, IssuerKey, ProtocolId, TicketBody, TicketVerifier, Uu
 use crate::config::{Config, ConfigError};
 use crate::event::{self, Event, EventSender, Events, JoinId, PeerState, RendezvousState};
 use crate::net::{Identity, Net, Trust};
-use crate::voice::{AudioIo, AudioStats, GroupError, GroupInfo, Voice, VoiceSink};
+use crate::voice::{AudioIo, AudioStats, GroupError, GroupInfo, InviteKind, Voice, VoiceSink};
 use crate::world::{Input, World, distance};
 
 /// A running voice engine. Dropping it shuts down gracefully, waiting at most
@@ -246,8 +246,12 @@ impl Engine {
     /// Invites `target` to our group. While we are in none, the invite is
     /// to a new group we join only once `target` accepts; until then we
     /// stay in proximity voice. The invite lasts two minutes.
-    pub fn invite(&self, target: Uuid) {
-        self.voice.invite(target);
+    ///
+    /// When `target` is in a group we aren't in, asks it to invite us
+    /// instead ([`Event::InviteRequest`] on its side), unless it asked us
+    /// first; its invite is then joined at once.
+    pub fn invite(&self, target: Uuid) -> InviteKind {
+        self.voice.invite(target)
     }
 
     /// Joins the group of the last invite from `from` (see
@@ -260,6 +264,12 @@ impl Engine {
     /// Joins a public group from [`Engine::groups`], leaving any other.
     pub fn join_group(&self, id: GroupId) -> Result<(), GroupError> {
         self.voice.join_group(id)
+    }
+
+    /// Starts a group with only us in it yet, public (anyone may join it
+    /// from the list) or private, leaving any other.
+    pub fn create_group(&self, public: bool) {
+        self.voice.create_group(public);
     }
 
     pub fn leave_group(&self) {

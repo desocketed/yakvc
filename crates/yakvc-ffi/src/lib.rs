@@ -21,6 +21,7 @@
 //! | [`YAKVC_EVENT_MIC_LEVEL`] | `f32` dBFS |
 //! | [`YAKVC_EVENT_ERROR`] | message as UTF-8 |
 //! | [`YAKVC_EVENT_INVITE`] | `uuid[16]` of the player who invited us |
+//! | [`YAKVC_EVENT_INVITE_REQUEST`] | `uuid[16]` of the player who asks us to invite them |
 //! | [`YAKVC_EVENT_GROUP_NOTICE`] | `u8 YAKVC_GROUP_*`, `uuid[16]` the member it is about, `uuid[16] by` who made the change; all-zero when not applicable |
 
 #![allow(unsafe_code)]
@@ -33,8 +34,9 @@ use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 
 use yakvc_client::{
-    Config, ConfigError, Engine, FarEcho, GroupError, GroupId, Input, JoinId, MonoFrame, PeerAudio,
-    Player, Pose, Room, StartError, Uuid, Vec3, VoiceFrame, VoiceSink, World,
+    Config, ConfigError, Engine, FarEcho, GroupError, GroupId, Input, InviteKind, JoinId,
+    MonoFrame, PeerAudio, Placement, Player, Pose, Room, StartError, Uuid, Vec3, VoiceFrame,
+    VoiceSink, World,
 };
 
 use crate::events::EventQueue;
@@ -57,7 +59,7 @@ use crate::guard::{
 /// 11: `yakvc_push_world` takes the room's echo and echo delay.
 /// 12: `yakvc_set_voice_sink`.
 /// 15: `yakvc_push_world` takes the far echoes after the room.
-pub const YAKVC_ABI_VERSION: u32 = 15;
+pub const YAKVC_ABI_VERSION: u32 = 17;
 
 pub const YAKVC_OK: i32 = 0;
 /// A null pointer, bad UUID, invalid UTF-8 or out-of-range value.
@@ -94,6 +96,7 @@ pub const YAKVC_EVENT_MIC_LEVEL: u16 = 5;
 pub const YAKVC_EVENT_ERROR: u16 = 6;
 pub const YAKVC_EVENT_INVITE: u16 = 7;
 pub const YAKVC_EVENT_GROUP_NOTICE: u16 = 8;
+pub const YAKVC_EVENT_INVITE_REQUEST: u16 = 9;
 
 /// `uuid` became a group mate.
 pub const YAKVC_GROUP_JOINED: u8 = 0;
@@ -138,6 +141,11 @@ pub const YAKVC_VOICE_UNPOSITIONED: u32 = 1 << 1;
 /// must not play it dry. Also `YAKVC_VOICE_UNPOSITIONED`, with volume 1 and
 /// the player's UUID. Paced by the microphone, not `wants_frame`.
 pub const YAKVC_VOICE_SELF: u32 = 1 << 2;
+/// A `YAKVC_VOICE_UNPOSITIONED` frame that still has a direction: group
+/// voice from a tracked mate, to be panned towards `heard_from` (the mate's
+/// eye) at full volume, with no distance falloff, occlusion or reverb. A
+/// sink that ignores this flag plays it centred.
+pub const YAKVC_VOICE_DIRECTIONAL: u32 = 1 << 3;
 
 /// Opaque engine handle.
 #[derive(Debug)]
@@ -168,7 +176,8 @@ pub struct YakVcVoiceFrame {
     /// A combination of `YAKVC_VOICE_*`.
     pub flags: u32,
     /// Where the speakers would place the voice, `x, y, z`: the speaker's
-    /// eye, or the opening it comes round through. Zero when unpositioned.
+    /// eye, or the opening it comes round through. Zero when unpositioned,
+    /// unless `YAKVC_VOICE_DIRECTIONAL`.
     pub heard_from: [f64; 3],
     /// How much of the way the speakers would block, from 0 (open air) to 1;
     /// 0 when unpositioned.
@@ -598,8 +607,10 @@ impl VoiceSink for ForeignSink {
         if frame.group {
             flags |= YAKVC_VOICE_GROUP;
         }
-        if !frame.positioned {
-            flags |= YAKVC_VOICE_UNPOSITIONED;
+        match frame.placement {
+            Placement::Positioned => {}
+            Placement::Centred => flags |= YAKVC_VOICE_UNPOSITIONED,
+            Placement::Directional => flags |= YAKVC_VOICE_UNPOSITIONED | YAKVC_VOICE_DIRECTIONAL,
         }
         let frame = YakVcVoiceFrame {
             uuid: *frame.uuid.as_bytes(),
@@ -680,16 +691,27 @@ fn group_error(err: GroupError) -> FfiError {
 /// proximity voice. Sent over the peer's link if there is one; the invite
 /// lasts two minutes.
 ///
+/// When `target` is in a group we aren't in, asks it to invite us instead
+/// (`YAKVC_EVENT_INVITE_REQUEST` on its side), unless it asked us first, and
+/// joins its invite at once. `*requested` says which was sent.
+///
 /// # Safety
-/// `engine` must be live; `target` must point to 16 bytes.
+/// `engine` must be live; `target` must point to 16 bytes; `requested`
+/// must be writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn yakvc_invite(engine: *mut YakVcEngine, target: *const u8) -> i32 {
+pub unsafe extern "C" fn yakvc_invite(
+    engine: *mut YakVcEngine,
+    target: *const u8,
+    requested: *mut bool,
+) -> i32 {
     // SAFETY: the caller guarantees `engine` is live.
     unsafe {
         with_engine(engine, |e| {
+            // SAFETY: the caller guarantees `requested` is writable.
+            let requested = out_arg(requested, "requested")?;
             // SAFETY: the caller guarantees `target` points to 16 bytes.
             let target = uuids_arg(target, 1, "target")?[0];
-            e.engine.invite(target);
+            *requested = e.engine.invite(target) == InviteKind::Request;
             Ok(())
         })
     }
@@ -733,6 +755,22 @@ pub unsafe extern "C" fn yakvc_join_group(
             let id = GroupId::from_hex(hex)
                 .ok_or_else(|| FfiError::invalid("id is not 64 hex characters"))?;
             e.engine.join_group(id).map_err(group_error)
+        })
+    }
+}
+
+/// Starts a group with only us in it yet, public (anyone may join it) or
+/// private, leaving any other.
+///
+/// # Safety
+/// `engine` must be live.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn yakvc_create_group(engine: *mut YakVcEngine, public_: bool) -> i32 {
+    // SAFETY: the caller guarantees `engine` is live.
+    unsafe {
+        with_engine(engine, |e| {
+            e.engine.create_group(public_);
+            Ok(())
         })
     }
 }

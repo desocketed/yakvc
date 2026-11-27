@@ -44,6 +44,20 @@ class RoomTest {
 		assertEquals(0, room.echo());
 	}
 
+	/** The default furnishing deadens every room; the Nether's tuning lets a netherrack hall ring and echo, briefly. */
+	@Test
+	void theNetherRingsAndEchoesWhereTheOverworldStaysDead() {
+		double netherrack = 0.05;
+		Room overworld = box(19, 11, 19, netherrack, SoundTuning.DEFAULT);
+		Room nether = box(19, 11, 19, netherrack, SoundTuning.DEFAULT.forNether());
+		assertEquals(0, overworld.echo());
+		assertTrue(overworld.decay() < 0.3, "overworld decay " + overworld.decay());
+		assertTrue(nether.echo() > 0.02, "nether echo " + nether.echo());
+		assertBetween(1, 3, nether.decay());
+		// Even the cavern rings at most 3 s.
+		assertTrue(box(48, 24, 48, netherrack, SoundTuning.DEFAULT.forNether()).decay() <= 3);
+	}
+
 	@Test
 	void softWallsRingShorter() {
 		assertTrue(box(19, 11, 19, 0.5).decay() < box(19, 11, 19, STONE).decay() / 2);
@@ -82,7 +96,11 @@ class RoomTest {
 	}
 
 	private static Room box(double width, double height, double depth, double absorption) {
-		return Room.of(rays(width, height, depth, absorption), TUNING);
+		return box(width, height, depth, absorption, TUNING);
+	}
+
+	private static Room box(double width, double height, double depth, double absorption, SoundTuning tuning) {
+		return Room.of(rays(width, height, depth, absorption), tuning);
 	}
 
 	/** Rays from eye height in the middle of a closed box whose walls all absorb {@code absorption}. */

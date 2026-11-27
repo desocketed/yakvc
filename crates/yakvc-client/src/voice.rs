@@ -34,10 +34,10 @@ use crate::net::{ControlRecv, Peer, PeerLink, Protocol};
 use crate::world::{Input, Vec3, World};
 
 use self::group::Told;
-pub use self::group::{GroupError, GroupInfo};
+pub use self::group::{GroupError, GroupInfo, InviteKind};
 pub(crate) use self::rules::VoiceState;
 use self::rules::{Heard, plan_send};
-pub use self::sink::{VoiceFrame, VoiceSink};
+pub use self::sink::{Placement, VoiceFrame, VoiceSink};
 
 /// How often the audio thread wakes to move frames.
 const AUDIO_TICK: Duration = Duration::from_millis(5);
@@ -230,9 +230,10 @@ impl Voice {
 
     /// Invites `target` to our group, or while we are in none, to a new
     /// group we join once it accepts. Its peer task delivers the invite.
-    pub(crate) fn invite(&self, target: Uuid) {
+    pub(crate) fn invite(&self, target: Uuid) -> InviteKind {
+        let announced = self.shared.announced();
         self.shared
-            .update(|state, _| state.invite(target, Instant::now()));
+            .update(|state, _| state.invite_or_request(target, &announced, Instant::now()))
     }
 
     /// Joins the group `from` invited us to, leaving any other.
@@ -246,6 +247,10 @@ impl Voice {
         let announced = self.shared.announced();
         self.shared
             .update(|state, _| state.join_public(id, &announced))
+    }
+
+    pub(crate) fn create_group(&self, public: bool) {
+        self.shared.update(|state, _| state.create_group(public));
     }
 
     pub(crate) fn leave_group(&self) {
@@ -574,7 +579,15 @@ async fn read_control(
 ) {
     let uuid = peer.uuid();
     let link_id = peer.link_id();
+    let mut skipped = false;
     while let Some(msg) = control.recv::<VoiceMsg>().await {
+        // A newer peer may send messages we don't know: skip them.
+        let Some(msg) = msg else {
+            if !std::mem::replace(&mut skipped, true) {
+                tracing::debug!(%uuid, "skipping control messages that don't decode");
+            }
+            continue;
+        };
         // An oversize label is as malformed as a message that won't decode,
         // and a peer sending one is off the protocol.
         if !group::labels_fit(&msg) {
@@ -597,6 +610,9 @@ async fn read_control(
             }),
             VoiceMsg::GroupState(state) => shared.update(|voice, events| {
                 voice.receive_group_state(uuid, state, events);
+            }),
+            VoiceMsg::InviteRequest => shared.update(|voice, events| {
+                voice.receive_invite_request(uuid, Instant::now(), events);
             }),
         }
     }
@@ -1065,20 +1081,25 @@ impl AudioLoop {
                     // The sink does its own acoustics, so it gets the frame
                     // as decoded.
                     Some(sink) => {
-                        let (positioned, heard_from, occlusion) = match playback.heard {
+                        let (placement, heard_from, occlusion) = match playback.heard {
                             Heard::Positioned(player) => {
-                                (true, player.heard_from, player.occlusion)
+                                (Placement::Positioned, player.heard_from, player.occlusion)
                             }
-                            Heard::Centred => (false, Vec3::default(), 0.0),
+                            Heard::Directional(eye) => (Placement::Directional, eye, 0.0),
+                            Heard::Centred => (Placement::Centred, Vec3::default(), 0.0),
                         };
                         sink.frame(&VoiceFrame {
                             uuid,
                             pcm: &frame,
                             tick: self.plays,
                             volume: playback.volume,
-                            range: if positioned { state.voice_range } else { 0.0 },
+                            range: if placement == Placement::Positioned {
+                                state.voice_range
+                            } else {
+                                0.0
+                            },
                             group: remote.group,
-                            positioned,
+                            placement,
                             heard_from,
                             occlusion,
                         });
@@ -1326,6 +1347,22 @@ mod tests {
             "{reason:?}"
         );
         assert!(shared.announced().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_message_that_does_not_decode_is_skipped() {
+        let (shared, mut bob, _served) = linked_to_probe().await;
+        // A variant far beyond ours, as a newer peer might send.
+        bob.control_send.send(&200u32).await.unwrap();
+        let group = announcement("Miners");
+        bob.control_send
+            .send(&VoiceMsg::Group(Some(group.clone())))
+            .await
+            .unwrap();
+        eventually("alice still reads the stream", || {
+            shared.announced() == [(uuid(2), group.clone())]
+        })
+        .await;
     }
 
     #[tokio::test]

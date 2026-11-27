@@ -376,6 +376,7 @@ fn print_event(event: &Event) {
         | Event::MicLevel(_)
         | Event::JoinRequest { .. }
         | Event::Invite { .. }
+        | Event::InviteRequest { .. }
         | Event::GroupNotice { .. } => {}
     }
 }

@@ -57,15 +57,27 @@ pub struct VoiceFrame<'a> {
     pub range: f32,
     /// Group voice.
     pub group: bool,
-    /// Heard from the speaker's place in the world. Group voice and direct
-    /// calls aren't: they play centred.
-    pub positioned: bool,
+    /// How the voice is placed.
+    pub placement: Placement,
     /// Where the speakers would place the voice: the speaker's eye, or the
     /// opening the voice comes round through, as far away as its way is long.
-    /// Zero when not positioned. A renderer with acoustics of its own can
+    /// For [`Placement::Directional`], the speaker's eye; zero when
+    /// [`Placement::Centred`]. A renderer with acoustics of its own can
     /// ignore it, and the occlusion.
     pub heard_from: Vec3,
     /// How much of the way the speakers would block, from 0 (open air) to 1.
-    /// Zero when not positioned.
+    /// Zero unless [`Placement::Positioned`].
     pub occlusion: f32,
+}
+
+/// How a [`VoiceFrame`] is placed around the listener.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Placement {
+    /// Centred: a direct call, or group voice from a mate who isn't tracked.
+    Centred,
+    /// From the direction of `heard_from` but at full volume, dry and
+    /// unoccluded: group voice from a tracked mate.
+    Directional,
+    /// From the speaker's place in the world, with distance and occlusion.
+    Positioned,
 }

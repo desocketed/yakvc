@@ -3,6 +3,7 @@ package io.github.desocketed.yakvc.natives;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
@@ -28,5 +29,15 @@ class VoiceGroupTest {
 	@Test
 	void parsesAnEmptyList() {
 		assertEquals(List.of(), VoiceGroup.parse("[]"));
+	}
+
+	@Test
+	void matesAreTheOthersInOurGroupOnly() {
+		VoiceGroup mine = new VoiceGroup("a".repeat(64), "", false, true, List.of(A, B));
+		VoiceGroup other = new VoiceGroup("b".repeat(64), "", true, false, List.of(A, B));
+		assertEquals(Set.of(B), VoiceGroup.mates(List.of(mine, other), A));
+		// Not in a group: a public group's members are no mates.
+		assertEquals(Set.of(), VoiceGroup.mates(List.of(other), A));
+		assertEquals(Set.of(), VoiceGroup.mates(List.of(), A));
 	}
 }

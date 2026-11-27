@@ -44,6 +44,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.GameType;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 import org.jspecify.annotations.Nullable;
 
@@ -149,6 +150,7 @@ public final class GameStateFeeder {
 	private final Map<UUID, EngineEvent.PeerState> peers = new HashMap<>();
 	private final Set<UUID> verifiedPeers = new HashSet<>();
 	private final Set<UUID> talking = new LinkedHashSet<>();
+	private Set<UUID> groupMates = Set.of();
 	/** Peers on another Yak VC version we already told the player about this server session. */
 	private final Set<UUID> versionWarned = new HashSet<>();
 	private int errorEvents;
@@ -201,6 +203,13 @@ public final class GameStateFeeder {
 		step(this::drainEvents);
 		step(this::answerJoins);
 		step(this::refreshStats);
+		step(this::refreshGroupMates);
+	}
+
+	/** Polled each tick, so every view that shows players can mark our group mates without asking the engine. */
+	private void refreshGroupMates() {
+		Identity self = identity;
+		groupMates = self == null ? Set.of() : VoiceGroup.mates(groups(), self.uuid());
 	}
 
 	/** A dev world is big: with dev.fly_speed set, creative flight goes that fast. Set every tick, as the server resets it. */
@@ -243,6 +252,7 @@ public final class GameStateFeeder {
 		LocalPlayer player = minecraft.player;
 		boolean active = inWorld(session, minecraft);
 		if (keys.groupPressed() && active) step(() -> groupChat.groupKeyPressed(minecraft));
+		step(() -> groupChat.tick(minecraft));
 
 		Set<UUID> players = active ? new HashSet<>(session.connection.getOnlinePlayerIds()) : Set.of();
 		refreshBlocked(minecraft, players);
@@ -403,9 +413,17 @@ public final class GameStateFeeder {
 		return groups.isEmpty() || !groups.getFirst().mine() ? null : groups.getFirst();
 	}
 
-	/** Invites a player to our group, or to a new one if we are in none. False if the engine is stopped. */
-	public boolean invite(UUID target) {
-		return groupCall(() -> bridge.invite(engine, target));
+	/** What {@link #invite} sent. */
+	public enum InviteSent { NOTHING, INVITE, REQUEST }
+
+	/**
+	 * Invites a player to our group, or to a new one if we are in none; asks them to invite us instead when they are
+	 * in a group we aren't in. Nothing if the engine is stopped.
+	 */
+	public InviteSent invite(UUID target) {
+		boolean[] requested = {false};
+		if (!groupCall(() -> requested[0] = bridge.invite(engine, target))) return InviteSent.NOTHING;
+		return requested[0] ? InviteSent.REQUEST : InviteSent.INVITE;
 	}
 
 	/** Joins the group of {@code from}'s invite. False if there was none in the last two minutes. */
@@ -416,6 +434,11 @@ public final class GameStateFeeder {
 	/** Joins a public group from {@link #groups}. False if nobody announces it any more. */
 	public boolean joinGroup(String id) {
 		return groupCall(() -> bridge.joinGroup(engine, id));
+	}
+
+	/** Starts a group with only us in it yet, leaving any other. False if the engine is stopped. */
+	public boolean createGroup(boolean isPublic) {
+		return groupCall(() -> bridge.createGroup(engine, isPublic));
 	}
 
 	public void leaveGroup() {
@@ -527,7 +550,8 @@ public final class GameStateFeeder {
 		// Below Full the rooms and far echoes aren't cast at all: open air and no echoes leave the engine's mix dry.
 		echoes = List.of();
 		if (spatialAudio == SpatialAudio.FULL) {
-			room = room.towards(Room.around(minecraft.level, eye, tuning));
+			SoundTuning roomTuning = minecraft.level.dimension() == Level.NETHER ? tuning.forNether() : tuning;
+			room = room.towards(Room.around(minecraft.level, eye, roomTuning));
 			echoes = farEchoes.update(minecraft.level, eye, tuning);
 		} else {
 			room = Room.OPEN_AIR;
@@ -688,6 +712,10 @@ public final class GameStateFeeder {
 				YakVcClient.LOGGER.info("Group invite from {} {}", invite.from(), name(invite.from()));
 				groupChat.invited(invite.from());
 			}
+			case EngineEvent.InviteRequest request -> {
+				YakVcClient.LOGGER.info("Invite request from {} {}", request.from(), name(request.from()));
+				groupChat.inviteRequested(request.from());
+			}
 			case EngineEvent.GroupNotice notice -> {
 				YakVcClient.LOGGER.info("Group {}: {} {}, by {}", notice.kind(), notice.uuid(), name(notice.uuid()),
 						notice.by());
@@ -778,6 +806,11 @@ public final class GameStateFeeder {
 	/** Whether a peer proved its Mojang account. */
 	public boolean peerVerified(UUID uuid) {
 		return verifiedPeers.contains(uuid);
+	}
+
+	/** The other members of our voice group, as of the last tick; empty in no group. */
+	public Set<UUID> groupMates() {
+		return groupMates;
 	}
 
 	/** Who is talking right now, the local player included. */

@@ -27,7 +27,7 @@ class SettingsTest {
 		assertEquals(Settings.DEFAULT, Settings.load(dir));
 		JsonObject written = JsonParser.parseString(Files.readString(dir.resolve(Settings.FILE_NAME))).getAsJsonObject();
 		assertEquals(256, written.get("voice_range").getAsDouble());
-		assertEquals("simple", written.get("spatial_audio").getAsString());
+		assertEquals("full", written.get("spatial_audio").getAsString());
 		assertEquals(24_000, written.getAsJsonObject("audio").get("bitrate").getAsInt());
 		assertTrue(written.getAsJsonObject("audio").get("input_device").isJsonNull(), "unset keys are shown");
 		assertEquals(0.35, written.getAsJsonObject("acoustics").get("reverb_level").getAsDouble());

@@ -24,7 +24,7 @@
  * 12: `yakvc_set_voice_sink`.
  * 15: `yakvc_push_world` takes the far echoes after the room.
  */
-#define YAKVC_ABI_VERSION 15
+#define YAKVC_ABI_VERSION 17
 
 #define YAKVC_OK 0
 
@@ -95,6 +95,8 @@
 #define YAKVC_EVENT_INVITE 7
 
 #define YAKVC_EVENT_GROUP_NOTICE 8
+
+#define YAKVC_EVENT_INVITE_REQUEST 9
 
 /**
  * `uuid` became a group mate.
@@ -181,6 +183,14 @@
 #define YAKVC_VOICE_SELF (1 << 2)
 
 /**
+ * A `YAKVC_VOICE_UNPOSITIONED` frame that still has a direction: group
+ * voice from a tracked mate, to be panned towards `heard_from` (the mate's
+ * eye) at full volume, with no distance falloff, occlusion or reverb. A
+ * sink that ignores this flag plays it centred.
+ */
+#define YAKVC_VOICE_DIRECTIONAL (1 << 3)
+
+/**
  * Opaque engine handle.
  */
 typedef struct YakVcEngine YakVcEngine;
@@ -218,7 +228,8 @@ typedef struct YakVcVoiceFrame {
   uint32_t flags;
   /**
    * Where the speakers would place the voice, `x, y, z`: the speaker's
-   * eye, or the opening it comes round through. Zero when unpositioned.
+   * eye, or the opening it comes round through. Zero when unpositioned,
+   * unless `YAKVC_VOICE_DIRECTIONAL`.
    */
   double heard_from[3];
   /**
@@ -405,10 +416,15 @@ int32_t yakvc_complete_join(struct YakVcEngine *engine, uint32_t request_id, boo
  * proximity voice. Sent over the peer's link if there is one; the invite
  * lasts two minutes.
  *
+ * When `target` is in a group we aren't in, asks it to invite us instead
+ * (`YAKVC_EVENT_INVITE_REQUEST` on its side), unless it asked us first, and
+ * joins its invite at once. `*requested` says which was sent.
+ *
  * # Safety
- * `engine` must be live; `target` must point to 16 bytes.
+ * `engine` must be live; `target` must point to 16 bytes; `requested`
+ * must be writable.
  */
-int32_t yakvc_invite(struct YakVcEngine *engine, const uint8_t *target);
+int32_t yakvc_invite(struct YakVcEngine *engine, const uint8_t *target, bool *requested);
 
 /**
  * Joins the group of the last invite (`YAKVC_EVENT_INVITE`) from `from`,
@@ -429,6 +445,15 @@ int32_t yakvc_accept_invite(struct YakVcEngine *engine, const uint8_t *from);
  * `engine` must be live; `id_hex` must be readable for `len` bytes.
  */
 int32_t yakvc_join_group(struct YakVcEngine *engine, const uint8_t *id_hex, size_t len);
+
+/**
+ * Starts a group with only us in it yet, public (anyone may join it) or
+ * private, leaving any other.
+ *
+ * # Safety
+ * `engine` must be live.
+ */
+int32_t yakvc_create_group(struct YakVcEngine *engine, bool public_);
 
 /**
  * # Safety

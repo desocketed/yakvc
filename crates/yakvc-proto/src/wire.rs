@@ -47,12 +47,35 @@ pub async fn read_msg_max<M: DeserializeOwned>(
     stream: &mut (impl AsyncRead + Unpin),
     max_len: usize,
 ) -> Result<Option<M>, WireError> {
+    let Some(body) = read_frame_max(stream, max_len).await? else {
+        return Ok(None);
+    };
+    Ok(Some(decode(&body)?))
+}
+
+/// Decodes a frame from [`read_frame`].
+pub fn decode<M: DeserializeOwned>(body: &[u8]) -> Result<M, WireError> {
+    Ok(postcard::from_bytes(body)?)
+}
+
+/// The next frame's bytes, undecoded, for a reader that skips a message it
+/// doesn't know rather than giving up on the stream. `None` at a clean end.
+pub async fn read_frame(
+    stream: &mut (impl AsyncRead + Unpin),
+) -> Result<Option<Vec<u8>>, WireError> {
+    read_frame_max(stream, MAX_MESSAGE_LEN).await
+}
+
+async fn read_frame_max(
+    stream: &mut (impl AsyncRead + Unpin),
+    max_len: usize,
+) -> Result<Option<Vec<u8>>, WireError> {
     let Some(len) = read_len(stream, max_len.min(MAX_MESSAGE_LEN)).await? else {
         return Ok(None);
     };
     let mut body = vec![0; len];
     stream.read_exact(&mut body).await?;
-    Ok(Some(postcard::from_bytes(&body)?))
+    Ok(Some(body))
 }
 
 /// LEB128, the same varint postcard uses inside messages.

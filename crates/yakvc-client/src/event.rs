@@ -34,6 +34,11 @@ pub enum Event {
     Invite {
         from: Uuid,
     },
+    /// `from` asked us to invite it to our group. Valid for two minutes;
+    /// [`Engine::invite`](crate::Engine::invite) answers it.
+    InviteRequest {
+        from: Uuid,
+    },
     /// Something happened in our group. See [`GroupNoticeKind`] for what
     /// `uuid` and `by` mean; either is nil when it doesn't apply.
     GroupNotice {

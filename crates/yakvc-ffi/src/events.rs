@@ -127,6 +127,10 @@ pub(crate) fn encode(event: &Event) -> Vec<u8> {
             payload.extend(from.as_bytes());
             YAKVC_EVENT_INVITE
         }
+        Event::InviteRequest { from } => {
+            payload.extend(from.as_bytes());
+            YAKVC_EVENT_INVITE_REQUEST
+        }
         Event::GroupNotice { kind, uuid, by } => {
             payload.push(match kind {
                 GroupNoticeKind::Joined => YAKVC_GROUP_JOINED,
@@ -266,6 +270,11 @@ mod tests {
     fn encodes_group_events() {
         let invite = Event::Invite { from: UUID };
         assert_eq!(encode(&invite), record(YAKVC_EVENT_INVITE, &UUID_BYTES));
+        let request = Event::InviteRequest { from: UUID };
+        assert_eq!(
+            encode(&request),
+            record(YAKVC_EVENT_INVITE_REQUEST, &UUID_BYTES)
+        );
 
         let notice = Event::GroupNotice {
             kind: GroupNoticeKind::MadePublic,

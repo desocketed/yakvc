@@ -34,7 +34,7 @@ import java.util.UUID;
  */
 public final class NativeBridge {
 	/** Must equal {@code YAKVC_ABI_VERSION} in {@code yakvc.h}. */
-	public static final int ABI_VERSION = 15;
+	public static final int ABI_VERSION = 17;
 	/** Doubles in {@link #pushWorld}'s listener: the pose, the room and four far echoes. */
 	public static final int LISTENER_LENGTH = 34;
 
@@ -70,6 +70,7 @@ public final class NativeBridge {
 	private final MethodHandle invite;
 	private final MethodHandle acceptInvite;
 	private final MethodHandle joinGroup;
+	private final MethodHandle createGroup;
 	private final MethodHandle leaveGroup;
 	private final MethodHandle setGroupPublic;
 	private final MethodHandle setGroupLabel;
@@ -109,11 +110,13 @@ public final class NativeBridge {
 				FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, SIZE_T, ADDRESS));
 		stats = linker.downcallHandle(find(library, "yakvc_stats"),
 				FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, SIZE_T, ADDRESS));
-		invite = linker.downcallHandle(find(library, "yakvc_invite"), FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+		invite = linker.downcallHandle(find(library, "yakvc_invite"), FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
 		acceptInvite = linker.downcallHandle(find(library, "yakvc_accept_invite"),
 				FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
 		joinGroup = linker.downcallHandle(find(library, "yakvc_join_group"),
 				FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, SIZE_T));
+		createGroup = linker.downcallHandle(find(library, "yakvc_create_group"),
+				FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_BOOLEAN));
 		leaveGroup = linker.downcallHandle(find(library, "yakvc_leave_group"), FunctionDescriptor.of(JAVA_INT, ADDRESS));
 		setGroupPublic = linker.downcallHandle(find(library, "yakvc_set_group_public"),
 				FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_BOOLEAN));
@@ -256,11 +259,14 @@ public final class NativeBridge {
 
 	/**
 	 * Invites {@code target} to our group. Outside a group the invite is to a new one, which we join only once they
-	 * accept.
+	 * accept. When {@code target} is in a group we aren't in, asks them to invite us instead, unless they asked us
+	 * first. True for a request.
 	 */
-	public void invite(MemorySegment engine, UUID target) {
+	public boolean invite(MemorySegment engine, UUID target) {
 		try (Arena arena = Arena.ofConfined()) {
-			check((int) invoke(invite, engine, arena.allocateFrom(JAVA_BYTE, uuidBytes(List.of(target)))));
+			MemorySegment requested = arena.allocate(JAVA_BOOLEAN);
+			check((int) invoke(invite, engine, arena.allocateFrom(JAVA_BYTE, uuidBytes(List.of(target))), requested));
+			return requested.get(JAVA_BOOLEAN, 0);
 		}
 	}
 
@@ -280,6 +286,11 @@ public final class NativeBridge {
 			MemorySegment bytes = utf8(arena, id);
 			check((int) invoke(joinGroup, engine, bytes, bytes.byteSize()));
 		}
+	}
+
+	/** Starts a group with only us in it yet, public (anyone may join) or private, leaving any other. */
+	public void createGroup(MemorySegment engine, boolean isPublic) {
+		check((int) invoke(createGroup, engine, isPublic));
 	}
 
 	public void leaveGroup(MemorySegment engine) {

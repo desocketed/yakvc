@@ -283,6 +283,10 @@ public final class VoiceMenuScreen extends Screen {
 				graphics.text(font, Icons.VERIFIED, iconX, y + 3, 0xFFFFFFFF, false);
 				iconX += font.width(Icons.VERIFIED) + 3;
 			}
+			if (feeder.groupMates().contains(uuid)) {
+				graphics.text(font, Icons.GROUP, iconX, y + 3, 0xFFFFFFFF, false);
+				iconX += font.width(Icons.GROUP) + 3;
+			}
 			if (feeder.talking().contains(uuid)) {
 				graphics.text(font, Icons.SPEAKER, iconX, y + 3, 0xFFFFFFFF, false);
 			}

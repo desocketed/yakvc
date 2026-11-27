@@ -66,6 +66,7 @@ public final class VoiceHud implements HudElement {
 			if (uuid.equals(minecraft.player.getUUID())) continue;
 			y += font.lineHeight + 1;
 			int nameX = icon(graphics, font, Icons.SPEAKER, 4, y, WHITE);
+			if (feeder.groupMates().contains(uuid)) nameX = icon(graphics, font, Icons.GROUP, nameX, y, WHITE);
 			graphics.text(font, feeder.name(uuid), nameX, y, WHITE, true);
 		}
 	}
