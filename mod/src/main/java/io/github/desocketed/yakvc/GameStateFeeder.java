@@ -9,6 +9,7 @@ import io.github.desocketed.yakvc.config.PlayerVolumes;
 import io.github.desocketed.yakvc.config.Settings;
 import io.github.desocketed.yakvc.config.SoundTuning;
 import io.github.desocketed.yakvc.config.SpatialAudio;
+import io.github.desocketed.yakvc.heads.SpeakingHeads;
 import io.github.desocketed.yakvc.input.VoiceKeys;
 import io.github.desocketed.yakvc.natives.EngineEvent;
 import io.github.desocketed.yakvc.natives.NativeBridge;
@@ -179,6 +180,7 @@ public final class GameStateFeeder {
 		this.startedRelayOnly = settings.relayOnly();
 		this.tuning = SoundTuning.of(settings.acoustics());
 		this.spatialAudio = settings.spatialAudio();
+		heads.style(settings.speakingHeadsStyle());
 		this.keys = keys;
 		this.joiner = joiner;
 		this.volumes = volumes;
@@ -332,6 +334,7 @@ public final class GameStateFeeder {
 		settings = changed;
 		tuning = SoundTuning.of(changed.acoustics());
 		spatialAudio = changed.spatialAudio();
+		heads.style(changed.speakingHeadsStyle());
 		ticksUntilBlockedRefresh = 0;
 		return null;
 	}

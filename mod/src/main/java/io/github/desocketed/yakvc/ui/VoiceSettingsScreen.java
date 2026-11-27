@@ -8,6 +8,7 @@ import io.github.desocketed.yakvc.YakVcClient;
 import io.github.desocketed.yakvc.config.Settings;
 import io.github.desocketed.yakvc.config.Settings.Acoustics;
 import io.github.desocketed.yakvc.config.SpatialAudio;
+import io.github.desocketed.yakvc.heads.HeadStyle;
 import io.github.desocketed.yakvc.natives.EngineEvent;
 import java.io.IOException;
 import java.net.URI;
@@ -97,6 +98,9 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	private final OptionInstance<Boolean> friendsOnly;
 	private final OptionInstance<Boolean> checkForUpdates;
 	private final OptionInstance<Boolean> speakingHeads;
+	private final OptionInstance<HeadStyle> headsStyle;
+	/** In tenths. */
+	private final OptionInstance<Integer> headsStrength;
 	private final OptionInstance<Boolean> debugOverlay;
 	/** The account line, which follows the rendezvous state while the screen is open. */
 	private @Nullable MultiLineTextWidget accountText;
@@ -204,6 +208,18 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		speakingHeads = OptionInstance.createBoolean("yakvc.settings.speaking_heads",
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.speaking_heads.tooltip")),
 				initial.speakingHeads(), value -> throttle.changed());
+		headsStyle = new OptionInstance<>("yakvc.settings.speaking_heads_style",
+				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.speaking_heads_style.tooltip")),
+				(caption, value) -> Component.translatable("yakvc.settings.speaking_heads_style." + value.key()),
+				new OptionInstance.Enum<>(List.of(HeadStyle.values()),
+						Codec.STRING.xmap(key -> Objects.requireNonNullElse(HeadStyle.of(key), HeadStyle.NOD), HeadStyle::key)),
+				initial.speakingHeadsStyle(), value -> throttle.changed());
+		headsStrength = new OptionInstance<>("yakvc.settings.speaking_heads_strength",
+				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.speaking_heads_strength.tooltip")),
+				(caption, value) -> Options.genericValueLabel(caption,
+						Component.translatable("yakvc.settings.speaking_heads_strength.value", value / 10.0)),
+				new OptionInstance.IntRange(0, (int) (10 * Settings.MAX_HEADS_STRENGTH)), headsStrength(initial),
+				value -> throttle.changed());
 		// Unlike the settings above, it isn't saved.
 		debugOverlay = OptionInstance.createBoolean("yakvc.settings.debug_overlay",
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.debug_overlay.tooltip")),
@@ -328,6 +344,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		list.addBig(new MicLevelMeter(feeder::micLevelDb, () -> vadThresholdDb.get()));
 		list.addBig(outputDevice);
 		list.addSmall(spatialAudio, speakingHeads);
+		list.addSmall(headsStyle, headsStrength);
 		// Only Full has reverb and echo: the other levels send the engine open air and no echoes.
 		acousticsShown = spatialAudio.get() == SpatialAudio.FULL;
 		if (acousticsShown) list.addSmall(reverbPercent, echoPercent);
@@ -517,6 +534,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 				.withFriendsOnly(friendsOnly.get())
 				.withCheckForUpdates(checkForUpdates.get())
 				.withSpeakingHeads(speakingHeads.get())
+				.withSpeakingHeadsStyle(headsStyle.get())
 				.withSpatialAudio(spatialAudio.get())
 				.withNoiseSuppression(noiseSuppression.get())
 				.withInputDevice(deviceValue(inputDevice.get()))
@@ -524,6 +542,9 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		if (withServer) changed = changed.withServer(serverValue());
 		// Against the capped range, so a saved range past the render distance stays saved unless moved.
 		if (range.get() != Math.round(shownRange(current))) changed = changed.withVoiceRange(range.get());
+		if (headsStrength.get() != headsStrength(current)) {
+			changed = changed.withSpeakingHeadsStrength(headsStrength.get() / 10.0);
+		}
 		if (bitrateKbps.get() != current.audio().bitrate() / 1000) changed = changed.withBitrate(bitrateKbps.get() * 1000);
 		if (inputGainPercent.get() != inputGainPercent(current)) {
 			changed = changed.withInputGain(inputGainPercent.get() / 100.0);
@@ -555,6 +576,11 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 			VoiceToasts.show(Component.translatable("yakvc.toast.settings_not_saved"));
 		}
 		return true;
+	}
+
+	/** The saved head strength as the slider shows it, in tenths. */
+	private static int headsStrength(Settings settings) {
+		return (int) Math.round(10 * settings.headsStrength());
 	}
 
 	/** The saved microphone gain as the slider shows it, so an untouched slider never rewrites it. */
