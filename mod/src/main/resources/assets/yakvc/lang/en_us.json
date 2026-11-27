@@ -25,6 +25,8 @@
 	"yakvc.menu.mute": "Mute",
 	"yakvc.menu.unmute": "Unmute",
 	"yakvc.menu.volume": "Volume: %s%%",
+	"yakvc.menu.invite": "Invite",
+	"yakvc.menu.invite.tooltip": "Invite them to your group, or accept their invite.",
 	"yakvc.menu.friend": "Friend",
 	"yakvc.menu.friend.tooltip": "Friends are who Friends Only and Group Invites from friends allow, in the settings.",
 	"yakvc.menu.peer.none": "No voice",
@@ -59,6 +61,7 @@
 	"yakvc.groups.error.label": "Labels are at most 32 characters",
 	"yakvc.groups.error.gone": "That group is gone",
 
+	"yakvc.group.key_unbound": "the Group key (bind it in Controls)",
 	"yakvc.group.no_target": "Look at a player to invite them to a group",
 	"yakvc.group.already_in": "%s is already in your group",
 	"yakvc.group.no_voice": "%s has no voice connection",

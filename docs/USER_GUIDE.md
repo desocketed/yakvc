@@ -40,14 +40,14 @@ The keys are in Options → Controls → Key Binds, under **Yak VC**.
 | Key | Default | What it does |
 | --- | --- | --- |
 | Push to Talk | V | Hold to talk. |
-| Group | B | Look at a player and press it to invite them to a [group](#groups), or to accept their invite. |
+| Group | G | Look at a player and press it to invite them to a [group](#groups), or to accept their invite. |
 | Toggle Mute | not bound | Turns your microphone off and on. |
 | Toggle Deafen | not bound | Stops you hearing anyone. Your microphone still works unless you mute it too. |
-| Open Voice Menu | not bound | Opens the [voice menu](#the-voice-menu), and from there the settings. The pause menu has a button for it too. |
+| Open Voice Menu | B | Opens the [voice menu](#the-voice-menu), and from there the settings. The pause menu has a button for it too. |
 | Toggle Debug Overlay | not bound | Shows or hides the [debug overlay](#the-debug-overlay). |
 | Open Sound Tuning | not bound | Opens [Sound Tuning](#sound-tuning) straight from the game, handy while someone talks. |
 
-Mute, deafen, the voice menu, the debug overlay and sound tuning are unbound so they don't clash with other mods. The settings are always reachable without a key, from **Voice Chat…** in the game's Music & Sounds options (see [Settings](#settings)).
+Mute, deafen, the debug overlay and sound tuning are unbound so they don't clash with other mods. The settings are always reachable without a key, from **Voice Chat…** in the game's Music & Sounds options (see [Settings](#settings)).
 
 ## The HUD
 
@@ -112,7 +112,7 @@ At the bottom: **Mute Mic**, **Deafen**, **Groups…**, **Settings…** and **Do
 
 Players in a group hear each other wherever they are on the server, as if standing next to each other, without direction, and only each other: while you are in a group, players near you who aren't in it don't hear you, and you don't hear them. Push to Talk (or *Voice* activation) works the same as outside a group.
 
-**Making a group.** Look at a player and press **Group** (B). They see in chat that you invited them, for example *Steve invited you to a group. Look at them and press B.* When they look at you and press their Group key within two minutes, you are both in the group. Anyone in a group can invite more players the same way, and accepting an invite leaves the group you were in. A group is made face to face, so the player has to be in view; who may invite you is the **Group Invites** setting.
+**Making a group.** Look at a player and press **Group** (G). They see in chat that you invited them, for example *Steve invited you to a group. Look at them and press G.* When they look at you and press their Group key within two minutes, you are both in the group. The voice menu has an **Invite** button on each player's row that does the same without looking at them. Anyone in a group can invite more players the same way, and accepting an invite leaves the group you were in. A group is made face to face, so the player has to be in view; who may invite you is the **Group Invites** setting.
 
 ![An invite in chat](guide/group-invite.png)
 

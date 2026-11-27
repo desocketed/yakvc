@@ -144,7 +144,7 @@ public final class GroupsScreen extends Screen {
 		if (error != null) return error.copy().withStyle(ChatFormatting.RED);
 		boolean inGroup = !shown.isEmpty() && shown.getFirst().mine();
 		Component status = inGroup ? Component.translatable("yakvc.groups.status.in")
-				: Component.translatable("yakvc.groups.status.none", feeder.keys().group.getTranslatedKeyMessage());
+				: Component.translatable("yakvc.groups.status.none", feeder.keys().groupKeyName());
 		return status.copy().withStyle(ChatFormatting.GRAY);
 	}
 

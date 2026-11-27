@@ -38,7 +38,7 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * The voice menu: voice status, mute and deafen, every other player on the server with their voice connection, a
- * friend mark, a volume slider and a mute button, saved by UUID, and the way to the settings screen.
+ * an invite to our group, a friend mark, a volume slider and a mute button, saved by UUID, and the way to the settings screen.
  */
 public final class VoiceMenuScreen extends Screen {
 	private static final int ROW_HEIGHT = 28;
@@ -249,6 +249,7 @@ public final class VoiceMenuScreen extends Screen {
 		private final VolumeSlider volume;
 		private final Button mute;
 		private final Checkbox friend;
+		private final Button invite;
 
 		PlayerRow(UUID uuid) {
 			this.uuid = uuid;
@@ -265,6 +266,10 @@ public final class VoiceMenuScreen extends Screen {
 					.tooltip(Tooltip.create(Component.translatable("yakvc.menu.friend.tooltip")))
 					.onValueChange((box, on) -> volumes.set(uuid, volumes.get(uuid).withFriend(on)))
 					.build();
+			invite = Button.builder(Component.translatable("yakvc.menu.invite"),
+					button -> feeder.groupChat().inviteOrAccept(minecraft.player, uuid))
+					.tooltip(Tooltip.create(Component.translatable("yakvc.menu.invite.tooltip")))
+					.width(44).build();
 		}
 
 		@Override
@@ -300,11 +305,14 @@ public final class VoiceMenuScreen extends Screen {
 			mute.setPosition(getContentRight() - mute.getWidth(), y + 2);
 			volume.setPosition(mute.getX() - 4 - volume.getWidth(), y + 2);
 			friend.setPosition(volume.getX() - 4 - friend.getWidth(), y + 2);
+			invite.setPosition(friend.getX() - 4 - invite.getWidth(), y + 2);
+			invite.active = !feeder.blocked(uuid) && !feeder.groupMates().contains(uuid);
 			volume.active = !feeder.blocked(uuid);
 			mute.active = !feeder.blocked(uuid);
 			volume.extractRenderState(graphics, mouseX, mouseY, a);
 			mute.extractRenderState(graphics, mouseX, mouseY, a);
 			friend.extractRenderState(graphics, mouseX, mouseY, a);
+			invite.extractRenderState(graphics, mouseX, mouseY, a);
 		}
 
 		private Component connection() {
@@ -316,12 +324,12 @@ public final class VoiceMenuScreen extends Screen {
 
 		@Override
 		public List<? extends GuiEventListener> children() {
-			return List.of(friend, volume, mute);
+			return List.of(invite, friend, volume, mute);
 		}
 
 		@Override
 		public List<? extends NarratableEntry> narratables() {
-			return List.of(friend, volume, mute);
+			return List.of(invite, friend, volume, mute);
 		}
 	}
 

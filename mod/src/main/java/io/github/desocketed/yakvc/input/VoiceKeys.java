@@ -3,6 +3,7 @@ package io.github.desocketed.yakvc.input;
 import com.mojang.blaze3d.platform.InputConstants;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.minecraft.client.KeyMapping;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 
 /**
@@ -43,13 +44,13 @@ public final class VoiceKeys {
 				KeyMappingHelper.registerKeyMapping(
 						new KeyMapping("key.yakvc.push_to_talk", InputConstants.KEY_V, category)),
 				KeyMappingHelper.registerKeyMapping(
-						new KeyMapping("key.yakvc.group", InputConstants.KEY_B, category)),
+						new KeyMapping("key.yakvc.group", InputConstants.KEY_G, category)),
 				KeyMappingHelper.registerKeyMapping(
 						new KeyMapping("key.yakvc.mute", InputConstants.UNKNOWN.getValue(), category)),
 				KeyMappingHelper.registerKeyMapping(
 						new KeyMapping("key.yakvc.deafen", InputConstants.UNKNOWN.getValue(), category)),
 				KeyMappingHelper.registerKeyMapping(
-						new KeyMapping("key.yakvc.open_menu", InputConstants.UNKNOWN.getValue(), category)),
+						new KeyMapping("key.yakvc.open_menu", InputConstants.KEY_B, category)),
 				KeyMappingHelper.registerKeyMapping(
 						new KeyMapping("key.yakvc.debug_overlay", InputConstants.UNKNOWN.getValue(), category)),
 				KeyMappingHelper.registerKeyMapping(
@@ -107,5 +108,10 @@ public final class VoiceKeys {
 
 	public void setDeafened(boolean deafened) {
 		this.deafened = deafened;
+	}
+
+	/** The Group key's name for chat and status lines, or a hint to bind it if the player unbound it. */
+	public Component groupKeyName() {
+		return group.isUnbound() ? Component.translatable("yakvc.group.key_unbound") : group.getTranslatedKeyMessage();
 	}
 }
