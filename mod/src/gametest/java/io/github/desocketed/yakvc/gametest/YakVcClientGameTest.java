@@ -544,7 +544,7 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 
 	/**
 	 * The remote player invites us and the Group key, looking at them, accepts; they label the group, which the groups
-	 * screen shows; then they leave it.
+	 * screen shows; then they leave it. Then the voice menu's Invite button invites them and they accept.
 	 */
 	private static void checkGroups(ClientGameTestContext context, GameStateFeeder feeder, RemoteVoice remote,
 			UUID me) {
@@ -597,6 +597,21 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		context.runOnClient(mc -> {
 			feeder.leaveGroup();
 			mc.player.setYRot(0);
+			mc.gui.hud.getChat().clearMessages(true);
+			mc.gui.toastManager().clear();
+		});
+		context.waitFor(mc -> feeder.myGroup() == null);
+
+		// The voice menu's Invite button sends the same invite, with nobody in view.
+		context.setScreen(() -> new VoiceMenuScreen(null, feeder));
+		String invite = Component.translatable("yakvc.menu.invite").getString();
+		pressNestedButton(context, "yakvc.menu.invite", invite::equals);
+		context.waitFor(mc -> me.equals(remote.invitedBy));
+		remote.bridge.acceptInvite(remote.engine, me);
+		context.waitFor(mc -> inGroupWith(feeder, REMOTE));
+		context.setScreen(() -> null);
+		context.runOnClient(mc -> {
+			feeder.leaveGroup();
 			mc.gui.hud.getChat().clearMessages(true);
 			mc.gui.toastManager().clear();
 		});

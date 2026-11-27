@@ -25,6 +25,8 @@
 	"yakvc.menu.mute": "Mute",
 	"yakvc.menu.unmute": "Unmute",
 	"yakvc.menu.volume": "Volume: %s%%",
+	"yakvc.menu.invite": "Invite",
+	"yakvc.menu.invite.tooltip": "Invite them to your group, or accept their invite.",
 	"yakvc.menu.friend": "Friend",
 	"yakvc.menu.friend.tooltip": "Friends are who Friends Only and Group Invites from friends allow, in the settings.",
 	"yakvc.menu.peer.none": "No voice",

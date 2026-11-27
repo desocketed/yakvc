@@ -83,6 +83,14 @@ public final class GroupChat {
 			player.sendOverlayMessage(Component.translatable("yakvc.group.no_target"));
 			return;
 		}
+		inviteOrAccept(player, target);
+	}
+
+	/**
+	 * Accepts {@code target}'s invite if they sent one, and otherwise invites them, or asks them for an invite when they
+	 * are in a group we aren't in. The Group key and the voice menu's Invite button both come here.
+	 */
+	public void inviteOrAccept(LocalPlayer player, UUID target) {
 		String name = feeder.name(target);
 		VoiceGroup mine = feeder.myGroup();
 		if (mine != null && mine.members().contains(target)) {

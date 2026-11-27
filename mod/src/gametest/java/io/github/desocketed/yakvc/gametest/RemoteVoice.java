@@ -23,6 +23,8 @@ final class RemoteVoice implements AutoCloseable {
 	final MemorySegment engine;
 	private final Thread poller;
 	private volatile boolean closed;
+	/** Who last invited the remote player to a group. */
+	volatile UUID invitedBy;
 
 	RemoteVoice(UUID uuid, String name, UUID localPlayer) throws IOException {
 		Path dir = FabricLoader.getInstance().getGameDir().resolve("remote-voice");
@@ -44,6 +46,7 @@ final class RemoteVoice implements AutoCloseable {
 				for (EngineEvent event : EngineEvent.decode(buf, written)) {
 					// No Mojang account: the dev rendezvous gives a dev ticket anyway.
 					if (event instanceof EngineEvent.JoinRequest join) bridge.completeJoin(engine, join.id(), false);
+					if (event instanceof EngineEvent.Invite invite) invitedBy = invite.from();
 				}
 			}
 			try {
