@@ -1,6 +1,5 @@
 package io.github.desocketed.yakvc.ui;
 
-import io.github.desocketed.yakvc.UpdateCheck;
 import io.github.desocketed.yakvc.natives.EngineEvent;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.toasts.SystemToast;
@@ -17,33 +16,15 @@ public final class VoiceToasts {
 	 */
 	public static final SystemToast.SystemToastId ENGINE_ERROR = new SystemToast.SystemToastId(10_000L);
 
-	/**
-	 * Changes in our group, for 5 s. One slot of their own, so they never replace a failure; a newer one replaces an
-	 * older one, because joining a group brings one for every member already in it.
-	 */
-	public static final SystemToast.SystemToastId GROUP = new SystemToast.SystemToastId(5_000L);
-
 	private VoiceToasts() {}
 
-	/** Must run on the client thread. */
-	public static void showGroupNotice(Component message) {
-		SystemToast.addOrUpdate(Minecraft.getInstance().gui.toastManager(), GROUP,
-				Component.translatable("yakvc.toast.group_title"), message);
-	}
-
-	/**
-	 * Why there is no voice with {@code name}, a peer in {@code state}, or null when its version is ours. When the peer
-	 * is newer and the update check found a release, it names that release so the player knows what to get.
-	 */
+	/** Why there is no voice with {@code name}, a peer in {@code state}, or null when its version is ours. */
 	public static @Nullable Component versionMismatch(EngineEvent.@Nullable PeerState state, String name) {
 		if (state == EngineEvent.PeerState.OLDER_VERSION) {
 			return Component.translatable("yakvc.peer.older_version", name);
 		}
 		if (state != EngineEvent.PeerState.NEWER_VERSION) return null;
-		UpdateCheck.Release release = UpdateNotice.newer();
-		return release == null
-				? Component.translatable("yakvc.peer.newer_version", name)
-				: Component.translatable("yakvc.peer.newer_version.update", name, release.version());
+		return Component.translatable("yakvc.peer.newer_version", name);
 	}
 
 	/** Must run on the client thread, after the game has started. */

@@ -13,7 +13,6 @@ import static java.util.stream.Collectors.joining;
 
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -28,10 +27,7 @@ import org.jspecify.annotations.Nullable;
  * @param respectChatRestrictions voice off while the account or launcher disables chat
  * @param muteBlockedPlayers      players blocked in Social Interactions are muted both ways
  * @param verifiedOnly            only talk with players whose account is verified with Mojang
- * @param invites                 who may invite us to a group: {@code "everyone"}, {@code "friends"} or {@code "nobody"}
- * @param setupDone               the voice menu's first-run card was dismissed
- * @param checkForUpdates         ask GitHub for a newer Yak VC at startup
- * @param friendsOnly             only the players marked as friends in the voice menu are heard and sent to
+ * @param invites                 who may invite us to a group: {@code "everyone"} or {@code "nobody"}
  * @param devMode                 accept dev tickets and test audio, for development against a local server
  * @param rendezvous              another voice server than the built-in one
  * @param trustedIssuers          issuers whose tickets are accepted; a {@code rendezvous} needs its issuer listed
@@ -39,12 +35,12 @@ import org.jspecify.annotations.Nullable;
  *                                {@code rendezvous}, and null means the preset or the built-in server
  */
 public record Settings(double voiceRange, SpatialAudio spatialAudio, boolean relayOnly, boolean respectChatRestrictions,
-		boolean muteBlockedPlayers, boolean verifiedOnly, String invites, boolean friendsOnly, boolean setupDone,
-		boolean checkForUpdates, Audio audio, Acoustics acoustics, boolean devMode, Dev dev,
-		@Nullable Rendezvous rendezvous, List<String> trustedIssuers, @Nullable String server) {
+		boolean muteBlockedPlayers, boolean verifiedOnly, String invites, Audio audio, Acoustics acoustics,
+		boolean devMode, Dev dev, @Nullable Rendezvous rendezvous, List<String> trustedIssuers,
+		@Nullable String server) {
 	public static final String FILE_NAME = "settings.json";
 	public static final Settings DEFAULT = new Settings(256, SpatialAudio.FULL, false, true, true, false, "everyone",
-			false, false, true, Audio.DEFAULT, Acoustics.DEFAULT, false, Dev.DEFAULT, null, List.of(), null);
+			Audio.DEFAULT, Acoustics.DEFAULT, false, Dev.DEFAULT, null, List.of(), null);
 	/** Nulls are written too, so the file shows every key, and the JSON keys are the engine's snake case. */
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().serializeNulls()
 			.setFieldNamingPolicy(FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES).create();
@@ -142,17 +138,13 @@ public record Settings(double voiceRange, SpatialAudio spatialAudio, boolean rel
 	 * The settings as the engine takes them ({@code yakvc_create}, {@code yakvc_update_config}): TOML text of the keys
 	 * it reads, with the voice range capped by the render distance ({@code renderChunks}; 0 before the first tick, so
 	 * uncapped). The engine would ignore the mod's own keys, but leaving them out keeps the text to what it checks.
-	 * {@code friends} are the players marked in the voice menu ({@link PlayerVolumes#friends}), which live in
-	 * players.json rather than here.
 	 */
-	public String engineToml(int renderChunks, List<UUID> friends) {
+	public String engineToml(int renderChunks) {
 		StringBuilder toml = new StringBuilder();
 		key(toml, "voice_range", renderChunks == 0 ? voiceRange : effectiveVoiceRange(voiceRange, renderChunks));
 		key(toml, "relay_only", relayOnly);
 		key(toml, "verified_only", verifiedOnly);
 		key(toml, "invites", invites);
-		key(toml, "friends_only", friendsOnly);
-		key(toml, "friends", friends.stream().map(UUID::toString).toList());
 		key(toml, "dev_mode", devMode);
 		key(toml, "trusted_issuers", trustedIssuers);
 		if (server != null) key(toml, "server", server);
@@ -225,95 +217,5 @@ public record Settings(double voiceRange, SpatialAudio spatialAudio, boolean rel
 			}
 		}
 		return out.append('"').toString();
-	}
-
-	public Settings withVoiceRange(double blocks) {
-		return with("", "voice_range", blocks);
-	}
-
-	public Settings withSpatialAudio(SpatialAudio level) {
-		return with("", "spatial_audio", level.key());
-	}
-
-	public Settings withRelayOnly(boolean on) {
-		return with("", "relay_only", on);
-	}
-
-	public Settings withRespectChatRestrictions(boolean on) {
-		return with("", "respect_chat_restrictions", on);
-	}
-
-	public Settings withMuteBlockedPlayers(boolean on) {
-		return with("", "mute_blocked_players", on);
-	}
-
-	public Settings withVerifiedOnly(boolean on) {
-		return with("", "verified_only", on);
-	}
-
-	public Settings withInvites(String from) {
-		return with("", "invites", from);
-	}
-
-	public Settings withFriendsOnly(boolean on) {
-		return with("", "friends_only", on);
-	}
-
-	public Settings withSetupDone(boolean done) {
-		return with("", "setup_done", done);
-	}
-
-	/** The voice server's code, or null for the preset or built-in one. */
-	public Settings withServer(@Nullable String code) {
-		return with("", "server", code);
-	}
-
-	public Settings withCheckForUpdates(boolean on) {
-		return with("", "check_for_updates", on);
-	}
-
-	public Settings withActivation(String activation) {
-		return with("audio", "activation", activation);
-	}
-
-	public Settings withBitrate(int bitsPerSecond) {
-		return with("audio", "bitrate", bitsPerSecond);
-	}
-
-	public Settings withNoiseSuppression(boolean on) {
-		return with("audio", "noise_suppression", on);
-	}
-
-	public Settings withInputGain(double gain) {
-		return with("audio", "input_gain", gain);
-	}
-
-	public Settings withVadThresholdDb(double db) {
-		return with("audio", "vad_threshold_db", db);
-	}
-
-	public Settings withInputDevice(@Nullable String id) {
-		return with("audio", "input_device", id);
-	}
-
-	public Settings withOutputDevice(@Nullable String id) {
-		return with("audio", "output_device", id);
-	}
-
-	/** One {@link Acoustics} value by its key, as the Sound Tuning screen's sliders are named. */
-	public Settings withAcoustic(String key, double value) {
-		return with("acoustics", key, value);
-	}
-
-	/**
-	 * A copy with one value changed, by way of the JSON form: each setting changed by hand would otherwise need a
-	 * constructor call naming all seventeen components. {@code section} is "" for a top-level key.
-	 */
-	private Settings with(String section, String key, @Nullable Object value) {
-		JsonObject json = GSON.toJsonTree(this).getAsJsonObject();
-		JsonObject target = section.isEmpty() ? json : json.getAsJsonObject(section);
-		if (!target.has(key)) throw new IllegalArgumentException("no setting " + key);
-		target.add(key, GSON.toJsonTree(value));
-		return GSON.fromJson(json, Settings.class);
 	}
 }

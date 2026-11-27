@@ -9,11 +9,11 @@ use uuid::Uuid;
 /// Longest group label, in characters.
 pub const MAX_LABEL_CHARS: usize = 32;
 
-/// A group's public id, which the voice menu lists and joins by.
+/// A group's public id, which a group list shows and joins by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct GroupId(pub [u8; 32]);
 
-/// Lowercase hex, as the voice menu shows and passes it back.
+/// Lowercase hex, as a group list shows and passes it back.
 impl std::fmt::Display for GroupId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.iter().try_for_each(|byte| write!(f, "{byte:02x}"))

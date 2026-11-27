@@ -5,7 +5,6 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.mojang.authlib.GameProfile;
-import io.github.desocketed.yakvc.config.PlayerVolumes;
 import io.github.desocketed.yakvc.config.Settings;
 import io.github.desocketed.yakvc.config.SoundTuning;
 import io.github.desocketed.yakvc.config.SpatialAudio;
@@ -16,9 +15,6 @@ import io.github.desocketed.yakvc.natives.VoiceGroup;
 import io.github.desocketed.yakvc.natives.VoiceStats;
 import io.github.desocketed.yakvc.natives.YakVcException;
 import io.github.desocketed.yakvc.ui.EngineErrorToasts;
-import io.github.desocketed.yakvc.ui.GroupChat;
-import io.github.desocketed.yakvc.ui.SoundTuningScreen;
-import io.github.desocketed.yakvc.ui.VoiceMenuScreen;
 import io.github.desocketed.yakvc.ui.VoiceToasts;
 import java.lang.foreign.MemorySegment;
 import java.util.ArrayList;
@@ -50,7 +46,7 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * Feeds the engine from the game on every client tick and drains its events. Owns the engine handle: everything here
- * runs on the client thread, except the device listing ({@link #listDevices}), which has a worker thread of its own.
+ * runs on the client thread.
  */
 public final class GameStateFeeder {
 	/** Fits the largest record: an error message of 65,535 bytes plus its header. */
@@ -87,9 +83,8 @@ public final class GameStateFeeder {
 	private final MemorySegment engine;
 	private final VoiceKeys keys;
 	private final SessionJoiner joiner;
-	private final PlayerVolumes volumes;
 	private final byte[] eventBuffer = new byte[EVENT_BUFFER_BYTES];
-	private Settings settings;
+	private final Settings settings;
 	/** The render distance the engine's voice range was last capped to, 0 before the first tick. */
 	private int rangeRenderChunks;
 
@@ -119,9 +114,9 @@ public final class GameStateFeeder {
 	/** Only with dev_mode: a file of commands to send, for tools steering a dev session. */
 	private final DevCommands devCommands = new DevCommands(FabricLoader.getInstance().getGameDir());
 	/** The mod's half of the {@code acoustics} tuning, read again whenever the settings change. */
-	private SoundTuning tuning;
+	private final SoundTuning tuning;
 	/** How much of the acoustics to work out each tick, read again whenever the settings change. */
-	private SpatialAudio spatialAudio;
+	private final SpatialAudio spatialAudio;
 	/** Each occluded player's way around, if any: see {@link #heard}. */
 	private final Map<UUID, Optional<SoundPath>> detours = new HashMap<>();
 	private static final int DETOUR_TICKS = 10;
@@ -131,15 +126,14 @@ public final class GameStateFeeder {
 	private @Nullable String gameDevice;
 	/** The address of the voice sink the engine was last given; 0 for the speakers. */
 	private long voiceSink;
-	private final Map<UUID, PlayerVolumes.Setting> peerAudio = new HashMap<>();
-	/** The friends list the engine was given last; the menu's Friend toggle changes {@link #volumes}. */
-	private List<UUID> friends;
+	/** Whether each player is muted in the engine, as last sent. */
+	private final Map<UUID, Boolean> peerMuted = new HashMap<>();
 
 	/** Players in the tab list that are blocked in Social Interactions, when {@code mute_blocked_players} is on. */
 	private Set<UUID> blocked = Set.of();
 	private int ticksUntilBlockedRefresh;
 
-	// Shown by the HUD and the voice menu.
+	// Shown by the debug overlay.
 	private EngineEvent.@Nullable RendezvousState rendezvous;
 	/** The rendezvous event's value: ticket expiry (Unix seconds) when registered, retry delay (ms) when retrying. */
 	private long rendezvousValue;
@@ -159,28 +153,20 @@ public final class GameStateFeeder {
 	private long micLevelNanos;
 	/** Whether the debug overlay shows, and its latest snapshot (null until the first refresh). */
 	private boolean debugOverlay;
-	/** {@code relay_only} as the engine started, which is what it uses until a restart: it builds its endpoint once. */
-	private final boolean startedRelayOnly;
 	private @Nullable VoiceStats stats;
 	private int ticksUntilStats;
 	/** Whether the last tick had a server session, to leave our group once it ends. */
 	private boolean hadSession;
-	/** Invites and group changes, told in chat and toasts. */
-	private final GroupChat groupChat = new GroupChat(this);
 
 	public GameStateFeeder(NativeBridge bridge, MemorySegment engine, Settings settings, VoiceKeys keys,
-			SessionJoiner joiner, PlayerVolumes volumes) {
+			SessionJoiner joiner) {
 		this.bridge = bridge;
 		this.engine = engine;
 		this.settings = settings;
-		this.startedRelayOnly = settings.relayOnly();
 		this.tuning = SoundTuning.of(settings.acoustics());
 		this.spatialAudio = settings.spatialAudio();
 		this.keys = keys;
 		this.joiner = joiner;
-		this.volumes = volumes;
-		// The engine was created with this list.
-		this.friends = volumes.friends();
 	}
 
 	public void join(ClientPacketListener connection, Minecraft minecraft) {
@@ -230,12 +216,6 @@ public final class GameStateFeeder {
 		flyFaster(minecraft);
 		if (settings.devMode()) devCommands.tick(minecraft);
 		if (keys.debugOverlayPressed()) setDebugOverlay(!debugOverlay);
-		if (keys.menuPressed() && minecraft.gui.screen() == null) {
-			minecraft.gui.setScreen(new VoiceMenuScreen(null, this));
-		}
-		if (keys.soundTuningPressed() && minecraft.gui.screen() == null) {
-			minecraft.gui.setScreen(new SoundTuningScreen(null, minecraft.options, this));
-		}
 		VoiceSession session = this.session;
 		step(() -> feedIdentity(minecraft, session));
 		if (session != null) session.tick();
@@ -243,14 +223,11 @@ public final class GameStateFeeder {
 		// Groups last one server session.
 		if (session == null && hadSession) {
 			step(this::leaveGroup);
-			groupChat.clear();
 			versionWarned.clear();
 		}
 		hadSession = session != null;
 		LocalPlayer player = minecraft.player;
 		boolean active = inWorld(session, minecraft);
-		if (keys.groupPressed() && active) step(() -> groupChat.groupKeyPressed(minecraft));
-		step(() -> groupChat.tick(minecraft));
 
 		Set<UUID> players = active ? new HashSet<>(session.connection.getOnlinePlayerIds()) : Set.of();
 		refreshBlocked(minecraft, players);
@@ -260,7 +237,6 @@ public final class GameStateFeeder {
 			else clearWorld();
 		});
 		feedPeerAudio(players);
-		step(this::feedFriends);
 		step(() -> feedInput(active ? inputFlags(player) : 0));
 		step(() -> feedVolume(minecraft.options.getFinalSoundSourceVolume(SoundSource.VOICE)));
 		step(() -> feedDevice(minecraft.options.soundDevice().get()));
@@ -275,16 +251,8 @@ public final class GameStateFeeder {
 
 	private void feedRenderDistance(int renderChunks) {
 		if (renderChunks == rangeRenderChunks) return;
-		bridge.updateConfig(engine, settings.engineToml(renderChunks, friends));
+		bridge.updateConfig(engine, settings.engineToml(renderChunks));
 		rangeRenderChunks = renderChunks;
-	}
-
-	/** The friends list is part of the engine's config, so a Friend toggle in the menu is one more config update. */
-	private void feedFriends() {
-		List<UUID> wanted = volumes.friends();
-		if (wanted.equals(friends)) return;
-		bridge.updateConfig(engine, settings.engineToml(rangeRenderChunks, wanted));
-		friends = wanted;
 	}
 
 	/**
@@ -310,88 +278,6 @@ public final class GameStateFeeder {
 			closed = true;
 			bridge.destroy(engine);
 		}
-	}
-
-	/**
-	 * Applies changed settings to the running engine, which checks them. Returns the engine's complaint, or null if it
-	 * took them; only then may they be saved.
-	 */
-	public @Nullable String applySettings(Settings changed) {
-		if (closed) return "the voice engine is stopped";
-		try {
-			bridge.updateConfig(engine, changed.engineToml(rangeRenderChunks, friends));
-		} catch (YakVcException e) {
-			fail(e);
-			return e.getMessage();
-		}
-		settings = changed;
-		tuning = SoundTuning.of(changed.acoustics());
-		spatialAudio = changed.spatialAudio();
-		ticksUntilBlockedRefresh = 0;
-		return null;
-	}
-
-	/** The audio devices as id to name in the system's order. The id goes in the settings, the name is for the player. */
-	public record Devices(Map<String, String> inputs, Map<String, String> outputs) {
-		public static final Devices NONE = new Devices(Map.of(), Map.of());
-
-		static Devices parse(String json) {
-			JsonObject listed = JsonParser.parseString(json).getAsJsonObject();
-			return new Devices(names(listed.getAsJsonArray("inputs")), names(listed.getAsJsonArray("outputs")));
-		}
-
-		private static Map<String, String> names(JsonArray devices) {
-			Map<String, String> names = new LinkedHashMap<>();
-			for (JsonElement device : devices) {
-				JsonObject fields = device.getAsJsonObject();
-				names.put(fields.get("id").getAsString(), fields.get("name").getAsString());
-			}
-			return names;
-		}
-	}
-
-	/**
-	 * Lists the audio devices on a worker thread, because some sound systems take seconds to enumerate them, and the
-	 * settings screen would freeze the game for that long. The future completes on the client thread, with no
-	 * devices if the system can't list them or the engine is stopped.
-	 */
-	public CompletableFuture<Devices> listDevices() {
-		if (closed) return CompletableFuture.completedFuture(Devices.NONE);
-		CompletableFuture<Devices> listed = new CompletableFuture<>();
-		// A platform thread: a native call pins a virtual thread's carrier for the whole enumeration.
-		Thread.ofPlatform().daemon().name("yakvc-list-devices").start(() -> {
-			try {
-				listed.complete(listDevicesNow());
-			} catch (RuntimeException e) {
-				listed.completeExceptionally(e);
-			}
-		});
-		return listed.handleAsync(this::devicesListed, Minecraft.getInstance());
-	}
-
-	/**
-	 * The one native call off the client thread. The bridge reads the call's error on the calling thread, and the
-	 * engine's device listing touches none of its state, so only {@link #close} must not overlap it.
-	 */
-	private Devices listDevicesNow() {
-		synchronized (destroyLock) {
-			if (closed) return Devices.NONE;
-			return Devices.parse(bridge.listDevices(engine));
-		}
-	}
-
-	/** Back on the client thread, where a crashed engine may be shut down. */
-	private Devices devicesListed(@Nullable Devices devices, @Nullable Throwable error) {
-		if (error instanceof YakVcException e) {
-			if (e.poisoned()) fail(e);
-			else YakVcClient.LOGGER.warn("Could not list audio devices: {}", e.getMessage());
-			return Devices.NONE;
-		}
-		if (error != null) {
-			YakVcClient.LOGGER.error("Could not list audio devices", error);
-			return Devices.NONE;
-		}
-		return devices;
 	}
 
 	/** Our group first, if we are in one, then the public groups our peers announce. Empty if the engine is stopped. */
@@ -578,14 +464,13 @@ public final class GameStateFeeder {
 		bridge.pushWorld(engine, listener, NativeBridge.uuidBytes(uuids), flat);
 	}
 
-	/** Each player's saved volume and mute, with blocked players muted. One player's failure doesn't skip the rest. */
+	/** Mutes blocked players. One player's failure doesn't skip the rest. */
 	private void feedPeerAudio(Set<UUID> players) {
 		for (UUID uuid : players) {
-			PlayerVolumes.Setting saved = volumes.get(uuid);
-			PlayerVolumes.Setting wanted = saved.withMuted(saved.muted() || blocked(uuid));
-			if (wanted.equals(peerAudio.getOrDefault(uuid, PlayerVolumes.DEFAULT))) continue;
-			peerAudio.put(uuid, wanted);
-			step(() -> bridge.setPeerVolume(engine, uuid, wanted.volume(), wanted.muted()));
+			boolean muted = blocked(uuid);
+			if (peerMuted.getOrDefault(uuid, false) == muted) continue;
+			peerMuted.put(uuid, muted);
+			step(() -> bridge.setPeerVolume(engine, uuid, 1f, muted));
 		}
 	}
 
@@ -697,16 +582,13 @@ public final class GameStateFeeder {
 			}
 			case EngineEvent.Invite invite -> {
 				YakVcClient.LOGGER.info("Group invite from {} {}", invite.from(), name(invite.from()));
-				groupChat.invited(invite.from());
 			}
 			case EngineEvent.InviteRequest request -> {
 				YakVcClient.LOGGER.info("Invite request from {} {}", request.from(), name(request.from()));
-				groupChat.inviteRequested(request.from());
 			}
 			case EngineEvent.GroupNotice notice -> {
 				YakVcClient.LOGGER.info("Group {}: {} {}, by {}", notice.kind(), notice.uuid(), name(notice.uuid()),
 						notice.by());
-				groupChat.notice(notice);
 			}
 		}
 	}
@@ -745,25 +627,12 @@ public final class GameStateFeeder {
 		return closed;
 	}
 
-	public boolean startedRelayOnly() {
-		return startedRelayOnly;
-	}
-
 	public Settings settings() {
 		return settings;
 	}
 
 	public VoiceKeys keys() {
 		return keys;
-	}
-
-	public GroupChat groupChat() {
-		return groupChat;
-	}
-
-	/** Saved per-player volume, mute and friend mark. Changes reach the engine on the next tick. */
-	public PlayerVolumes volumes() {
-		return volumes;
 	}
 
 	/** Muted because the player is blocked in Social Interactions. */

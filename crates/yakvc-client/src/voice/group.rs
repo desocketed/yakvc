@@ -76,7 +76,7 @@ pub(crate) struct SentInvite {
     pub sent: Instant,
 }
 
-/// A group someone on the server is in, for the voice menu.
+/// A group someone on the server is in, for a menu to list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GroupInfo {
     pub id: GroupId,

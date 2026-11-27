@@ -1,67 +1,29 @@
 package io.github.desocketed.yakvc.gametest;
 
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 import com.mojang.authlib.GameProfile;
-import com.terraformersmc.modmenu.gui.ModsScreen;
-import com.terraformersmc.modmenu.gui.widget.ModListWidget;
-import com.terraformersmc.modmenu.gui.widget.entries.ModListEntry;
 import io.github.desocketed.yakvc.GameStateFeeder;
 import io.github.desocketed.yakvc.Occlusion;
 import io.github.desocketed.yakvc.Room;
 import io.github.desocketed.yakvc.SoundPath;
 import io.github.desocketed.yakvc.YakVcClient;
-import io.github.desocketed.yakvc.config.PlayerVolumes;
-import io.github.desocketed.yakvc.config.Settings;
 import io.github.desocketed.yakvc.config.SoundTuning;
-import io.github.desocketed.yakvc.config.SpatialAudio;
 import io.github.desocketed.yakvc.natives.EngineEvent;
 import io.github.desocketed.yakvc.natives.NativeBridge;
 import io.github.desocketed.yakvc.natives.VoiceGroup;
 import io.github.desocketed.yakvc.natives.VoiceStats;
-import io.github.desocketed.yakvc.ui.GroupsScreen;
-import io.github.desocketed.yakvc.ui.Icons;
-import io.github.desocketed.yakvc.ui.VoiceMenuScreen;
-import io.github.desocketed.yakvc.ui.SoundTuningScreen;
-import io.github.desocketed.yakvc.ui.VoiceSettingsScreen;
 import io.github.desocketed.yakvc.ui.VoiceToasts;
-import java.awt.Graphics2D;
-import java.awt.RenderingHints;
-import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.UUID;
-import java.util.function.Predicate;
-import javax.imageio.ImageIO;
 import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
 import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
 import net.fabricmc.fabric.api.client.gametest.v1.context.TestSingleplayerContext;
-import net.fabricmc.fabric.api.client.gametest.v1.screenshot.TestScreenshotOptions;
 import net.fabricmc.fabric.api.entity.FakePlayer;
 import net.fabricmc.loader.api.FabricLoader;
-import net.minecraft.client.CameraType;
 import net.minecraft.client.KeyMapping;
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.components.AbstractScrollArea;
-import net.minecraft.client.gui.components.AbstractButton;
-import net.minecraft.client.gui.components.events.ContainerEventHandler;
-import net.minecraft.client.gui.components.events.GuiEventListener;
 import net.minecraft.client.gui.components.toasts.SystemToast;
-import net.minecraft.client.gui.screens.PauseScreen;
-import net.minecraft.client.gui.screens.TitleScreen;
-import net.minecraft.client.gui.screens.options.SoundOptionsScreen;
-import net.minecraft.client.gui.screens.options.controls.KeyBindsScreen;
-import net.minecraft.client.input.KeyEvent;
-import net.minecraft.client.input.MouseButtonEvent;
-import net.minecraft.client.input.MouseButtonInfo;
-import net.minecraft.client.gui.components.AbstractWidget;
-import net.minecraft.network.chat.Component;
-import org.jspecify.annotations.Nullable;
-import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.player.RemotePlayer;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket.Action;
@@ -70,20 +32,14 @@ import net.minecraft.world.phys.Vec3;
 
 /**
  * Starts the real client with the native engine, dev test audio and a dev rendezvous ({@link DevRendezvous}), opens a
- * singleplayer world, and checks what the engine is fed: push-to-talk, and spectators excluded both ways.
- *
- * <p>On the way it takes the screenshots in {@code docs/USER_GUIDE.md}, of every HUD state and screen. They keep
- * their names (no counter prefix), and {@code scripts/UpdateGuideScreenshots.java} copies them into {@code
- * docs/guide/} when they change. The world, time, camera and cursor are fixed, so unchanged UI gives the same images.
+ * singleplayer world, and checks what the engine is fed: push-to-talk, spectators excluded both ways, groups and the
+ * acoustics the world gives.
  */
 @SuppressWarnings("UnstableApiUsage")
 public class YakVcClientGameTest implements FabricClientGameTest {
 	private static final UUID REMOTE = UUID.fromString("00000000-0000-4000-8000-00000000beef");
 	/** Normally the server assigns entity IDs; the remote player's is far above anything a fresh world uses. */
 	private static final int REMOTE_ENTITY_ID = Integer.MAX_VALUE - 1;
-	/** The HUD's corner of the 854×480 test window, at its GUI scale of 2. */
-	private static final int HUD_WIDTH = 76;
-	private static final int HUD_HEIGHT = 26;
 
 	@Override
 	public void runTest(ClientGameTestContext context) {
@@ -95,81 +51,36 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 			throw new AssertionError("yakvc native engine did not start");
 		}
 
-		// Both change with timing: the vignette fades with the light, and opening a menu in singleplayer saves the
-		// world, which shows "Saving world" for a moment.
-		context.runOnClient(mc -> {
-			mc.options.vignette().set(false);
-			mc.options.showAutosaveIndicator().set(false);
-		});
-		checkSettingsWithoutWorld(context, feeder);
-		checkModMenu(context);
 		try (TestSingleplayerContext singleplayer = context.worldBuilder().create()) {
-			// The world builder already fixes the seed and weather and stops time; this fixes the time and view.
 			singleplayer.getServer().runCommand("time set noon");
 			singleplayer.getServer().runCommand("tp @a 0.5 -60 0.5 0 0");
 			singleplayer.getConnection().waitForChunksRender();
 			context.waitFor(mc -> feeder.session() != null && feeder.session().active());
 			context.waitFor(mc -> feeder.rendezvous() == EngineEvent.RendezvousState.REGISTERED);
-			// Dev tickets count as verified, so the badge shows in the talking indicator and the settings.
+			// Dev tickets count as verified.
 			if (!context.computeOnClient(mc -> feeder.verified())) {
 				throw new AssertionError("the dev rendezvous gave an unverified ticket");
 			}
 			UUID me = context.computeOnClient(mc -> mc.player.getUUID());
-			// The test tone is a working microphone, so the HUD shows no "No microphone".
+			// The test tone is a working microphone.
 			context.waitFor(mc -> feeder.micWorking());
-			hudScreenshot(context, "hud-ready");
 
 			// Push-to-talk sends the test tone, so the engine reports the local player talking.
 			KeyMapping pushToTalk = KeyMapping.get("key.yakvc.push_to_talk");
 			context.getInput().holdKey(pushToTalk);
 			context.waitFor(mc -> feeder.talking().contains(me));
-			hudScreenshot(context, "hud-talking");
-			// In third person the speaker shows over the player's own head. Looking up puts the camera above,
-			// looking down at grass only.
-			context.runOnClient(mc -> {
-				mc.player.setXRot(-45);
-				mc.options.setCameraType(CameraType.THIRD_PERSON_FRONT);
-			});
-			// Chunks compile for the view they are in, so the new view needs its own wait or the horizon
-			// differs from run to run.
-			singleplayer.getConnection().waitForChunksRender();
-			context.waitTicks(2);
-			// The arms sway with the player's age in ticks.
-			context.runOnClient(mc -> mc.player.tickCount = 0);
-			context.takeScreenshot(TestScreenshotOptions.of("talking-indicator").disableCounterPrefix());
-			context.runOnClient(mc -> {
-				mc.player.setXRot(0);
-				mc.options.setCameraType(CameraType.FIRST_PERSON);
-			});
 			context.getInput().releaseKey(pushToTalk);
 			context.waitFor(mc -> !feeder.talking().contains(me));
-
-			context.runOnClient(mc -> feeder.keys().setMuted(true));
-			context.waitTicks(2);
-			hudScreenshot(context, "hud-muted");
-			context.runOnClient(mc -> {
-				feeder.keys().setMuted(false);
-				feeder.keys().setDeafened(true);
-			});
-			context.waitTicks(2);
-			hudScreenshot(context, "hud-deafened");
-			context.runOnClient(mc -> feeder.keys().setDeafened(false));
-
-			toastScreenshot(context);
 
 			// A remote player is tracked until the tab list says it is a spectator.
 			FakePlayer remote = addRemotePlayer(context, singleplayer);
 			context.waitFor(mc -> feeder.tracked().contains(REMOTE));
-			// The remote player gets a voice engine of its own, so the menu shows a real connection and the two can
-			// form a group. It stops before the debug overlay, whose screenshot would change with its round trip time.
+			// The remote player gets a voice engine of its own, so the two can connect and form a group.
 			try (RemoteVoice remoteVoice = remoteVoice(me)) {
 				context.waitFor(mc -> feeder.peerState(REMOTE) == EngineEvent.PeerState.DIRECT, 30 * 20);
-				checkPauseMenuButton(context);
-				checkVoiceMenu(context, feeder);
 				checkGroups(context, feeder, remoteVoice, me);
 			}
 			context.waitFor(mc -> feeder.peerState(REMOTE) == null);
-			keyBindsScreenshot(context);
 			checkDebugOverlay(context, feeder);
 			singleplayer.getServer().runOnServer(server -> {
 				remote.setGameMode(GameType.SPECTATOR);
@@ -193,8 +104,7 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 			checkOcclusion(context, singleplayer);
 			checkRoom(context, singleplayer);
 			checkSoundPath(context, singleplayer);
-			checkSoundTuning(context, feeder);
-			checkSpatialAudio(context, singleplayer, feeder);
+			checkFullSendsTheRoom(context, singleplayer, feeder);
 
 			if (context.computeOnClient(mc -> feeder.errorEvents() != 0 || feeder.closed())) {
 				throw new AssertionError("engine reported errors; see the log");
@@ -227,7 +137,6 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		}
 		singleplayer.getServer().runCommand("setblock 12 -59 5 air");
 	}
-
 	/** Open ground has almost no reverb; a small stone box has plenty, and a short one; a big hall rings longer. */
 	private static void checkRoom(ClientGameTestContext context, TestSingleplayerContext singleplayer) {
 		Vec3 eye = new Vec3(20.5, -58.5, 20.5);
@@ -245,7 +154,6 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 			throw new AssertionError("rooms: open " + open + ", small " + small + ", hall " + hall);
 		}
 	}
-
 	/**
 	 * A voice behind a thick wall comes round its open end, from that side and less muffled than through it; shut in
 	 * with no way round, it comes straight through.
@@ -283,94 +191,6 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 			throw new AssertionError("through the wall: " + through);
 		}
 	}
-
-	/**
-	 * A left click on a slider sets it where it was clicked, and a right click puts it back to its default. The two
-	 * were confused once: 26.3 numbers mouse buttons from 1, not as GLFW does.
-	 */
-	private static void clickSlider(ClientGameTestContext context, GameStateFeeder feeder) {
-		AbstractWidget slider = context.computeOnClient(mc -> ((SoundTuningScreen) mc.gui.screen()).widget("occlusion_attenuation"));
-		double x = slider.getX() + slider.getWidth() / 2.0;
-		double y = slider.getY() + slider.getHeight() / 2.0;
-
-		click(context, x, y, InputConstants.MOUSE_BUTTON_LEFT);
-		if (context.computeOnClient(mc -> feeder.settings().acoustics().occlusionAttenuation()) != 0.5) {
-			throw new AssertionError("a left click didn't set the slider: " + feeder.settings().acoustics());
-		}
-
-		click(context, x, y, InputConstants.MOUSE_BUTTON_RIGHT);
-		if (context.computeOnClient(mc -> feeder.settings().acoustics().occlusionAttenuation()) != Settings.Acoustics.DEFAULT.occlusionAttenuation()) {
-			throw new AssertionError("a right click didn't reset the slider: " + feeder.settings().acoustics());
-		}
-	}
-
-	private static void click(ClientGameTestContext context, double x, double y, int button) {
-		context.runOnClient(mc -> {
-			MouseButtonEvent event = new MouseButtonEvent(x, y, new MouseButtonInfo(button, 0));
-			mc.gui.screen().mouseClicked(event, false);
-			mc.gui.screen().mouseReleased(event);
-		});
-
-		context.waitTicks(2);
-	}
-
-	/** The tuning screen applies a changed value to the engine at once, and saves it on close. */
-	private static void checkSoundTuning(ClientGameTestContext context, GameStateFeeder feeder) {
-		context.runOnClient(mc -> mc.gui.setScreen(new SoundTuningScreen(null, mc.options, feeder)));
-		context.waitTicks(2);
-		context.takeScreenshot(TestScreenshotOptions.of("sound-tuning").disableCounterPrefix());
-		context.runOnClient(mc -> ((SoundTuningScreen) mc.gui.screen()).option("furnishing").set(90));
-		if (context.computeOnClient(mc -> feeder.settings().acoustics().furnishing()) != 0.9) {
-			throw new AssertionError("the tuning didn't reach the engine");
-		}
-		clickSlider(context, feeder);
-		context.runOnClient(mc -> mc.gui.setScreen(null));
-		context.waitTicks(2);
-		if (settingsFile().getAsJsonObject("acoustics").get("furnishing").getAsDouble() != 0.9) {
-			throw new AssertionError("the tuning wasn't saved");
-		}
-		// Back to the defaults, so later runs start the same.
-		context.runOnClient(mc -> VoiceSettingsScreen.applyAndSave(feeder,
-				feeder.settings().withAcoustic("furnishing", Settings.Acoustics.DEFAULT.furnishing())));
-	}
-
-	/**
-	 * In a stone box around the player, Simple still sends the engine open air, so no reverb; Full (the default) sends
-	 * the box's reverb.
-	 */
-	private static void checkSpatialAudio(ClientGameTestContext context, TestSingleplayerContext singleplayer,
-			GameStateFeeder feeder) {
-		if (context.computeOnClient(mc -> feeder.settings().spatialAudio()) != SpatialAudio.FULL) {
-			throw new AssertionError("Spatial Audio isn't Full by default");
-		}
-		context.runOnClient(mc -> VoiceSettingsScreen.applyAndSave(feeder,
-				feeder.settings().withSpatialAudio(SpatialAudio.SIMPLE)));
-		singleplayer.getServer().runCommand("fill -2 -61 -2 2 -56 2 stone hollow");
-		context.waitTicks(5);
-		if (!context.computeOnClient(mc -> feeder.room()).equals(Room.OPEN_AIR)) {
-			throw new AssertionError("Simple sent a room: " + context.computeOnClient(mc -> feeder.room()));
-		}
-		context.runOnClient(mc -> VoiceSettingsScreen.applyAndSave(feeder,
-				feeder.settings().withSpatialAudio(SpatialAudio.FULL)));
-		context.waitFor(mc -> feeder.room().reverb() > 0.5f);
-		// With Full the settings show the Reverb slider, which applies while the screen is open and is saved.
-		context.runOnClient(mc -> mc.gui.setScreen(new VoiceSettingsScreen(null, mc.options, feeder)));
-		context.waitTicks(2);
-		context.runOnClient(mc -> ((VoiceSettingsScreen) mc.gui.screen()).reverb().set(50));
-		context.waitFor(mc -> feeder.settings().acoustics().reverbLevel() == 0.5);
-		context.runOnClient(mc -> mc.gui.setScreen(null));
-		context.waitTicks(2);
-		if (settingsFile().getAsJsonObject("acoustics").get("reverb_level").getAsDouble() != 0.5) {
-			throw new AssertionError("the reverb wasn't saved");
-		}
-		// Back to the defaults, so later runs start the same.
-		context.runOnClient(mc -> VoiceSettingsScreen.applyAndSave(feeder,
-				feeder.settings().withSpatialAudio(SpatialAudio.FULL)
-						.withAcoustic("reverb_level", Settings.Acoustics.DEFAULT.reverbLevel())));
-		singleplayer.getServer().runCommand("fill -2 -61 -2 2 -56 2 air");
-		singleplayer.getServer().runCommand("fill -2 -61 -2 2 -61 2 grass_block");
-	}
-
 	/** Two engine errors in a row both show, one after the other, rather than the second replacing the first. */
 	private static void checkEngineErrorToasts(ClientGameTestContext context, GameStateFeeder feeder) {
 		context.runOnClient(mc -> {
@@ -391,127 +211,6 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 		});
 		context.runOnClient(mc -> mc.gui.toastManager().clear());
 	}
-
-	/**
-	 * Turns the debug overlay on as its settings toggle does (its key is unbound by default), waits for the engine's
-	 * first snapshot and takes the user guide's screenshot.
-	 */
-	private static void checkDebugOverlay(ClientGameTestContext context, GameStateFeeder feeder) {
-		if (KeyMapping.get("key.yakvc.debug_overlay") == null) throw new AssertionError("no debug overlay key");
-		context.runOnClient(mc -> feeder.setDebugOverlay(true));
-		context.waitFor(mc -> feeder.stats() != null);
-		VoiceStats stats = context.computeOnClient(mc -> feeder.stats());
-		if (stats.endpointId().length() != 64) {
-			throw new AssertionError("bad stats snapshot " + stats);
-		}
-		context.waitTicks(2);
-		context.takeScreenshot(TestScreenshotOptions.of("debug-overlay").disableCounterPrefix());
-		context.runOnClient(mc -> feeder.setDebugOverlay(false));
-	}
-
-	/**
-	 * The game's Music &amp; Sounds options open the settings from the title screen too, with no world or voice
-	 * session, so they must work there. Done goes back to the sound options.
-	 */
-	private static void checkSettingsWithoutWorld(ClientGameTestContext context, GameStateFeeder feeder) {
-		context.setScreen(() -> new SoundOptionsScreen(new TitleScreen(), Minecraft.getInstance().options));
-		context.waitForScreen(SoundOptionsScreen.class);
-		// The button is last in the list, below the fold at the test's small window size.
-		scrollDown(context);
-		screenshotScreen(context, "sound-options");
-		pressNestedButton(context, "yakvc.sound_options.voice_chat");
-		context.waitForScreen(VoiceSettingsScreen.class);
-		// The level meter needs the microphone (here the dev test tone) without a world or push-to-talk.
-		context.waitFor(mc -> feeder.micLevelDb() > GameStateFeeder.SILENCE_DB);
-		context.clickScreenButton("gui.done");
-		context.waitForScreen(SoundOptionsScreen.class);
-		// Coming back re-initialises the sound options; the button must not be added again.
-		context.runOnClient(mc -> {
-			String label = Component.translatable("yakvc.sound_options.voice_chat").getString();
-			int count = countButtons(mc.gui.screen().children(), message -> message.equals(label));
-			if (count != 1) throw new AssertionError(count + " Voice Chat buttons in the sound options");
-		});
-		context.clickScreenButton("gui.done");
-		context.waitForScreen(TitleScreen.class);
-	}
-
-	/** The pause menu has a microphone button next to Back to Game that opens the voice menu, and Done returns to it. */
-	private static void checkPauseMenuButton(ClientGameTestContext context) {
-		context.setScreen(() -> new PauseScreen(true));
-		context.waitForScreen(PauseScreen.class);
-		screenshotScreen(context, "pause-menu");
-		pressNestedButton(context, "yakvc.pause.voice_chat", message -> message.equals(Icons.MIC.getString()));
-		context.waitForScreen(VoiceMenuScreen.class);
-		context.clickScreenButton("gui.done");
-		context.waitForScreen(PauseScreen.class);
-		context.clickScreenButton("menu.returnToGame");
-		context.waitForScreen(null);
-	}
-
-	/**
-	 * Opens the voice menu, mutes the remote player there, and goes to the settings screen and back. The mute is saved
-	 * by UUID; a setting applies as soon as it changes, and closing the settings writes nothing more to
-	 * {@code settings.json}.
-	 */
-	private static void checkVoiceMenu(ClientGameTestContext context, GameStateFeeder feeder) {
-		Path settingsFile = YakVcClient.configDir().resolve(Settings.FILE_NAME);
-		// DevRendezvous writes a fresh preset each run, so the first-run card shows; OK saves that it was seen.
-		context.setScreen(() -> new VoiceMenuScreen(null, feeder));
-		screenshotScreen(context, "voice-menu-setup");
-		pressNestedButton(context, "yakvc.setup.ok");
-		context.waitFor(mc -> feeder.settings().setupDone());
-		if (!settingsFile().get("setup_done").getAsBoolean()) {
-			throw new AssertionError("dismissing the setup card did not save setup_done");
-		}
-		screenshotScreen(context, "voice-menu");
-		pressNestedButton(context, "yakvc.menu.mute");
-		context.waitFor(mc -> feeder.volumes().get(REMOTE).muted());
-		pressNestedButton(context, "yakvc.menu.friend");
-		context.waitFor(mc -> feeder.volumes().get(REMOTE).friend());
-
-		context.clickScreenButton("yakvc.menu.settings");
-		context.waitForScreen(VoiceSettingsScreen.class);
-		// The device pickers fill once their worker thread has listed the devices.
-		context.waitFor(mc -> ((VoiceSettingsScreen) mc.gui.screen()).devicesListed());
-		screenshotScreen(context, "voice-settings");
-		// A change applies while the screen is still open, without waiting for it to close.
-		boolean voiceActivation = context.computeOnClient(mc -> feeder.settings().audio().voiceActivation());
-		pressOptionButton(context, "yakvc.settings.activation");
-		context.waitFor(mc -> feeder.settings().audio().voiceActivation() != voiceActivation);
-		pressOptionButton(context, "yakvc.settings.activation");
-		context.waitFor(mc -> feeder.settings().audio().voiceActivation() == voiceActivation);
-		// The toggle saved the file, so the one to compare with is the one it left.
-		String settingsBefore = read(settingsFile);
-		pressOptionButton(context, "yakvc.settings.input_device");
-		screenshotScreen(context, "voice-settings-microphone");
-		pressOptionButton(context, "yakvc.settings.input_device");
-		// The privacy settings are below the fold at the test's small window size, and start after the speakers.
-		scrollPast(context, "yakvc.settings.output_device");
-		screenshotScreen(context, "voice-settings-privacy");
-		scrollDown(context);
-		screenshotScreen(context, "voice-settings-developer");
-		context.clickScreenButton("gui.done");
-		context.waitForScreen(VoiceMenuScreen.class);
-		context.clickScreenButton("gui.done");
-		context.waitForScreen(null);
-
-		if (!read(YakVcClient.configDir().resolve(PlayerVolumes.FILE_NAME)).contains(REMOTE.toString())) {
-			throw new AssertionError("the mute was not saved");
-		}
-		if (!read(settingsFile).equals(settingsBefore)) {
-			throw new AssertionError("closing the settings rewrote settings.json");
-		}
-		// The run directory is reused, so leave no mute behind for the next run.
-		context.runOnClient(mc -> {
-			feeder.volumes().set(REMOTE, PlayerVolumes.DEFAULT);
-			try {
-				feeder.volumes().save();
-			} catch (IOException e) {
-				throw new UncheckedIOException(e);
-			}
-		});
-	}
-
 	private static RemoteVoice remoteVoice(UUID me) {
 		try {
 			return new RemoteVoice(REMOTE, "Remote", me);
@@ -519,243 +218,10 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 			throw new UncheckedIOException(e);
 		}
 	}
-
-	/**
-	 * The remote player invites us and the Group key, looking at them, accepts; they label the group, which the groups
-	 * screen shows; then they leave it.
-	 */
-	private static void checkGroups(ClientGameTestContext context, GameStateFeeder feeder, RemoteVoice remote,
-			UUID me) {
-		context.runOnClient(mc -> mc.gui.hud.getChat().clearMessages(true));
-		// The engine drops invites from muted players, and the voice menu's mute of the remote player is undone only
-		// on the feeder's next tick.
-		context.waitTicks(2);
-		remote.bridge.invite(remote.engine, me);
-		context.waitFor(mc -> feeder.groupChat().invitedBy(REMOTE));
-		// The remote player stands two blocks east. It turns to face us: its body otherwise drifts toward its head by how
-		// long it has existed, which changes the screenshot from run to run.
-		context.runOnClient(mc -> {
-			mc.player.setYRot(-90);
-			mc.player.setXRot(0);
-			if (mc.level.getEntity(REMOTE_ENTITY_ID) instanceof RemotePlayer other) {
-				other.setYRot(90);
-				other.yRotO = 90;
-				other.setYHeadRot(90);
-				other.yHeadRotO = 90;
-				other.setYBodyRot(90);
-				other.yBodyRotO = 90;
-			}
-		});
-		context.waitTicks(2);
-		// Arms sway with age in ticks.
-		context.runOnClient(mc -> {
-			mc.player.tickCount = 0;
-			mc.level.getEntity(REMOTE_ENTITY_ID).tickCount = 0;
-		});
-		context.takeScreenshot(TestScreenshotOptions.of("group-invite").disableCounterPrefix());
-		context.getInput().pressKey(KeyMapping.get("key.yakvc.group"));
-		context.waitFor(mc -> inGroupWith(feeder, REMOTE));
-
-		remote.bridge.setGroupLabel(remote.engine, "Miners");
-		context.waitFor(mc -> feeder.myGroup() != null && feeder.myGroup().label().equals("Miners"));
-		// Its toast comes as an event, polled on a later tick than the change shows in the list.
-		context.waitTicks(5);
-		context.runOnClient(mc -> {
-			mc.gui.toastManager().clear();
-			mc.gui.hud.getChat().clearMessages(true);
-		});
-		context.setScreen(() -> new GroupsScreen(null, feeder));
-		screenshotScreen(context, "voice-groups");
-		context.setScreen(() -> null);
-
-		remote.bridge.leaveGroup(remote.engine);
-		context.waitFor(mc -> !inGroupWith(feeder, REMOTE));
-		// The same for its toast, which is cleared below.
-		context.waitTicks(5);
-		context.runOnClient(mc -> {
-			feeder.leaveGroup();
-			mc.player.setYRot(0);
-			mc.gui.hud.getChat().clearMessages(true);
-			mc.gui.toastManager().clear();
-		});
-		context.waitFor(mc -> feeder.myGroup() == null);
-	}
-
 	private static boolean inGroupWith(GameStateFeeder feeder, UUID uuid) {
 		VoiceGroup mine = feeder.myGroup();
 		return mine != null && mine.members().contains(uuid);
 	}
-
-	/**
-	 * Mod Menu (in dev runs only) lists Yak VC with a config button that opens the settings; Done goes back to the
-	 * mods list. Clicked through as a player would, from the title screen's Mods button.
-	 */
-	private static void checkModMenu(ClientGameTestContext context) {
-		context.waitForScreen(TitleScreen.class);
-		context.clickScreenButton("modmenu.title");
-		context.waitForScreen(ModsScreen.class);
-		context.runOnClient(mc -> {
-			ModListWidget list = null;
-			for (GuiEventListener widget : mc.gui.screen().children()) {
-				if (widget instanceof ModListWidget modList) list = modList;
-			}
-			if (list == null) throw new AssertionError("no mod list in " + mc.gui.screen());
-			ModListEntry yakvc = list.children().stream().filter(entry -> entry.getMod().getId().equals("yakvc"))
-					.findFirst().orElseThrow(() -> new AssertionError("Yak VC is not in Mod Menu's list"));
-			list.select(yakvc);
-			// As if clicked; the search box would otherwise keep the focus, and its cursor blinks.
-			mc.gui.screen().setFocused(list);
-		});
-		screenshotScreen(context, "mod-menu");
-		// The gear by the selected mod's name; Mod Menu shows it only when the modmenu entrypoint gives a screen.
-		String configure = Component.translatable("modmenu.configure").getString();
-		context.runOnClient(mc -> {
-			AbstractButton gear = findButton(mc.gui.screen().children(), message -> message.equals(configure));
-			if (gear == null || !gear.visible || !gear.active) {
-				throw new AssertionError("Mod Menu shows no config button for Yak VC; check the log for the modmenu "
-						+ "entrypoint");
-			}
-			gear.onPress(new KeyEvent(InputConstants.KEY_RETURN, 0, 0));
-		});
-		context.waitForScreen(VoiceSettingsScreen.class);
-		context.clickScreenButton("gui.done");
-		context.waitForScreen(ModsScreen.class);
-		context.clickScreenButton("gui.done");
-		context.waitForScreen(TitleScreen.class);
-	}
-
-	/** The game's own key binds screen, scrolled to the Yak VC keys at the end. */
-	private static void keyBindsScreenshot(ClientGameTestContext context) {
-		context.setScreen(() -> new KeyBindsScreen(null, context.computeOnClient(mc -> mc.options)));
-		scrollDown(context);
-		screenshotScreen(context, "key-binds");
-		context.setScreen(() -> null);
-	}
-
-	/** An example failure toast, in the top-right corner. */
-	private static void toastScreenshot(ClientGameTestContext context) {
-		context.runOnClient(mc -> VoiceToasts.show(Component.translatable("yakvc.toast.crashed")));
-		// Toasts slide in by the clock from their first frame, not by ticks.
-		context.waitTicks(2);
-		try {
-			Thread.sleep(1000);
-		} catch (InterruptedException e) {
-			throw new AssertionError(e);
-		}
-		context.waitTicks(2);
-		Path path = context.takeScreenshot(TestScreenshotOptions.of("toast").disableCounterPrefix());
-		cropTop(path, true, 470, 90, 1);
-		context.runOnClient(mc -> mc.gui.toastManager().clear());
-	}
-
-	/** Scrolls the open screen's list to the end. */
-	/** Scrolls the options list until the option button {@code translationKey} has just gone out of view at the top. */
-	private static void scrollPast(ClientGameTestContext context, String translationKey) {
-		String caption = Component.translatable(translationKey).getString() + ":";
-		context.runOnClient(mc -> {
-			AbstractButton button = findButton(mc.gui.screen().children(), message -> message.startsWith(caption));
-			if (button == null) throw new AssertionError("no button " + translationKey + " in " + mc.gui.screen());
-			for (GuiEventListener widget : mc.gui.screen().children()) {
-				if (widget instanceof AbstractScrollArea list) {
-					list.setScrollAmount(list.scrollAmount() + button.getBottom() - list.getY());
-				}
-			}
-		});
-	}
-
-	private static void scrollDown(ClientGameTestContext context) {
-		context.runOnClient(mc -> {
-			for (GuiEventListener widget : mc.gui.screen().children()) {
-				if (widget instanceof AbstractScrollArea list) list.setScrollAmount(list.maxScrollAmount());
-			}
-		});
-	}
-
-	/**
-	 * A screenshot of the open screen for the user guide, with the cursor in the corner so nothing shows as hovered.
-	 */
-	private static void screenshotScreen(ClientGameTestContext context, String name) {
-		context.getInput().setCursorPos(0, 0);
-		context.waitTicks(2);
-		context.takeScreenshot(TestScreenshotOptions.of(name).disableCounterPrefix());
-	}
-
-	/** The HUD's icons in the top-left corner, for the user guide, enlarged so the small icons are easy to see. */
-	private static void hudScreenshot(ClientGameTestContext context, String name) {
-		Path path = context.takeScreenshot(TestScreenshotOptions.of(name).disableCounterPrefix());
-		cropTop(path, false, HUD_WIDTH, HUD_HEIGHT, 3);
-	}
-
-	/** Keeps only the top-left or top-right corner of a screenshot, enlarged {@code scale} times with sharp pixels. */
-	private static void cropTop(Path png, boolean right, int width, int height, int scale) {
-		try {
-			BufferedImage image = ImageIO.read(png.toFile());
-			int x = right ? image.getWidth() - width : 0;
-			BufferedImage out = new BufferedImage(width * scale, height * scale, BufferedImage.TYPE_INT_RGB);
-			Graphics2D graphics = out.createGraphics();
-			graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
-			graphics.drawImage(image.getSubimage(x, 0, width, height), 0, 0, width * scale, height * scale, null);
-			graphics.dispose();
-			ImageIO.write(out, "png", png.toFile());
-		} catch (IOException e) {
-			throw new UncheckedIOException(e);
-		}
-	}
-
-	/** Like {@code clickScreenButton}, which only finds buttons placed directly on the screen, but also in lists. */
-	private static void pressNestedButton(ClientGameTestContext context, String translationKey) {
-		String label = Component.translatable(translationKey).getString();
-		pressNestedButton(context, translationKey, message -> message.equals(label));
-	}
-
-	/** Presses the nested button whose label starts with the caption, as option buttons show "Caption: value". */
-	private static void pressOptionButton(ClientGameTestContext context, String translationKey) {
-		String caption = Component.translatable(translationKey).getString() + ":";
-		pressNestedButton(context, translationKey, message -> message.startsWith(caption));
-	}
-
-	private static void pressNestedButton(ClientGameTestContext context, String name, Predicate<String> label) {
-		context.runOnClient(mc -> {
-			AbstractButton button = findButton(mc.gui.screen().children(), label);
-			if (button == null) throw new AssertionError("no button " + name + " in " + mc.gui.screen());
-			button.onPress(new KeyEvent(InputConstants.KEY_RETURN, 0, 0));
-		});
-	}
-
-	private static int countButtons(List<? extends GuiEventListener> widgets, Predicate<String> label) {
-		int count = 0;
-		for (GuiEventListener widget : widgets) {
-			if (widget instanceof AbstractButton button && label.test(button.getMessage().getString())) count++;
-			if (widget instanceof ContainerEventHandler container) count += countButtons(container.children(), label);
-		}
-		return count;
-	}
-
-	private static @Nullable AbstractButton findButton(List<? extends GuiEventListener> widgets,
-			Predicate<String> label) {
-		for (GuiEventListener widget : widgets) {
-			if (widget instanceof AbstractButton button && label.test(button.getMessage().getString())) return button;
-			if (widget instanceof ContainerEventHandler container) {
-				AbstractButton found = findButton(container.children(), label);
-				if (found != null) return found;
-			}
-		}
-		return null;
-	}
-
-	private static String read(Path file) {
-		try {
-			return Files.readString(file);
-		} catch (IOException e) {
-			throw new UncheckedIOException(e);
-		}
-	}
-
-	/** The saved settings, as written. */
-	private static JsonObject settingsFile() {
-		return JsonParser.parseString(read(YakVcClient.configDir().resolve(Settings.FILE_NAME))).getAsJsonObject();
-	}
-
 	/**
 	 * Adds a second player: a server-side fake that only exists in the tab list, and a client-side entity two blocks
 	 * away, which is all the feeder looks at.
@@ -776,5 +242,42 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 			mc.level.addEntity(entity);
 		});
 		return remote;
+	}
+
+	/** The remote player invites us, we accept, they label the group, then they leave it. */
+	private static void checkGroups(ClientGameTestContext context, GameStateFeeder feeder, RemoteVoice remote,
+			UUID me) {
+		remote.bridge.invite(remote.engine, me);
+		context.waitFor(mc -> feeder.acceptInvite(REMOTE));
+		context.waitFor(mc -> inGroupWith(feeder, REMOTE));
+
+		remote.bridge.setGroupLabel(remote.engine, "Miners");
+		context.waitFor(mc -> feeder.myGroup() != null && feeder.myGroup().label().equals("Miners"));
+
+		remote.bridge.leaveGroup(remote.engine);
+		context.waitFor(mc -> !inGroupWith(feeder, REMOTE));
+		context.runOnClient(mc -> feeder.leaveGroup());
+		context.waitFor(mc -> feeder.myGroup() == null);
+	}
+
+	/** Waits for the engine's first stats snapshot, which the debug overlay shows. */
+	private static void checkDebugOverlay(ClientGameTestContext context, GameStateFeeder feeder) {
+		if (KeyMapping.get("key.yakvc.debug_overlay") == null) throw new AssertionError("no debug overlay key");
+		context.runOnClient(mc -> feeder.setDebugOverlay(true));
+		context.waitFor(mc -> feeder.stats() != null);
+		VoiceStats stats = context.computeOnClient(mc -> feeder.stats());
+		if (stats.endpointId().length() != 64) {
+			throw new AssertionError("bad stats snapshot " + stats);
+		}
+		context.runOnClient(mc -> feeder.setDebugOverlay(false));
+	}
+
+	/** In a stone box around the player, the default Spatial Audio level (Full) sends the box's reverb. */
+	private static void checkFullSendsTheRoom(ClientGameTestContext context, TestSingleplayerContext singleplayer,
+			GameStateFeeder feeder) {
+		singleplayer.getServer().runCommand("fill -2 -61 -2 2 -56 2 stone hollow");
+		context.waitFor(mc -> feeder.room().reverb() > 0.5f);
+		singleplayer.getServer().runCommand("fill -2 -61 -2 2 -56 2 air");
+		singleplayer.getServer().runCommand("fill -2 -61 -2 2 -61 2 grass_block");
 	}
 }

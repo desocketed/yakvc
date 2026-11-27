@@ -16,7 +16,6 @@ import java.lang.foreign.MemorySegment;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.CleanupMode;
 import org.junit.jupiter.api.io.TempDir;
@@ -37,34 +36,26 @@ class SettingsTest {
 	@Test
 	void aPartialFileIsAPreset() throws Exception {
 		Settings preset = Settings.parse("""
-				{"setup_done": true, "check_for_updates": false, "audio": {"bitrate": 32000}, "hud_corner": "top_left"}
+				{"relay_only": true, "audio": {"bitrate": 32000}, "hud_corner": "top_left"}
 				""");
-		assertTrue(preset.setupDone());
-		assertFalse(preset.checkForUpdates());
+		assertTrue(preset.relayOnly());
 		assertEquals(32_000, preset.audio().bitrate());
 		assertEquals(Settings.DEFAULT.audio().inputGain(), preset.audio().inputGain(), "the rest of audio keeps its defaults");
 		assertEquals(Settings.DEFAULT.acoustics(), preset.acoustics());
-		assertEquals(Settings.DEFAULT, preset.withSetupDone(false).withCheckForUpdates(true).withBitrate(24_000),
-				"unknown keys are dropped");
+		assertEquals(Settings.DEFAULT, Settings.parse("{\"hud_corner\": \"top_left\"}"), "unknown keys are dropped");
 	}
 
 	@Test
 	void savesAndLoadsEveryKind(@TempDir Path dir) throws Exception {
-		Settings settings = Settings.DEFAULT
-				.withVoiceRange(32)
-				.withSpatialAudio(SpatialAudio.FULL)
-				.withInvites("friends")
-				.withActivation("voice")
-				.withInputGain(2.5)
-				.withVadThresholdDb(-30)
-				.withInputDevice("Mic \"USB\" \\ 2")
-				.withAcoustic("furnishing", 0.9);
-		settings = Settings.parse("""
-				{"dev_mode": true, "trusted_issuers": ["abc"], "friends_only": true,
+		Settings settings = Settings.parse("""
+				{"voice_range": 32, "spatial_audio": "full", "invites": "nobody",
+				 "audio": {"activation": "voice", "input_gain": 2.5, "vad_threshold_db": -30,
+				           "input_device": "Mic \\"USB\\" \\\\ 2", "output_device": "Mic \\"USB\\" \\\\ 2"},
+				 "acoustics": {"furnishing": 0.9},
+				 "dev_mode": true, "trusted_issuers": ["abc"],
 				 "rendezvous": {"endpoint_id": "def", "addrs": ["127.0.0.1:4433"], "relay": "https://relay.example/"},
 				 "server": "yakvc1:a:b:https://relay.example/", "dev": {"tone_hz": 440, "null_output": true}}
-				""").withOutputDevice(settings.audio().inputDevice()).withInputGain(settings.audio().inputGain())
-				.withVadThresholdDb(settings.audio().vadThresholdDb());
+				""");
 		settings.save(dir);
 		Settings loaded = Settings.load(dir);
 		assertEquals(settings, loaded);
@@ -75,9 +66,9 @@ class SettingsTest {
 				loaded.rendezvous());
 		assertEquals(new Settings.Dev(440.0, null, true, null), loaded.dev());
 		assertEquals("yakvc1:a:b:https://relay.example/", loaded.server());
-		assertNull(loaded.withServer(null).server());
 		assertEquals("Mic \"USB\" \\ 2", loaded.audio().outputDevice());
-		assertNull(loaded.withOutputDevice(null).audio().outputDevice());
+		assertNull(Settings.DEFAULT.server());
+		assertNull(Settings.DEFAULT.audio().outputDevice());
 	}
 
 	@Test
@@ -87,7 +78,6 @@ class SettingsTest {
 		IOException syntax = assertThrows(IOException.class, () -> Settings.parse("{\"voice_range\": }"));
 		assertTrue(syntax.getMessage().startsWith(Settings.FILE_NAME), syntax.getMessage());
 		assertThrows(IOException.class, () -> Settings.parse("{\"voice_range\": \"far\"}"));
-		assertThrows(IllegalArgumentException.class, () -> Settings.DEFAULT.withAcoustic("reverb", 1));
 	}
 
 	@Test
@@ -99,7 +89,7 @@ class SettingsTest {
 
 	@Test
 	void engineTomlHasTheEngineKeysQuotedAndCapped() throws Exception {
-		String toml = Settings.DEFAULT.engineToml(0, List.of());
+		String toml = Settings.DEFAULT.engineToml(0);
 		assertTrue(toml.contains("voice_range = 256.0\n"), toml);
 		assertTrue(toml.contains("trusted_issuers = []\n"), toml);
 		assertTrue(toml.contains("\n[audio]\nactivation = \"push_to_talk\"\nbitrate = 24000\n"), toml);
@@ -109,16 +99,16 @@ class SettingsTest {
 		assertFalse(toml.contains("[dev]") || toml.contains("[rendezvous]") || toml.contains("server"), toml);
 		assertFalse(toml.contains("setup_done") || toml.contains("spatial_audio") || toml.contains("furnishing"),
 				"the mod's own keys stay out");
-		assertTrue(Settings.DEFAULT.engineToml(8, List.of()).contains("voice_range = 128.0\n"));
+		assertTrue(Settings.DEFAULT.engineToml(8).contains("voice_range = 128.0\n"));
 
 		Settings full = Settings.parse("""
-				{"dev_mode": true, "trusted_issuers": ["abc"], "friends_only": true,
+				{"dev_mode": true, "trusted_issuers": ["abc"],
+				 "audio": {"input_device": "Mic \\"USB\\"\\t2", "output_device": "Speakers\\n"},
 				 "rendezvous": {"endpoint_id": "def", "addrs": ["127.0.0.1:4433", "[::1]:4433"], "relay": "https://r/"},
 				 "server": "yakvc1:a:b:https://r/", "dev": {"wav": "C:\\\\talk\\\\a.wav", "null_output": true}}
-				""").withInputDevice("Mic \"USB\"\t2").withOutputDevice("Speakers\n");
-		toml = full.engineToml(0, List.of(UUID.fromString("00000000-0000-0000-0000-000000000001")));
+				""");
+		toml = full.engineToml(0);
 		assertTrue(toml.contains("trusted_issuers = [\"abc\"]\nserver = \"yakvc1:a:b:https://r/\"\n"), toml);
-		assertTrue(toml.contains("friends_only = true\nfriends = [\"00000000-0000-0000-0000-000000000001\"]\n"), toml);
 		assertTrue(toml.contains("input_device = \"Mic \\\"USB\\\"\\t2\"\n"), toml);
 		assertTrue(toml.contains("output_device = \"Speakers\\n\"\n"), toml);
 		assertTrue(toml.contains("\n[rendezvous]\nendpoint_id = \"def\"\naddrs = [\"127.0.0.1:4433\", \"[::1]:4433\"]\n"
@@ -132,30 +122,26 @@ class SettingsTest {
 	void theEngineTakesTheTomlAndRejectsBadValues(@TempDir(cleanup = CleanupMode.NEVER) Path dir) throws Exception {
 		NativeBridge bridge = new NativeBridge(NativeLoader.load(dir));
 		// Starts with real audio devices; on a machine without any that is only an engine Error event.
-		MemorySegment engine = bridge.create(dir.toString(), Settings.DEFAULT.engineToml(0, List.of()));
+		MemorySegment engine = bridge.create(dir.toString(), Settings.DEFAULT.engineToml(0));
 		try {
 			// The built-in server's ids, which parse as any valid ones do.
 			Settings edited = Settings.parse("""
-					{"dev_mode": true,
+					{"voice_range": 100, "spatial_audio": "full", "invites": "nobody",
+					 "dev_mode": true,
 					 "trusted_issuers": ["7e2624000ff23e1db237755c4e1f79ff29d78d314e66bf9eb5654a74b75bd20f"],
-					 "friends_only": true,
 					 "rendezvous": {"endpoint_id": "5c9578695b7b258c587bebc826f1091a95da2e75ef93a4b7aeff45f28e2cde60",
 					                "addrs": ["127.0.0.1:4433"], "relay": "https://relay.example.com/"},
+					 "audio": {"activation": "voice", "bitrate": 64000, "input_gain": 4,
+					           "output_device": "Speakers \\"2\\""},
+					 "acoustics": {"reverb_level": 0.5},
 					 "dev": {"tone_hz": 440, "null_output": true}}
-					""")
-					.withVoiceRange(100)
-					.withSpatialAudio(SpatialAudio.FULL)
-					.withInvites("friends")
-					.withActivation("voice")
-					.withBitrate(64_000)
-					.withInputGain(4)
-					.withOutputDevice("Speakers \"2\"")
-					.withAcoustic("reverb_level", 0.5);
-			bridge.updateConfig(engine, edited.engineToml(8, List.of(UUID.randomUUID())));
-			assertThrows(YakVcException.class, () -> bridge.updateConfig(engine, edited.withVoiceRange(1000).engineToml(0, List.of())));
-			assertThrows(YakVcException.class, () -> bridge.updateConfig(engine, edited.withInputGain(20).engineToml(0, List.of())));
-			assertThrows(YakVcException.class, () -> bridge.updateConfig(engine, edited.withVadThresholdDb(3).engineToml(0, List.of())));
-			assertThrows(YakVcException.class, () -> bridge.updateConfig(engine, edited.withInvites("all").engineToml(0, List.of())));
+					""");
+			bridge.updateConfig(engine, edited.engineToml(8));
+			for (String bad : List.of("{\"voice_range\": 1000}", "{\"audio\": {\"input_gain\": 20}}",
+					"{\"audio\": {\"vad_threshold_db\": 3}}", "{\"invites\": \"all\"}")) {
+				Settings broken = Settings.parse(bad);
+				assertThrows(YakVcException.class, () -> bridge.updateConfig(engine, broken.engineToml(0)));
+			}
 		} finally {
 			bridge.destroy(engine);
 		}

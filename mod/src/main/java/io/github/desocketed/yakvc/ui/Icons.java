@@ -6,18 +6,13 @@ import net.minecraft.resources.Identifier;
 
 /**
  * 8-pixel icons from the {@code yakvc:icons} bitmap font ({@code assets/yakvc/font/icons.json}), so they draw as text:
- * over heads like a name tag, and in the HUD and voice menu tinted by the text colour. All are white except the
- * speaker, which is green, and the verified badge, which is aqua.
+ * over heads like a name tag. All are white except the speaker, which is green, and the verified badge, which is
+ * aqua.
  */
 public final class Icons {
 	private static final FontDescription FONT = new FontDescription.Resource(Identifier.fromNamespaceAndPath("yakvc", "icons"));
 
 	public static final Component SPEAKER = icon('');
-	public static final Component MIC = icon('');
-	/** The microphone with a slash, while muted. */
-	public static final Component MIC_MUTED = icon('');
-	public static final Component HEADPHONES = icon('');
-	public static final Component SIGNAL = icon('');
 	/** Shown next to players whose account is verified with Mojang. */
 	public static final Component VERIFIED = icon('');
 	/** Shown next to players in the same voice group as us. */

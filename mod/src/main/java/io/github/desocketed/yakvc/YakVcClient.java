@@ -1,17 +1,12 @@
 package io.github.desocketed.yakvc;
 
 import com.mojang.authlib.exceptions.AuthenticationException;
-import io.github.desocketed.yakvc.config.PlayerVolumes;
 import io.github.desocketed.yakvc.config.Settings;
 import io.github.desocketed.yakvc.input.VoiceKeys;
 import io.github.desocketed.yakvc.natives.NativeBridge;
 import io.github.desocketed.yakvc.natives.NativeLoader;
 import io.github.desocketed.yakvc.ui.DebugOverlay;
-import io.github.desocketed.yakvc.ui.PauseMenuButton;
-import io.github.desocketed.yakvc.ui.SoundOptionsButton;
 import io.github.desocketed.yakvc.ui.TalkingIndicator;
-import io.github.desocketed.yakvc.ui.UpdateNotice;
-import io.github.desocketed.yakvc.ui.VoiceHud;
 import io.github.desocketed.yakvc.ui.VoiceToasts;
 import java.lang.foreign.MemorySegment;
 import java.nio.file.Files;
@@ -38,7 +33,7 @@ public final class YakVcClient implements ClientModInitializer {
 
 	private static @Nullable GameStateFeeder feeder;
 
-	/** {@code config/yakvc/}: settings, per-player volumes, the client key and ticket cache, extracted natives. */
+	/** {@code config/yakvc/}: settings, the client key and ticket cache, extracted natives. */
 	public static Path configDir() {
 		return FabricLoader.getInstance().getConfigDir().resolve("yakvc");
 	}
@@ -50,9 +45,6 @@ public final class YakVcClient implements ClientModInitializer {
 
 	@Override
 	public void onInitializeClient() {
-		// Registered before the engine starts, so if it fails the button still explains why voice is off.
-		SoundOptionsButton.register();
-		PauseMenuButton.register();
 		Path configDir = configDir();
 		Settings settings;
 		try {
@@ -65,7 +57,6 @@ public final class YakVcClient implements ClientModInitializer {
 		if (Files.exists(configDir.resolve("client.toml"))) {
 			LOGGER.info("client.toml is no longer read: settings now live in config/yakvc/{}", Settings.FILE_NAME);
 		}
-		checkForUpdate(settings);
 		NativeBridge bridge;
 		try {
 			bridge = new NativeBridge(NativeLoader.load(configDir));
@@ -83,10 +74,9 @@ public final class YakVcClient implements ClientModInitializer {
 			return;
 		}
 
-		PlayerVolumes volumes = PlayerVolumes.load(configDir);
 		MemorySegment engine;
 		try {
-			engine = bridge.create(configDir.toString(), settings.engineToml(0, volumes.friends()));
+			engine = bridge.create(configDir.toString(), settings.engineToml(0));
 		} catch (Exception e) {
 			disable("could not start the engine", e, Component.translatable("yakvc.toast.start_failed", e.getMessage()));
 			return;
@@ -126,7 +116,7 @@ public final class YakVcClient implements ClientModInitializer {
 		ClientLoginConnectionEvents.DISCONNECT.register((handler, minecraft) -> joiner.loginEnded());
 		ClientConfigurationConnectionEvents.INIT.register((handler, minecraft) -> joiner.loginEnded());
 
-		GameStateFeeder feeder = new GameStateFeeder(bridge, engine, settings, VoiceKeys.register(), joiner, volumes);
+		GameStateFeeder feeder = new GameStateFeeder(bridge, engine, settings, VoiceKeys.register(), joiner);
 		YakVcClient.feeder = feeder;
 		// The engine is up, so another mod's voice sink can be taken: say which versions.
 		FabricLoader.getInstance().getObjectShare().put(GameStateFeeder.VOICE_SINK_VERSION_KEY,
@@ -135,22 +125,8 @@ public final class YakVcClient implements ClientModInitializer {
 		ClientPlayConnectionEvents.JOIN.register((connection, sender, minecraft) -> feeder.join(connection, minecraft));
 		ClientPlayConnectionEvents.DISCONNECT.register((connection, minecraft) -> feeder.leave());
 		ClientTickEvents.END_CLIENT_TICK.register(feeder::tick);
-		HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("yakvc", "voice"), new VoiceHud(feeder));
 		HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("yakvc", "debug"), new DebugOverlay(feeder));
 		LevelRenderEvents.COLLECT_SUBMITS.register(new TalkingIndicator(feeder)::submit);
-	}
-
-	/**
-	 * Starts the update check unless it is turned off. Before the engine, so a player whose voice fails to start
-	 * still hears about the release that may fix it.
-	 */
-	private static void checkForUpdate(Settings settings) {
-		// A dev build's version says nothing about which release it is.
-		if (FabricLoader.getInstance().isDevelopmentEnvironment() || !settings.checkForUpdates()) return;
-		UpdateNotice.register();
-		UpdateCheck.start(version()).thenAccept(release -> {
-			if (release != null) Minecraft.getInstance().execute(() -> UpdateNotice.show(release));
-		});
 	}
 
 	/** The running Yak VC's version, as in its mod metadata. */

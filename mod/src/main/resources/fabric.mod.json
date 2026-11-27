@@ -15,9 +15,6 @@
 	"entrypoints": {
 		"client": [
 			"io.github.desocketed.yakvc.YakVcClient"
-		],
-		"modmenu": [
-			"io.github.desocketed.yakvc.ui.ModMenuEntry"
 		]
 	},
 	"depends": {
