@@ -54,6 +54,7 @@ pub(crate) async fn serve(shared: Arc<Shared>, incoming: Incoming) {
     // Refused before the handshake, so a flood of connections that never
     // register costs as little as possible.
     let Some(unregistered) = shared.unregistered.take() else {
+        tracing::debug!("refused a connection: too many unregistered");
         incoming.refuse();
         return;
     };
@@ -61,6 +62,10 @@ pub(crate) async fn serve(shared: Arc<Shared>, incoming: Incoming) {
         Some(ip) => match shared.unregistered_per_ip.take(ip) {
             Some(slot) => Some(slot),
             None => {
+                tracing::debug!(
+                    ?ip,
+                    "refused a connection: too many unregistered for its IP"
+                );
                 incoming.refuse();
                 return;
             }
@@ -112,9 +117,13 @@ pub(crate) async fn serve(shared: Arc<Shared>, incoming: Incoming) {
         Err(code) => code,
     };
 
-    if shared.sessions.unregister(&conn)
-        && let Some(gate) = &shared.relay_gate
-    {
+    let ended = shared.sessions.unregister(&conn);
+    if ended {
+        tracing::info!(endpoint = %client.id.fmt_short(), ?code, "client left");
+    } else {
+        tracing::debug!(endpoint = %client.id.fmt_short(), ?code, "connection closed");
+    }
+    if ended && let Some(gate) = &shared.relay_gate {
         gate.session_ended(client.id);
     }
     // The session held the other sender; with ours gone the writer finishes.
@@ -210,7 +219,8 @@ impl Client {
                 Ok(None) => return Ok(()),
                 // The connection is gone; there is no one to tell.
                 Err(WireError::Io(_)) => return Ok(()),
-                Err(WireError::TooLarge(_) | WireError::Decode(_)) => {
+                Err(e @ (WireError::TooLarge(_) | WireError::Decode(_))) => {
+                    tracing::debug!(endpoint = %self.id.fmt_short(), "bad message: {e}");
                     return Err(CloseCode::ProtocolError);
                 }
             };
@@ -239,6 +249,7 @@ impl Client {
                 if distinct.len() > self.shared.limits.max_pairs {
                     return Err(CloseCode::LimitExceeded);
                 }
+                tracing::debug!(endpoint = %self.id.fmt_short(), count = tokens.len(), "set pairs");
                 let hashes = self.shared.sessions.set_pairs(self.id, tokens);
                 self.charge_hashes(hashes)
             }
@@ -251,11 +262,13 @@ impl Client {
                 if total > self.shared.limits.max_pairs {
                     return Err(CloseCode::LimitExceeded);
                 }
+                tracing::debug!(endpoint = %self.id.fmt_short(), count = tokens.len(), "add pairs");
                 let hashes = self.shared.sessions.add_pairs(self.id, tokens);
                 self.charge_hashes(hashes)
             }
             ClientMsg::RemovePairs(tokens) => {
                 self.check_update()?;
+                tracing::debug!(endpoint = %self.id.fmt_short(), count = tokens.len(), "remove pairs");
                 self.shared.sessions.remove_pairs(self.id, tokens);
                 Ok(())
             }
@@ -372,6 +385,7 @@ impl Client {
                 Ok(())
             }
             JoinCheck::Confirmed(_) | JoinCheck::Rejected => {
+                tracing::info!(endpoint = %self.id.fmt_short(), %uuid, "sign-in rejected by Mojang or UUID mismatch");
                 self.shared.metrics.auth_failed.inc();
                 self.refuse(CloseCode::AuthFailed)
             }
@@ -386,6 +400,7 @@ impl Client {
         self.challenge.take().ok_or(CloseCode::ProtocolError)?;
         let (uuid, name) = self.identity();
         if !is_offline_player(uuid, &name) {
+            tracing::info!(endpoint = %self.id.fmt_short(), %uuid, "declined, but not an offline player");
             self.shared.metrics.auth_failed.inc();
             return self.refuse(CloseCode::AuthFailed);
         }
@@ -394,6 +409,7 @@ impl Client {
             self.shared.metrics.auth_unverified.inc();
             Ok(())
         } else {
+            tracing::info!(endpoint = %self.id.fmt_short(), %uuid, "unverified sign-in refused: UUID in use");
             self.shared.metrics.auth_failed.inc();
             self.refuse(CloseCode::Superseded)
         }
@@ -432,6 +448,7 @@ impl Client {
     /// Tells the client to try the challenge again later. A registered client
     /// keeps its session; one still authenticating is disconnected.
     fn retry_later(&mut self, secs: u32) -> Result<(), CloseCode> {
+        tracing::debug!(endpoint = %self.id.fmt_short(), secs, "told to retry later");
         self.shared.metrics.auth_retry_after.inc();
         self.send(ServerMsg::RetryAfter { secs });
         if self.is_registered() {
@@ -470,6 +487,12 @@ impl Client {
             Instant::now(),
         ));
         self.unregistered = None;
+        tracing::info!(
+            endpoint = %self.id.fmt_short(),
+            uuid = %hello.uuid,
+            verified = ticket.verified,
+            "client registered"
+        );
         self.send(ServerMsg::Registered(ticket.signed().clone()));
         true
     }

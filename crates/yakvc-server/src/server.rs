@@ -449,6 +449,12 @@ async fn prune_loop(shared: Arc<Shared>) {
     let mut interval = tokio::time::interval(PRUNE_INTERVAL);
     loop {
         interval.tick().await;
+        let stats = shared.sessions.stats();
+        tracing::info!(
+            sessions = stats.sessions,
+            matches = stats.matches,
+            "summary"
+        );
         let now = Instant::now();
         shared.auth_per_endpoint.lock().unwrap().prune(now);
         shared.auth_per_ip.lock().unwrap().prune(now);

@@ -133,6 +133,7 @@ impl AccessControl for GateAccess {
         match gate.admit(id, Instant::now()) {
             Admission::Session => Access::Allow,
             Admission::Grace => {
+                tracing::debug!(endpoint = %id.fmt_short(), "relay admitted for the grace period");
                 // Weak for the same reason: the timer mustn't keep the gate.
                 let grace = gate.grace;
                 let gate = Arc::downgrade(&gate);
@@ -144,7 +145,10 @@ impl AccessControl for GateAccess {
                 });
                 Access::Allow
             }
-            Admission::Refused => refused,
+            Admission::Refused => {
+                tracing::debug!(endpoint = %id.fmt_short(), "relay admission refused");
+                refused
+            }
         }
     }
 }
