@@ -275,6 +275,10 @@ public record Settings(double voiceRange, SpatialAudio spatialAudio, boolean rel
 		return with("", "check_for_updates", on);
 	}
 
+	public Settings withSpeakingHeads(boolean on) {
+		return with("", "speaking_heads", on);
+	}
+
 	public Settings withActivation(String activation) {
 		return with("audio", "activation", activation);
 	}

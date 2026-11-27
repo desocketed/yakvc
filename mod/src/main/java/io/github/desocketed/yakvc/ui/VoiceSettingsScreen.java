@@ -96,6 +96,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	private final OptionInstance<String> invites;
 	private final OptionInstance<Boolean> friendsOnly;
 	private final OptionInstance<Boolean> checkForUpdates;
+	private final OptionInstance<Boolean> speakingHeads;
 	private final OptionInstance<Boolean> debugOverlay;
 	/** The account line, which follows the rendezvous state while the screen is open. */
 	private @Nullable MultiLineTextWidget accountText;
@@ -200,6 +201,9 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		checkForUpdates = OptionInstance.createBoolean("yakvc.settings.check_for_updates",
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.check_for_updates.tooltip")),
 				initial.checkForUpdates(), value -> throttle.changed());
+		speakingHeads = OptionInstance.createBoolean("yakvc.settings.speaking_heads",
+				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.speaking_heads.tooltip")),
+				initial.speakingHeads(), value -> throttle.changed());
 		// Unlike the settings above, it isn't saved.
 		debugOverlay = OptionInstance.createBoolean("yakvc.settings.debug_overlay",
 				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.debug_overlay.tooltip")),
@@ -323,7 +327,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		list.addBig(inputGainPercent);
 		list.addBig(new MicLevelMeter(feeder::micLevelDb, () -> vadThresholdDb.get()));
 		list.addBig(outputDevice);
-		list.addSmall(spatialAudio);
+		list.addSmall(spatialAudio, speakingHeads);
 		// Only Full has reverb and echo: the other levels send the engine open air and no echoes.
 		acousticsShown = spatialAudio.get() == SpatialAudio.FULL;
 		if (acousticsShown) list.addSmall(reverbPercent, echoPercent);
@@ -512,6 +516,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 				.withVerifiedOnly(verifiedOnly.get())
 				.withFriendsOnly(friendsOnly.get())
 				.withCheckForUpdates(checkForUpdates.get())
+				.withSpeakingHeads(speakingHeads.get())
 				.withSpatialAudio(spatialAudio.get())
 				.withNoiseSuppression(noiseSuppression.get())
 				.withInputDevice(deviceValue(inputDevice.get()))
