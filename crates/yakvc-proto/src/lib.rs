@@ -9,7 +9,6 @@ pub mod group;
 pub mod pair;
 pub mod peer;
 pub mod rdv;
-pub mod rooms;
 pub mod server_code;
 pub mod ticket;
 pub mod voice;

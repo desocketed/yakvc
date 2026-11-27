@@ -30,9 +30,3 @@ domain = "relay.yak.dsktd.net"
 acme_contact = "admin@example.com"
 acme_cache_dir = "/var/lib/yakvc/acme"
 # Never set `open = true` on a public server: it relays for anyone.
-
-# The public room list (yakvc/rooms/1, no sign-in): off without this
-# section. Every limit has a default; see DESIGN.md, "Room list".
-# [rooms]
-# enabled = true
-# max_rooms = 1024

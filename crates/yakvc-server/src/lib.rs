@@ -1,6 +1,5 @@
 //! Rendezvous server: authenticates clients with a Mojang session challenge,
-//! issues tickets, matches pair tokens, optionally lists public rooms
-//! (`yakvc/rooms/1`) and optionally embeds an `iroh-relay`.
+//! issues tickets, matches pair tokens and optionally embeds an `iroh-relay`.
 //!
 //! [`Server::builder`] is the whole API; the binary only parses arguments and
 //! loads [`Config`], and `yakvc-testkit` builds servers in-process.
@@ -14,7 +13,6 @@ mod mojang;
 mod probe;
 mod rdv;
 mod relay;
-mod rooms;
 mod server;
 mod sessions;
 #[cfg(test)]
@@ -23,5 +21,4 @@ mod tests;
 pub use crate::config::{Config, ConfigError};
 pub use crate::mojang::{MojangError, Profile, SessionServer};
 pub use crate::probe::probe;
-pub use crate::rooms::RoomOptions;
 pub use crate::server::{Limits, RelayOptions, RelayTls, Server, ServerBuilder, SpawnError, Stats};

@@ -72,15 +72,6 @@ pub(crate) async fn serve(shared: Arc<Shared>, incoming: Incoming) {
     let Ok(conn) = incoming.await else {
         return;
     };
-    // The room list shares the endpoint; the slots above only covered its
-    // handshake.
-    if conn.alpn() == yakvc_proto::rooms::ALPN {
-        drop((unregistered, unregistered_ip));
-        if let Some(rooms) = &shared.rooms {
-            crate::rooms::serve(rooms, conn, ip).await;
-        }
-        return;
-    }
     let deadline = tokio::time::Instant::now() + shared.limits.auth_timeout;
     let (send, recv) = match tokio::time::timeout_at(deadline, conn.accept_bi()).await {
         Ok(Ok(streams)) => streams,

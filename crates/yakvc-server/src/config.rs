@@ -5,7 +5,6 @@ use std::time::Duration;
 use serde::Deserialize;
 use yakvc_proto::{IssuerKey, MAX_TICKET_LIFETIME, SecretKey};
 
-use crate::rooms::RoomOptions;
 use crate::server::{RelayOptions, RelayTls, Server, ServerBuilder};
 
 /// The server's `config.toml`.
@@ -23,9 +22,6 @@ pub struct Config {
     pub metrics_bind: Option<SocketAddr>,
     #[serde(default)]
     pub insecure_dev_auth: bool,
-    /// The public room list: off without this section, and with
-    /// `enabled = false` in it.
-    pub rooms: Option<RoomOptions>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -95,9 +91,6 @@ impl Config {
         }
         if self.insecure_dev_auth {
             builder = builder.insecure_dev_auth();
-        }
-        if let Some(rooms) = self.rooms {
-            builder = builder.rooms(rooms);
         }
         Ok(builder)
     }
@@ -291,7 +284,6 @@ mod tests {
             ticket_lifetime_hours: Some(1),
             metrics_bind: None,
             insecure_dev_auth: true,
-            rooms: None,
         };
         assert!(config.clone().into_builder().is_ok());
 
@@ -308,26 +300,6 @@ mod tests {
         ));
 
         std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn rooms_section() {
-        let base = "endpoint_key = \"a\"\nissuer_key = \"b\"\nbind = \"0.0.0.0:1\"\n";
-        let rooms = |toml: &str| toml::from_str::<Config>(toml).unwrap().rooms;
-        assert_eq!(rooms(base), None);
-        assert_eq!(
-            rooms(&format!("{base}[rooms]\n")),
-            Some(RoomOptions::default())
-        );
-        let tuned = rooms(&format!("{base}[rooms]\nmax_rooms = 10\n")).unwrap();
-        assert!(tuned.enabled);
-        assert_eq!(tuned.max_rooms, 10);
-        assert!(
-            !rooms(&format!("{base}[rooms]\nenabled = false\n"))
-                .unwrap()
-                .enabled
-        );
-        assert!(toml::from_str::<Config>(&format!("{base}[rooms]\nfoo = 1\n")).is_err());
     }
 
     #[test]
