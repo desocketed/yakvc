@@ -191,3 +191,26 @@ async fn speech_starts_talking_at_once() {
         start.elapsed()
     );
 }
+
+/// A talking peer's level and pitch reach the listener, for animating it.
+#[tokio::test(flavor = "multi_thread")]
+async fn speech_carries_level_and_pitch() {
+    let net = TestNet::start().await;
+    let alice = net.client().name("alice").tone(200.0).start().await;
+    let mut bob = net.client().name("bob").start().await;
+    see_each_other(&[&alice, &bob]);
+    alice.move_to(Vec3::new(0.0, 64.0, 0.0));
+    bob.move_to(Vec3::new(5.0, 64.0, 0.0));
+    bob.wait_for_peer(alice.uuid(), PeerState::Direct)
+        .await
+        .unwrap();
+
+    let uuid = alice.uuid();
+    alice.talk(true);
+    // The first windows may straddle the start of the spurt.
+    let voiced = |e: &Event| {
+        matches!(e, Event::Speech { uuid: u, level_db, pitch_hz: Some(pitch) }
+            if *u == uuid && *level_db > -40.0 && (pitch - 200.0).abs() < 6.0)
+    };
+    bob.wait_for("alice's voiced speech", voiced).await.unwrap();
+}
