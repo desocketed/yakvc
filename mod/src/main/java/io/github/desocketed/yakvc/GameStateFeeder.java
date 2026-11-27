@@ -7,6 +7,7 @@ import com.google.gson.JsonParser;
 import com.mojang.authlib.GameProfile;
 import io.github.desocketed.yakvc.config.PlayerVolumes;
 import io.github.desocketed.yakvc.config.Settings;
+import io.github.desocketed.yakvc.config.SettingsWatch;
 import io.github.desocketed.yakvc.config.SoundTuning;
 import io.github.desocketed.yakvc.config.SpatialAudio;
 import io.github.desocketed.yakvc.heads.SpeakingHeads;
@@ -21,6 +22,7 @@ import io.github.desocketed.yakvc.ui.GroupChat;
 import io.github.desocketed.yakvc.ui.SoundTuningScreen;
 import io.github.desocketed.yakvc.ui.VoiceMenuScreen;
 import io.github.desocketed.yakvc.ui.VoiceToasts;
+import java.io.IOException;
 import java.lang.foreign.MemorySegment;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -152,6 +154,9 @@ public final class GameStateFeeder {
 	private final Set<UUID> verifiedPeers = new HashSet<>();
 	private final Set<UUID> talking = new LinkedHashSet<>();
 	private final SpeakingHeads heads = new SpeakingHeads();
+	/** settings.json, looked at once a second for edits by hand. */
+	private final SettingsWatch settingsWatch = new SettingsWatch(YakVcClient.configDir());
+	private int ticksUntilSettingsCheck;
 	private Set<UUID> groupMates = Set.of();
 	/** Peers on another Yak VC version we already told the player about this server session. */
 	private final Set<UUID> versionWarned = new HashSet<>();
@@ -207,6 +212,24 @@ public final class GameStateFeeder {
 		step(this::answerJoins);
 		step(this::refreshStats);
 		step(this::refreshGroupMates);
+		step(this::rereadSettings);
+	}
+
+	/** Applies settings.json once it changes on disk, so it can be tuned by hand while playing. */
+	private void rereadSettings() {
+		if (--ticksUntilSettingsCheck > 0) return;
+		ticksUntilSettingsCheck = 20;
+		Settings changed;
+		try {
+			changed = settingsWatch.changed();
+		} catch (IOException e) {
+			YakVcClient.LOGGER.warn("Ignoring the changed settings: {}", e.getMessage());
+			return;
+		}
+		if (changed == null || changed.equals(settings)) return;
+		String error = applySettings(changed);
+		if (error == null) YakVcClient.LOGGER.info("Applied the changed {}", Settings.FILE_NAME);
+		else YakVcClient.LOGGER.warn("The engine rejected the changed {}: {}", Settings.FILE_NAME, error);
 	}
 
 	/** Polled each tick, so every view that shows players can mark our group mates without asking the engine. */

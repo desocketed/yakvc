@@ -39,6 +39,19 @@ class SettingsTest {
 	}
 
 	@Test
+	void theWatchSeesAnEdit(@TempDir Path dir) throws Exception {
+		Settings.DEFAULT.save(dir);
+		SettingsWatch watch = new SettingsWatch(dir);
+		assertNull(watch.changed());
+		Path file = dir.resolve(Settings.FILE_NAME);
+		Files.writeString(file, "{\"speaking_heads_style\": \"wobble\"}");
+		Files.setLastModifiedTime(file, java.nio.file.attribute.FileTime.fromMillis(
+				Files.getLastModifiedTime(file).toMillis() + 2000));
+		assertEquals(HeadStyle.WOBBLE, watch.changed().speakingHeadsStyle());
+		assertNull(watch.changed(), "once per change");
+	}
+
+	@Test
 	void writesTheDefaultsOnFirstLoad(@TempDir Path dir) throws Exception {
 		assertEquals(Settings.DEFAULT, Settings.load(dir));
 		JsonObject written = JsonParser.parseString(Files.readString(dir.resolve(Settings.FILE_NAME))).getAsJsonObject();

@@ -260,7 +260,7 @@ For testing, or to attach to a bug report, the debug overlay shows what Yak VC i
 
 ## The settings file
 
-Settings live in `config/yakvc/settings.json` in your game folder. Yak VC writes it with every key the first time it starts, and writes the whole file again whenever a setting changes. The game reads the file when it starts, so edit it by hand only while the game is closed. A key you leave out takes its default, and a key Yak VC doesn't know is dropped on the next save.
+Settings live in `config/yakvc/settings.json` in your game folder. Yak VC writes it with every key the first time it starts, and writes the whole file again whenever a setting changes. The game reads the file when it starts and again within a second of any change, so an edit by hand applies while you play (Relay Only, Check for Updates and Voice Server still wait for a restart). A key you leave out takes its default, and a key Yak VC doesn't know is dropped on the next save.
 
 The keys that the settings screen shows:
 
