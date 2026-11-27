@@ -43,7 +43,7 @@ The keys are in Options → Controls → Key Binds, under **Yak VC**.
 | Group | G | Look at a player and press it to invite them to a [group](#groups), or to accept their invite. |
 | Toggle Mute | not bound | Turns your microphone off and on. |
 | Toggle Deafen | not bound | Stops you hearing anyone. Your microphone still works unless you mute it too. |
-| Open Voice Menu | B | Opens the [voice menu](#the-voice-menu), and from there the settings. The pause menu has a button for it too. |
+| Open Voice Menu | none | Opens the [voice menu](#the-voice-menu), and from there the settings. Unbound by default; the pause menu has a button for it too. |
 | Toggle Debug Overlay | not bound | Shows or hides the [debug overlay](#the-debug-overlay). |
 | Open Sound Tuning | not bound | Opens [Sound Tuning](#sound-tuning) straight from the game, handy while someone talks. |
 
