@@ -16,6 +16,7 @@ yakvc-server.workspace = true
 yakvc-proto.workspace = true
 
 [dev-dependencies]
+iroh.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 hound.workspace = true
 

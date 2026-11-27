@@ -14,6 +14,7 @@ use crate::limits::{IpSlots, RateLimiter, Slots, TokenBucket};
 use crate::metrics::Metrics;
 use crate::mojang::SessionServer;
 use crate::relay::RelayGate;
+use crate::rooms::{Board, RoomOptions};
 use crate::sessions::Sessions;
 
 /// How often rate limiters forget idle keys.
@@ -43,6 +44,7 @@ pub struct ServerBuilder {
     session_server: Option<SessionServer>,
     ticket_lifetime: Duration,
     limits: Limits,
+    rooms: Option<RoomOptions>,
     metrics: Option<SocketAddr>,
 }
 
@@ -171,6 +173,8 @@ pub(crate) struct Shared {
     pub session_slots: Slots,
     pub sessions_per_ip: IpSlots,
     pub sessions_unknown_ip: Slots,
+    /// The room list, if enabled.
+    pub rooms: Option<Board>,
     /// Our relay, the only one clients may advertise.
     pub relay_url: Option<RelayUrl>,
     pub metrics: Metrics,
@@ -187,6 +191,7 @@ impl Server {
             session_server: None,
             ticket_lifetime: Duration::from_secs(24 * 3600),
             limits: Limits::default(),
+            rooms: None,
             metrics: None,
         }
     }
@@ -227,6 +232,9 @@ impl Server {
         self.shared
             .sessions
             .close_all(CloseCode::ShuttingDown, "server shutting down");
+        if let Some(rooms) = &self.shared.rooms {
+            rooms.close_all();
+        }
         self.tasks.shutdown().await;
         self.endpoint.close().await;
         if let Some(relay) = self.relay {
@@ -273,6 +281,13 @@ impl ServerBuilder {
         self
     }
 
+    /// Serves the public room list (`yakvc/rooms/1`) with these limits,
+    /// unless `options.enabled` is false. Off by default.
+    pub fn rooms(mut self, options: RoomOptions) -> Self {
+        self.rooms = options.enabled.then_some(options);
+        self
+    }
+
     /// Serves Prometheus metrics at this address.
     pub fn metrics(mut self, addr: SocketAddr) -> Self {
         self.metrics = Some(addr);
@@ -307,7 +322,12 @@ impl ServerBuilder {
             relay_gate = (!options.open).then_some(gate);
         }
 
-        let endpoint = bind_endpoint(self.endpoint_key, self.bind, relay_url.clone()).await?;
+        let mut alpns = vec![rdv::ALPN.to_vec()];
+        if self.rooms.is_some() {
+            alpns.push(yakvc_proto::rooms::ALPN.to_vec());
+        }
+        let endpoint =
+            bind_endpoint(self.endpoint_key, self.bind, relay_url.clone(), alpns).await?;
         if relay_url.is_some() {
             // Until the endpoint is on its relay, a relay_only client's first
             // attempt stalls and can outlast its grace admission. Waiting is
@@ -348,6 +368,7 @@ impl ServerBuilder {
             session_slots: Slots::new(self.limits.max_sessions),
             sessions_per_ip: IpSlots::new(self.limits.max_sessions_per_ip),
             sessions_unknown_ip: Slots::new(self.limits.max_sessions_unknown_ip),
+            rooms: self.rooms.map(Board::new),
             relay_url: relay_url.clone(),
             limits: self.limits,
             sessions,
@@ -384,6 +405,7 @@ async fn bind_endpoint(
     key: SecretKey,
     addr: SocketAddr,
     relay_url: Option<RelayUrl>,
+    alpns: Vec<Vec<u8>>,
 ) -> Result<Endpoint, SpawnError> {
     let bind_error = |e: &dyn std::fmt::Display| SpawnError::Bind {
         addr,
@@ -397,7 +419,7 @@ async fn bind_endpoint(
     // lookup, and only the sockets we were asked to bind.
     let mut builder = Endpoint::builder(presets::Minimal)
         .secret_key(key)
-        .alpns(vec![rdv::ALPN.to_vec()])
+        .alpns(alpns)
         .relay_mode(relay_mode)
         .clear_ip_transports()
         .bind_addr(addr)
@@ -432,6 +454,9 @@ async fn prune_loop(shared: Arc<Shared>) {
         shared.auth_per_ip.lock().unwrap().prune(now);
         if let Some(gate) = &shared.relay_gate {
             gate.prune(now);
+        }
+        if let Some(rooms) = &shared.rooms {
+            rooms.prune(now);
         }
     }
 }
