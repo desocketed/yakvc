@@ -44,7 +44,7 @@ public final class VoiceKeys {
 				KeyMappingHelper.registerKeyMapping(
 						new KeyMapping("key.yakvc.push_to_talk", InputConstants.KEY_V, category)),
 				KeyMappingHelper.registerKeyMapping(
-						new KeyMapping("key.yakvc.group", InputConstants.UNKNOWN.getValue(), category)),
+						new KeyMapping("key.yakvc.group", InputConstants.KEY_G, category)),
 				KeyMappingHelper.registerKeyMapping(
 						new KeyMapping("key.yakvc.mute", InputConstants.UNKNOWN.getValue(), category)),
 				KeyMappingHelper.registerKeyMapping(
@@ -110,7 +110,7 @@ public final class VoiceKeys {
 		this.deafened = deafened;
 	}
 
-	/** The Group key's name for chat and status lines, or a hint to bind it while it is unbound (the default). */
+	/** The Group key's name for chat and status lines, or a hint to bind it if the player unbound it. */
 	public Component groupKeyName() {
 		return group.isUnbound() ? Component.translatable("yakvc.group.key_unbound") : group.getTranslatedKeyMessage();
 	}

@@ -575,11 +575,6 @@ public class YakVcClientGameTest implements FabricClientGameTest {
 			mc.level.getEntity(REMOTE_ENTITY_ID).tickCount = 0;
 		});
 		context.takeScreenshot(TestScreenshotOptions.of("group-invite").disableCounterPrefix());
-		// Group is unbound by default; bind it as a player would.
-		context.runOnClient(mc -> {
-			KeyMapping.get("key.yakvc.group").setKey(InputConstants.Type.KEYBOARD.getOrCreate(InputConstants.KEY_G));
-			KeyMapping.resetMapping();
-		});
 		context.getInput().pressKey(KeyMapping.get("key.yakvc.group"));
 		context.waitFor(mc -> inGroupWith(feeder, REMOTE));
 
