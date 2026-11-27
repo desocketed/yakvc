@@ -8,6 +8,7 @@ import io.github.desocketed.yakvc.YakVcClient;
 import io.github.desocketed.yakvc.config.Settings;
 import io.github.desocketed.yakvc.config.Settings.Acoustics;
 import io.github.desocketed.yakvc.config.SpatialAudio;
+import io.github.desocketed.yakvc.heads.HeadDistort;
 import io.github.desocketed.yakvc.heads.HeadStyle;
 import io.github.desocketed.yakvc.natives.EngineEvent;
 import java.io.IOException;
@@ -101,6 +102,8 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	private final OptionInstance<HeadStyle> headsStyle;
 	/** In tenths. */
 	private final OptionInstance<Integer> headsStrength;
+	private final OptionInstance<HeadDistort> headsDistort;
+	private final OptionInstance<Integer> distortStrength;
 	private final OptionInstance<Boolean> debugOverlay;
 	/** The account line, which follows the rendezvous state while the screen is open. */
 	private @Nullable MultiLineTextWidget accountText;
@@ -219,6 +222,18 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 				(caption, value) -> Options.genericValueLabel(caption,
 						Component.translatable("yakvc.settings.speaking_heads_strength.value", value / 10.0)),
 				new OptionInstance.IntRange(0, (int) (10 * Settings.MAX_HEADS_STRENGTH)), headsStrength(initial),
+				value -> throttle.changed());
+		headsDistort = new OptionInstance<>("yakvc.settings.speaking_heads_distort",
+				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.speaking_heads_distort.tooltip")),
+				(caption, value) -> Component.translatable("yakvc.settings.speaking_heads_distort." + value.key()),
+				new OptionInstance.Enum<>(List.of(HeadDistort.values()),
+						Codec.STRING.xmap(key -> Objects.requireNonNullElse(HeadDistort.of(key), HeadDistort.NONE), HeadDistort::key)),
+				initial.speakingHeadsDistort(), value -> throttle.changed());
+		distortStrength = new OptionInstance<>("yakvc.settings.speaking_heads_distort_strength",
+				OptionInstance.cachedConstantTooltip(Component.translatable("yakvc.settings.speaking_heads_distort_strength.tooltip")),
+				(caption, value) -> Options.genericValueLabel(caption,
+						Component.translatable("yakvc.settings.speaking_heads_strength.value", value / 10.0)),
+				new OptionInstance.IntRange(0, (int) (10 * Settings.MAX_DISTORT_STRENGTH)), distortStrength(initial),
 				value -> throttle.changed());
 		// Unlike the settings above, it isn't saved.
 		debugOverlay = OptionInstance.createBoolean("yakvc.settings.debug_overlay",
@@ -345,6 +360,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		list.addBig(outputDevice);
 		list.addSmall(spatialAudio, speakingHeads);
 		list.addSmall(headsStyle, headsStrength);
+		list.addSmall(headsDistort, distortStrength);
 		// Only Full has reverb and echo: the other levels send the engine open air and no echoes.
 		acousticsShown = spatialAudio.get() == SpatialAudio.FULL;
 		if (acousticsShown) list.addSmall(reverbPercent, echoPercent);
@@ -485,7 +501,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 
 	/** A right click on the threshold, head strength, reverb or echo slider puts it back to its default; true if one was hit. */
 	private boolean resetSlider(MouseButtonEvent event) {
-		for (OptionInstance<Integer> option : List.of(vadThresholdDb, headsStrength, reverbPercent, echoPercent)) {
+		for (OptionInstance<Integer> option : List.of(vadThresholdDb, headsStrength, distortStrength, reverbPercent, echoPercent)) {
 			AbstractWidget widget = list.findOption(option);
 			if (widget == null || !widget.isMouseOver(event.x(), event.y())) continue;
 			option.set(defaultValue(option));
@@ -500,6 +516,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	private int defaultValue(OptionInstance<Integer> option) {
 		if (option == vadThresholdDb) return vadThresholdDb(Settings.DEFAULT);
 		if (option == headsStrength) return headsStrength(Settings.DEFAULT);
+		if (option == distortStrength) return distortStrength(Settings.DEFAULT);
 		return acousticsPercent(Settings.DEFAULT, option == reverbPercent ? Acoustics::reverbLevel : Acoustics::echoLevel);
 	}
 
@@ -536,6 +553,7 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 				.withCheckForUpdates(checkForUpdates.get())
 				.withSpeakingHeads(speakingHeads.get())
 				.withSpeakingHeadsStyle(headsStyle.get())
+				.withSpeakingHeadsDistort(headsDistort.get())
 				.withSpatialAudio(spatialAudio.get())
 				.withNoiseSuppression(noiseSuppression.get())
 				.withInputDevice(deviceValue(inputDevice.get()))
@@ -545,6 +563,9 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 		if (range.get() != Math.round(shownRange(current))) changed = changed.withVoiceRange(range.get());
 		if (headsStrength.get() != headsStrength(current)) {
 			changed = changed.withSpeakingHeadsStrength(headsStrength.get() / 10.0);
+		}
+		if (distortStrength.get() != distortStrength(current)) {
+			changed = changed.withSpeakingHeadsDistortStrength(distortStrength.get() / 10.0);
 		}
 		if (bitrateKbps.get() != current.audio().bitrate() / 1000) changed = changed.withBitrate(bitrateKbps.get() * 1000);
 		if (inputGainPercent.get() != inputGainPercent(current)) {
@@ -582,6 +603,11 @@ public final class VoiceSettingsScreen extends OptionsSubScreen {
 	/** The saved head strength as the slider shows it, in tenths. */
 	private static int headsStrength(Settings settings) {
 		return (int) Math.round(10 * settings.headsStrength());
+	}
+
+	/** The saved distortion strength as the slider shows it, in tenths. */
+	private static int distortStrength(Settings settings) {
+		return (int) Math.round(10 * settings.distortStrength());
 	}
 
 	/** The saved microphone gain as the slider shows it, so an untouched slider never rewrites it. */

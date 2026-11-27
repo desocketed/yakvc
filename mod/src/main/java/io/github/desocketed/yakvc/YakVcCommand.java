@@ -4,6 +4,7 @@ import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.builder.RequiredArgumentBuilder;
 import io.github.desocketed.yakvc.config.Settings;
+import io.github.desocketed.yakvc.heads.HeadDistort;
 import io.github.desocketed.yakvc.heads.HeadStyle;
 import io.github.desocketed.yakvc.ui.VoiceMenuScreen;
 import io.github.desocketed.yakvc.ui.VoiceSettingsScreen;
@@ -15,8 +16,9 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * The client command {@code /yakvc}: alone or with {@code settings} it opens the voice settings, {@code menu} the
- * voice menu, and {@code heads <style> [strength]} switches how voices move heads, and how far, saved like a change in
- * the settings, so styles can be compared without the menus.
+ * voice menu, and {@code heads <style> [strength]} switches how voices move heads, and how far, and
+ * {@code distort <name> [strength]} how they deform them, saved like a change in the settings, so they can be
+ * compared without the menus.
  */
 final class YakVcCommand {
 	private YakVcCommand() {}
@@ -28,6 +30,8 @@ final class YakVcCommand {
 		int menu();
 
 		int heads(S source, HeadStyle style, @Nullable Double strength);
+
+		int distort(S source, HeadDistort distort, @Nullable Double strength);
 	}
 
 	static void register(GameStateFeeder feeder) {
@@ -54,6 +58,17 @@ final class YakVcCommand {
 						changed.headsStrength()));
 				return 1;
 			}
+
+			@Override
+			public int distort(FabricClientCommandSource source, HeadDistort distort, @Nullable Double strength) {
+				Settings changed = feeder.settings().withSpeakingHeadsDistort(distort);
+				if (strength != null) changed = changed.withSpeakingHeadsDistortStrength(strength);
+				if (!VoiceSettingsScreen.applyAndSave(feeder, changed)) return 0;
+				source.sendFeedback(Component.translatable("yakvc.command.distort",
+						Component.translatable("yakvc.settings.speaking_heads_distort." + distort.key()),
+						changed.distortStrength()));
+				return 1;
+			}
 		};
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, context) -> dispatcher.register(tree(actions)));
 	}
@@ -66,10 +81,18 @@ final class YakVcCommand {
 					.then(RequiredArgumentBuilder.<S, Double>argument("strength", DoubleArgumentType.doubleArg(0, Settings.MAX_HEADS_STRENGTH))
 							.executes(c -> actions.heads(c.getSource(), style, DoubleArgumentType.getDouble(c, "strength")))));
 		}
+		LiteralArgumentBuilder<S> distort = LiteralArgumentBuilder.literal("distort");
+		for (HeadDistort kind : HeadDistort.values()) {
+			distort.then(LiteralArgumentBuilder.<S>literal(kind.key())
+					.executes(c -> actions.distort(c.getSource(), kind, null))
+					.then(RequiredArgumentBuilder.<S, Double>argument("strength", DoubleArgumentType.doubleArg(0, Settings.MAX_DISTORT_STRENGTH))
+							.executes(c -> actions.distort(c.getSource(), kind, DoubleArgumentType.getDouble(c, "strength")))));
+		}
 		return LiteralArgumentBuilder.<S>literal("yakvc")
 				.executes(c -> actions.settings())
 				.then(LiteralArgumentBuilder.<S>literal("settings").executes(c -> actions.settings()))
 				.then(LiteralArgumentBuilder.<S>literal("menu").executes(c -> actions.menu()))
-				.then(heads);
+				.then(heads)
+				.then(distort);
 	}
 }
