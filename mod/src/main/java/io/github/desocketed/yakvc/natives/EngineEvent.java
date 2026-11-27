@@ -25,6 +25,9 @@ public sealed interface EngineEvent {
 	/** A peer, or the local player, started or stopped talking. */
 	record Talking(UUID uuid, boolean talking) implements EngineEvent {}
 
+	/** How a talking peer sounds, 25 times a second: its level in dBFS and pitch in Hz, 0 when unvoiced. */
+	record Speech(UUID uuid, float levelDb, float pitchHz) implements EngineEvent {}
+
 	/** Local microphone level in dBFS, about 10 times a second. */
 	record MicLevel(float db) implements EngineEvent {}
 
@@ -86,6 +89,7 @@ public sealed interface EngineEvent {
 					case 6 -> new Error(utf8(payload));
 					case 7 -> new Invite(uuid(payload));
 					case 9 -> new InviteRequest(uuid(payload));
+					case 10 -> new Speech(uuid(payload), payload.getFloat(), payload.getFloat());
 					case 8 -> {
 						NoticeKind kind = lookup(NoticeKind.values(), payload.get());
 						UUID uuid = uuid(payload);

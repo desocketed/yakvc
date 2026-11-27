@@ -24,6 +24,7 @@ class EngineEventTest {
 		record(out, 5, le(4).putFloat(-12.5f).array());
 		record(out, 99, new byte[] {1, 2, 3});
 		record(out, 6, "no mic".getBytes(StandardCharsets.UTF_8));
+		record(out, 10, UUID_BYTES, le(8).putFloat(-20.5f).putFloat(140f).array());
 		byte[] buf = out.toByteArray();
 
 		assertEquals(List.of(
@@ -32,7 +33,8 @@ class EngineEventTest {
 				new EngineEvent.Peer(ID, EngineEvent.PeerState.DIRECT, false),
 				new EngineEvent.Talking(ID, true),
 				new EngineEvent.MicLevel(-12.5f),
-				new EngineEvent.Error("no mic")), EngineEvent.decode(buf, buf.length));
+				new EngineEvent.Error("no mic"),
+				new EngineEvent.Speech(ID, -20.5f, 140f)), EngineEvent.decode(buf, buf.length));
 	}
 
 	@Test
