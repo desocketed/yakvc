@@ -59,6 +59,7 @@
 	"yakvc.groups.error.label": "Labels are at most 32 characters",
 	"yakvc.groups.error.gone": "That group is gone",
 
+	"yakvc.group.key_unbound": "the Group key (bind it in Controls)",
 	"yakvc.group.no_target": "Look at a player to invite them to a group",
 	"yakvc.group.already_in": "%s is already in your group",
 	"yakvc.group.no_voice": "%s has no voice connection",

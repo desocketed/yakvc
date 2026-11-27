@@ -121,13 +121,13 @@ public final class GroupChat {
 		invites.values().removeIf(at -> now - at >= INVITE_NANOS);
 		invites.put(from, now);
 		chat(Component.translatable("yakvc.group.invite", feeder.name(from),
-				feeder.keys().group.getTranslatedKeyMessage()));
+				feeder.keys().groupKeyName()));
 	}
 
 	/** {@code from} asked us to invite them: says so in chat, with the key that does. */
 	public void inviteRequested(UUID from) {
 		chat(Component.translatable("yakvc.group.request", feeder.name(from),
-				feeder.keys().group.getTranslatedKeyMessage()));
+				feeder.keys().groupKeyName()));
 	}
 
 	/** Whether {@code from} sent us an invite we haven't accepted. For tests. */
