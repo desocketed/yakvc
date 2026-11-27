@@ -50,7 +50,7 @@ public final class VoiceKeys {
 				KeyMappingHelper.registerKeyMapping(
 						new KeyMapping("key.yakvc.deafen", InputConstants.UNKNOWN.getValue(), category)),
 				KeyMappingHelper.registerKeyMapping(
-						new KeyMapping("key.yakvc.open_menu", InputConstants.KEY_B, category)),
+						new KeyMapping("key.yakvc.open_menu", InputConstants.UNKNOWN.getValue(), category)),
 				KeyMappingHelper.registerKeyMapping(
 						new KeyMapping("key.yakvc.debug_overlay", InputConstants.UNKNOWN.getValue(), category)),
 				KeyMappingHelper.registerKeyMapping(

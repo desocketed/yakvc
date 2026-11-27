@@ -7,8 +7,10 @@ import com.google.gson.JsonParser;
 import com.mojang.authlib.GameProfile;
 import io.github.desocketed.yakvc.config.PlayerVolumes;
 import io.github.desocketed.yakvc.config.Settings;
+import io.github.desocketed.yakvc.config.SettingsWatch;
 import io.github.desocketed.yakvc.config.SoundTuning;
 import io.github.desocketed.yakvc.config.SpatialAudio;
+import io.github.desocketed.yakvc.heads.SpeakingHeads;
 import io.github.desocketed.yakvc.input.VoiceKeys;
 import io.github.desocketed.yakvc.natives.EngineEvent;
 import io.github.desocketed.yakvc.natives.NativeBridge;
@@ -20,6 +22,7 @@ import io.github.desocketed.yakvc.ui.GroupChat;
 import io.github.desocketed.yakvc.ui.SoundTuningScreen;
 import io.github.desocketed.yakvc.ui.VoiceMenuScreen;
 import io.github.desocketed.yakvc.ui.VoiceToasts;
+import java.io.IOException;
 import java.lang.foreign.MemorySegment;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -33,9 +36,11 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Supplier;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.client.multiplayer.PlayerInfo;
 import net.minecraft.client.player.AbstractClientPlayer;
@@ -151,6 +156,11 @@ public final class GameStateFeeder {
 	private final Set<UUID> verifiedPeers = new HashSet<>();
 	private final Set<UUID> talking = new LinkedHashSet<>();
 	private final SpeakingHeads heads = new SpeakingHeads();
+	/** settings.json, looked at once a second for edits by hand. */
+	private final SettingsWatch settingsWatch = new SettingsWatch(YakVcClient.configDir());
+	private int ticksUntilSettingsCheck;
+	/** A screen a command asked for, opened on the next tick, once the chat that ran it has closed. */
+	private @Nullable Supplier<Screen> screenSoon;
 	private Set<UUID> groupMates = Set.of();
 	/** Peers on another Yak VC version we already told the player about this server session. */
 	private final Set<UUID> versionWarned = new HashSet<>();
@@ -179,6 +189,7 @@ public final class GameStateFeeder {
 		this.startedRelayOnly = settings.relayOnly();
 		this.tuning = SoundTuning.of(settings.acoustics());
 		this.spatialAudio = settings.spatialAudio();
+		heads.style(settings.speakingHeadsStyle());
 		this.keys = keys;
 		this.joiner = joiner;
 		this.volumes = volumes;
@@ -205,6 +216,24 @@ public final class GameStateFeeder {
 		step(this::answerJoins);
 		step(this::refreshStats);
 		step(this::refreshGroupMates);
+		step(this::rereadSettings);
+	}
+
+	/** Applies settings.json once it changes on disk, so it can be tuned by hand while playing. */
+	private void rereadSettings() {
+		if (--ticksUntilSettingsCheck > 0) return;
+		ticksUntilSettingsCheck = 20;
+		Settings changed;
+		try {
+			changed = settingsWatch.changed();
+		} catch (IOException e) {
+			YakVcClient.LOGGER.warn("Ignoring the changed settings: {}", e.getMessage());
+			return;
+		}
+		if (changed == null || changed.equals(settings)) return;
+		String error = applySettings(changed);
+		if (error == null) YakVcClient.LOGGER.info("Applied the changed {}", Settings.FILE_NAME);
+		else YakVcClient.LOGGER.warn("The engine rejected the changed {}: {}", Settings.FILE_NAME, error);
 	}
 
 	/** Polled each tick, so every view that shows players can mark our group mates without asking the engine. */
@@ -233,6 +262,9 @@ public final class GameStateFeeder {
 		flyFaster(minecraft);
 		if (settings.devMode()) devCommands.tick(minecraft);
 		if (keys.debugOverlayPressed()) setDebugOverlay(!debugOverlay);
+		Supplier<Screen> soon = screenSoon;
+		screenSoon = null;
+		if (soon != null) minecraft.gui.setScreen(soon.get());
 		if (keys.menuPressed() && minecraft.gui.screen() == null) {
 			minecraft.gui.setScreen(new VoiceMenuScreen(null, this));
 		}
@@ -332,6 +364,7 @@ public final class GameStateFeeder {
 		settings = changed;
 		tuning = SoundTuning.of(changed.acoustics());
 		spatialAudio = changed.spatialAudio();
+		heads.style(changed.speakingHeadsStyle());
 		ticksUntilBlockedRefresh = 0;
 		return null;
 	}
@@ -818,6 +851,11 @@ public final class GameStateFeeder {
 	/** The other members of our voice group, as of the last tick; empty in no group. */
 	public Set<UUID> groupMates() {
 		return groupMates;
+	}
+
+	/** Opens {@code screen} on the next tick, for a command: the chat that ran it closes after it. */
+	public void openSoon(Supplier<Screen> screen) {
+		screenSoon = screen;
 	}
 
 	/** How talking players' heads move with their voices. */

@@ -1,8 +1,8 @@
 package io.github.desocketed.yakvc.mixin;
 
 import io.github.desocketed.yakvc.GameStateFeeder;
-import io.github.desocketed.yakvc.HeadMotion;
 import io.github.desocketed.yakvc.YakVcClient;
+import io.github.desocketed.yakvc.heads.HeadMotion;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.model.HumanoidModel;
 import net.minecraft.client.model.geom.ModelPart;
@@ -31,9 +31,10 @@ abstract class PlayerModelMixin {
 		if (entity == null) return;
 		HeadMotion motion = feeder.heads().at(entity.getUUID(), System.nanoTime());
 		if (motion == null) return;
+		float strength = (float) feeder.settings().headsStrength();
 		ModelPart head = ((HumanoidModel<?>) (Object) this).head;
-		head.xRot += motion.xRot();
-		head.yRot += motion.yRot();
-		head.zRot += motion.zRot();
+		head.xRot += strength * motion.xRot();
+		head.yRot += strength * motion.yRot();
+		head.zRot += strength * motion.zRot();
 	}
 }

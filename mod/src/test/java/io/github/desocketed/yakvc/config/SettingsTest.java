@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import io.github.desocketed.yakvc.heads.HeadStyle;
 import io.github.desocketed.yakvc.natives.NativeBridge;
 import io.github.desocketed.yakvc.natives.NativeLoader;
 import io.github.desocketed.yakvc.natives.YakVcException;
@@ -22,6 +23,34 @@ import org.junit.jupiter.api.io.CleanupMode;
 import org.junit.jupiter.api.io.TempDir;
 
 class SettingsTest {
+	@Test
+	void speakingHeadsStyleAndStrength() throws Exception {
+		assertEquals(HeadStyle.NOD, Settings.DEFAULT.speakingHeadsStyle());
+		assertEquals(2, Settings.DEFAULT.headsStrength());
+		Settings bobble = Settings.parse("""
+				{"speaking_heads_style": "bobble", "speaking_heads_strength": 2.5}""");
+		assertEquals(HeadStyle.BOBBLE, bobble.speakingHeadsStyle());
+		assertEquals(2.5, bobble.headsStrength());
+		assertEquals(Settings.MAX_HEADS_STRENGTH, Settings.parse("{\"speaking_heads_strength\": 99}").headsStrength());
+		assertEquals(0, Settings.parse("{\"speaking_heads_strength\": -1}").headsStrength());
+		assertEquals(Settings.DEFAULT.withSpeakingHeadsStyle(HeadStyle.JAW).withSpeakingHeadsStrength(3),
+				Settings.parse("{\"speaking_heads_style\": \"jaw\", \"speaking_heads_strength\": 3}"));
+		assertThrows(IOException.class, () -> Settings.parse("{\"speaking_heads_style\": \"spin\"}"));
+	}
+
+	@Test
+	void theWatchSeesAnEdit(@TempDir Path dir) throws Exception {
+		Settings.DEFAULT.save(dir);
+		SettingsWatch watch = new SettingsWatch(dir);
+		assertNull(watch.changed());
+		Path file = dir.resolve(Settings.FILE_NAME);
+		Files.writeString(file, "{\"speaking_heads_style\": \"wobble\"}");
+		Files.setLastModifiedTime(file, java.nio.file.attribute.FileTime.fromMillis(
+				Files.getLastModifiedTime(file).toMillis() + 2000));
+		assertEquals(HeadStyle.WOBBLE, watch.changed().speakingHeadsStyle());
+		assertNull(watch.changed(), "once per change");
+	}
+
 	@Test
 	void writesTheDefaultsOnFirstLoad(@TempDir Path dir) throws Exception {
 		assertEquals(Settings.DEFAULT, Settings.load(dir));

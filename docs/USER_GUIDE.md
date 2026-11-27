@@ -43,11 +43,11 @@ The keys are in Options → Controls → Key Binds, under **Yak VC**.
 | Group | G | Look at a player and press it to invite them to a [group](#groups), or to accept their invite. |
 | Toggle Mute | not bound | Turns your microphone off and on. |
 | Toggle Deafen | not bound | Stops you hearing anyone. Your microphone still works unless you mute it too. |
-| Open Voice Menu | B | Opens the [voice menu](#the-voice-menu), and from there the settings. The pause menu has a button for it too. |
+| Open Voice Menu | none | Opens the [voice menu](#the-voice-menu), and from there the settings. Unbound by default; the pause menu has a button for it too, and `/yakvc menu` in chat opens it. |
 | Toggle Debug Overlay | not bound | Shows or hides the [debug overlay](#the-debug-overlay). |
 | Open Sound Tuning | not bound | Opens [Sound Tuning](#sound-tuning) straight from the game, handy while someone talks. |
 
-Mute, deafen, the debug overlay and sound tuning are unbound so they don't clash with other mods. The settings are always reachable without a key, from **Voice Chat…** in the game's Music & Sounds options (see [Settings](#settings)).
+The voice menu, mute, deafen, the debug overlay and sound tuning are unbound so they don't clash with other mods; bind them in Controls if you want keys. The voice menu is always reachable from the pause menu's microphone button or `/yakvc menu`, and the settings from **Voice Chat…** in the game's Music & Sounds options or `/yakvc` (see [Settings](#settings)).
 
 ## The HUD
 
@@ -77,7 +77,7 @@ A green speaker floats over the head of every player who is talking, above their
 
 ![A speaker over a talking player](guide/talking-indicator.png)
 
-While someone talks, their head moves with their voice: it nods on stressed syllables, sways a little more the louder they are, and tilts up slightly when their voice rises. Only standing players move this way; **Speaking Heads** in the [settings](#settings) turns it off.
+While someone talks, their head moves with their voice: it nods on stressed syllables, sways a little more the louder they are, and tilts up slightly when their voice rises. Only standing players move this way; **Speaking Heads** in the [settings](#settings) turns it off, **Head Style** picks another way of moving and **Head Strength** scales it from still (0) to exaggerated (4, default 2). Both only change how your game shows other players; nobody else sees your choice. `/yakvc heads <style> [strength]` in chat switches both at once, for example `/yakvc heads bobble 2`.
 
 ## The voice menu
 
@@ -133,7 +133,7 @@ The game's own Voice/Speech slider (Options → Music & Sounds) sets the volume 
 
 ## Settings
 
-Open the settings from **Options → Music & Sounds → Voice Chat…**, at the end of the sound options, which works on the title screen as well as in game. **Settings…** in the voice menu opens them too, and so does [Mod Menu](https://modrinth.com/mod/modmenu) if you have it installed: in its **Mods** list, select Yak VC and press the small settings button at the right of its name. **Done** goes back to where you came from. Like the game's own options, a change applies and is saved as soon as you make it, so you can hear it right away; if Yak VC can't use a value, a toast says why and the setting goes back to what was in effect.
+Open the settings from **Options → Music & Sounds → Voice Chat…**, at the end of the sound options, which works on the title screen as well as in game. **Settings…** in the voice menu and `/yakvc` (or `/yakvc settings`) in chat open them too, and so does [Mod Menu](https://modrinth.com/mod/modmenu) if you have it installed: in its **Mods** list, select Yak VC and press the small settings button at the right of its name. **Done** goes back to where you came from. Like the game's own options, a change applies and is saved as soon as you make it, so you can hear it right away; if Yak VC can't use a value, a toast says why and the setting goes back to what was in effect.
 
 ![Voice Chat… in the Music & Sounds options](guide/sound-options.png)
 
@@ -260,7 +260,7 @@ For testing, or to attach to a bug report, the debug overlay shows what Yak VC i
 
 ## The settings file
 
-Settings live in `config/yakvc/settings.json` in your game folder. Yak VC writes it with every key the first time it starts, and writes the whole file again whenever a setting changes. The game reads the file when it starts, so edit it by hand only while the game is closed. A key you leave out takes its default, and a key Yak VC doesn't know is dropped on the next save.
+Settings live in `config/yakvc/settings.json` in your game folder. Yak VC writes it with every key the first time it starts, and writes the whole file again whenever a setting changes. The game reads the file when it starts and again within a second of any change, so an edit by hand applies while you play (Relay Only, Check for Updates and Voice Server still wait for a restart). A key you leave out takes its default, and a key Yak VC doesn't know is dropped on the next save.
 
 The keys that the settings screen shows:
 
@@ -275,6 +275,8 @@ The keys that the settings screen shows:
 | `check_for_updates` | `true` | Check for Updates |
 | `invites` | `"everyone"` | Group Invites (`"everyone"`, `"friends"` or `"nobody"`) |
 | `friends_only` | `false` | Friends Only |
+| `speaking_heads_style` | `"nod"` | Head Style (`"nod"`, `"bobble"`, `"prosody"`, `"jaw"` or `"wobble"`) |
+| `speaking_heads_strength` | `2.0` | Head Strength, from 0 (still) to 4 (exaggerated) |
 | `audio.activation` | `"push_to_talk"` | Activation (`"push_to_talk"` or `"voice"`) |
 | `audio.vad_threshold_db` | `-45.0` | Voice Activation Threshold, from -100 (everything) to 0 (very loud only) |
 | `audio.bitrate` | `24000` | Bitrate, in bits per second |
@@ -301,6 +303,8 @@ A few more are only in the file:
 | `verified_only` | `false` | Only talk with players whose account is verified |
 | `invites` | `"everyone"` | Who may invite you to a group: `"everyone"` or `"nobody"` |
 | `speaking_heads` | `true` | Other players' heads nod and sway with their voices while they talk, standing |
+| `speaking_heads_style` | `"nod"` | How: `"nod"` (nods on stressed syllables), `"bobble"` (a cartoon bounce), `"prosody"` (follows the voice's melody), `"jaw"` (dips on every syllable) or `"wobble"` (wobbles sideways on emphasis) |
+| `speaking_heads_strength` | `2.0` | How far, from 0 (still) to 4 (exaggerated) |
 | `audio.activation` | `"push_to_talk"` | `"push_to_talk"` or `"voice"` |
 | `audio.vad_threshold_db` | `-45.0` | Voice activation threshold, from -100 (everything) to 0 (very loud only) |
 | `audio.bitrate` | `24000` | Sound quality, in bits per second |

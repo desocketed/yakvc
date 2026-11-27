@@ -1,15 +1,15 @@
-package io.github.desocketed.yakvc;
+package io.github.desocketed.yakvc.heads;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
 
-class HeadMotionTest {
+class NodTest {
 	private static final double FRAME = 1 / 60.0;
 
 	/** Runs {@code seconds} at 60 frames a second, feeding {@code level} and {@code pitch} at 25 Hz. */
-	private static double[] run(HeadMotion motion, double seconds, double levelDb, double pitchHz) {
+	private static double[] run(Nod motion, double seconds, double levelDb, double pitchHz) {
 		double maxNod = 0, maxSway = 0;
 		double untilFeatures = 0;
 		for (double t = 0; t < seconds; t += FRAME) {
@@ -26,24 +26,24 @@ class HeadMotionTest {
 	}
 
 	/** Advances {@code seconds} in frames, with no features. */
-	private static void idle(HeadMotion motion, double seconds) {
+	private static void idle(Nod motion, double seconds) {
 		int frames = (int) Math.round(seconds / FRAME);
 		for (int i = 0; i < frames; i++) motion.advance(seconds / frames);
 	}
 
 	@Test
 	void silenceStaysStill() {
-		HeadMotion motion = new HeadMotion(1);
+		Nod motion = new Nod(1);
 		double[] peak = run(motion, 2, -100, 0);
 		assertEquals(0, peak[0], 1e-6);
 		assertEquals(0, peak[1], 1e-6);
-		idle(motion, HeadMotion.STALE + FRAME);
+		idle(motion, Voice.STALE + FRAME);
 		assertTrue(motion.resting());
 	}
 
 	@Test
 	void anOnsetNodsAndSettles() {
-		HeadMotion motion = new HeadMotion(1);
+		Nod motion = new Nod(1);
 		run(motion, 0.5, -100, 0);
 		double nod = run(motion, 0.2, -20, 120)[0];
 		assertTrue(nod > 0.03 && nod < 0.15, "nod of " + nod + " rad");
@@ -56,8 +56,8 @@ class HeadMotionTest {
 
 	@Test
 	void pitchAccentNodsHarder() {
-		HeadMotion flat = new HeadMotion(1);
-		HeadMotion accented = new HeadMotion(1);
+		Nod flat = new Nod(1);
+		Nod accented = new Nod(1);
 		run(flat, 1, -45, 120);
 		run(accented, 1, -45, 120);
 		double plain = run(flat, 0.2, -20, 120)[0];
@@ -67,15 +67,15 @@ class HeadMotionTest {
 
 	@Test
 	void swayGrowsWithLoudness() {
-		double quiet = run(new HeadMotion(1), 3, -42, 120)[1];
-		double loud = run(new HeadMotion(1), 3, -18, 120)[1];
+		double quiet = run(new Nod(1), 3, -42, 120)[1];
+		double loud = run(new Nod(1), 3, -18, 120)[1];
 		assertTrue(loud > 2 * quiet, quiet + " vs " + loud);
-		assertTrue(loud <= HeadMotion.SWAY);
+		assertTrue(loud <= Nod.SWAY);
 	}
 
 	@Test
 	void higherPitchRaisesTheHead() {
-		HeadMotion motion = new HeadMotion(1);
+		Nod motion = new Nod(1);
 		run(motion, 2, -20, 120);
 		double usual = motion.xRot();
 		run(motion, 0.5, -20, 170);
@@ -84,15 +84,15 @@ class HeadMotionTest {
 
 	@Test
 	void envelopeAttacksFasterThanItReleases() {
-		HeadMotion rising = new HeadMotion(0);
-		rising.features(HeadMotion.LOUD_DB, 0);
-		rising.advance(HeadMotion.ATTACK);
+		Nod rising = new Nod(0);
+		rising.features(Voice.LOUD_DB, 0);
+		rising.advance(Voice.ATTACK);
 		assertEquals(1 - Math.exp(-1), rising.envelope(), 0.01);
-		HeadMotion falling = new HeadMotion(0);
-		run(falling, 1, HeadMotion.LOUD_DB, 0);
-		idle(falling, HeadMotion.STALE + FRAME);
+		Nod falling = new Nod(0);
+		run(falling, 1, Voice.LOUD_DB, 0);
+		idle(falling, Voice.STALE + FRAME);
 		double start = falling.envelope();
-		idle(falling, HeadMotion.RELEASE);
+		idle(falling, Voice.RELEASE);
 		assertEquals(start * Math.exp(-1), falling.envelope(), 0.01);
 	}
 }

@@ -6,11 +6,13 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import io.github.desocketed.yakvc.heads.HeadStyle;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import static java.util.stream.Collectors.joining;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -33,6 +35,8 @@ import org.jspecify.annotations.Nullable;
  * @param checkForUpdates         ask GitHub for a newer Yak VC at startup
  * @param friendsOnly             only the players marked as friends in the voice menu are heard and sent to
  * @param speakingHeads           other players' heads move with their voices
+ * @param speakingHeadsStrength   how far they move: 1 as each style is tuned, 0 still, up to {@link #MAX_HEADS_STRENGTH}
+ * @param speakingHeadsStyle      how they move; this and the strength only change how this client draws others
  * @param devMode                 accept dev tickets and test audio, for development against a local server
  * @param rendezvous              another voice server than the built-in one
  * @param trustedIssuers          issuers whose tickets are accepted; a {@code rendezvous} needs its issuer listed
@@ -41,11 +45,14 @@ import org.jspecify.annotations.Nullable;
  */
 public record Settings(double voiceRange, SpatialAudio spatialAudio, boolean relayOnly, boolean respectChatRestrictions,
 		boolean muteBlockedPlayers, boolean verifiedOnly, String invites, boolean friendsOnly, boolean setupDone,
-		boolean checkForUpdates, Audio audio, Acoustics acoustics, boolean speakingHeads, boolean devMode, Dev dev,
+		boolean checkForUpdates, Audio audio, Acoustics acoustics, boolean speakingHeads,
+		double speakingHeadsStrength, HeadStyle speakingHeadsStyle, boolean devMode, Dev dev,
 		@Nullable Rendezvous rendezvous, List<String> trustedIssuers, @Nullable String server) {
 	public static final String FILE_NAME = "settings.json";
+	public static final double MAX_HEADS_STRENGTH = 4;
 	public static final Settings DEFAULT = new Settings(256, SpatialAudio.FULL, false, true, true, false, "everyone",
-			false, false, true, Audio.DEFAULT, Acoustics.DEFAULT, true, false, Dev.DEFAULT, null, List.of(), null);
+			false, false, true, Audio.DEFAULT, Acoustics.DEFAULT, true, 2, HeadStyle.NOD,
+			false, Dev.DEFAULT, null, List.of(), null);
 	/** Nulls are written too, so the file shows every key, and the JSON keys are the engine's snake case. */
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().serializeNulls()
 			.setFieldNamingPolicy(FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES).create();
@@ -111,6 +118,10 @@ public record Settings(double voiceRange, SpatialAudio spatialAudio, boolean rel
 			Settings parsed = GSON.fromJson(settings, Settings.class);
 			// Gson turns a value that is no level into null rather than complaining.
 			if (parsed.spatialAudio() == null) throw new IOException("spatial_audio must be \"off\", \"simple\" or \"full\"");
+			if (parsed.speakingHeadsStyle() == null) {
+				throw new IOException("speaking_heads_style must be one of " + Arrays.stream(HeadStyle.values())
+						.map(style -> '"' + style.key() + '"').collect(joining(", ")));
+			}
 			return parsed;
 		} catch (RuntimeException e) {
 			throw new IOException(FILE_NAME + ": " + e.getMessage(), e);
@@ -277,6 +288,19 @@ public record Settings(double voiceRange, SpatialAudio spatialAudio, boolean rel
 
 	public Settings withSpeakingHeads(boolean on) {
 		return with("", "speaking_heads", on);
+	}
+
+	public Settings withSpeakingHeadsStrength(double strength) {
+		return with("", "speaking_heads_strength", strength);
+	}
+
+	public Settings withSpeakingHeadsStyle(HeadStyle style) {
+		return with("", "speaking_heads_style", style.key());
+	}
+
+	/** {@code speaking_heads_strength} within 0 to {@link #MAX_HEADS_STRENGTH}, whatever the file says. */
+	public double headsStrength() {
+		return Double.isNaN(speakingHeadsStrength) ? DEFAULT.speakingHeadsStrength : Math.clamp(speakingHeadsStrength, 0, MAX_HEADS_STRENGTH);
 	}
 
 	public Settings withActivation(String activation) {

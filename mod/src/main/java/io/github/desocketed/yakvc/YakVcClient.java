@@ -138,6 +138,7 @@ public final class YakVcClient implements ClientModInitializer {
 		HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("yakvc", "voice"), new VoiceHud(feeder));
 		HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("yakvc", "debug"), new DebugOverlay(feeder));
 		LevelRenderEvents.COLLECT_SUBMITS.register(new TalkingIndicator(feeder)::submit);
+		YakVcCommand.register(feeder);
 	}
 
 	/**
