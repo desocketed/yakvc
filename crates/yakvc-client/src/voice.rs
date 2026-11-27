@@ -21,7 +21,7 @@ use tokio::sync::watch;
 use yakvc_audio::{
     AudioError, DeviceChoice, Encoder, FRAME_DURATION, FRAME_SAMPLES, FrameSink, FrameSource,
     InputConfig, InputProcessor, JitterConfig, Microphone, Mixer, MonoFrame, Muffle, Packet,
-    Pulled, ReceiveStream, Speakers, StereoFrame, StreamStats, level_db,
+    Pulled, ReceiveStream, Speakers, SpeechAnalyser, StereoFrame, StreamStats, level_db,
 };
 use yakvc_proto::peer::CloseCode;
 use yakvc_proto::voice::{VERSION, VoiceHeader, VoiceMsg};
@@ -702,6 +702,7 @@ struct Remote {
     link_id: usize,
     stream: ReceiveStream,
     muffle: Muffle,
+    speech: SpeechAnalyser,
     /// Its latest frame had the `group` flag: it is speaking to our group.
     group: bool,
     talking: bool,
@@ -1019,6 +1020,7 @@ impl AudioLoop {
             link_id: frame.link_id,
             stream: ReceiveStream::new(JitterConfig::default()),
             muffle: Muffle::new(),
+            speech: SpeechAnalyser::new(),
             group: false,
             talking: false,
             silent_frames: TALKING_HANGOVER_FRAMES,
@@ -1076,6 +1078,24 @@ impl AudioLoop {
                 Pulled::Silence => None,
             };
             let talking_frame = heard.is_some() && level_db(&frame) > TALKING_LEVEL_DB;
+            if talking_frame {
+                remote.silent_frames = 0;
+            } else {
+                remote.silent_frames = remote.silent_frames.saturating_add(1);
+            }
+            let talking = remote.silent_frames < TALKING_HANGOVER_FRAMES;
+            if talking != remote.talking {
+                remote.talking = talking;
+                talking_changes.push((uuid, talking));
+            }
+            // Only while talking, so a silent peer costs nothing.
+            if let Some(features) = talking.then(|| remote.speech.push(&frame)).flatten() {
+                self.shared.events.send(Event::Speech {
+                    uuid,
+                    level_db: features.level_db,
+                    pitch_hz: features.pitch_hz,
+                });
+            }
             if let Some(playback) = heard {
                 match &mut self.voice_sink {
                     // The sink does its own acoustics, so it gets the frame
@@ -1115,16 +1135,6 @@ impl AudioLoop {
                         }
                     }
                 }
-            }
-            if talking_frame {
-                remote.silent_frames = 0;
-            } else {
-                remote.silent_frames = remote.silent_frames.saturating_add(1);
-            }
-            let talking = remote.silent_frames < TALKING_HANGOVER_FRAMES;
-            if talking != remote.talking {
-                remote.talking = talking;
-                talking_changes.push((uuid, talking));
             }
         }
         for (uuid, talking) in talking_changes {
@@ -1773,6 +1783,7 @@ mod tests {
                 link_id: 0,
                 stream: ReceiveStream::new(JitterConfig::default()),
                 muffle: Muffle::new(),
+                speech: SpeechAnalyser::new(),
                 group: false,
                 talking: true,
                 silent_frames: 0,

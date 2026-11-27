@@ -150,6 +150,7 @@ public final class GameStateFeeder {
 	private final Map<UUID, EngineEvent.PeerState> peers = new HashMap<>();
 	private final Set<UUID> verifiedPeers = new HashSet<>();
 	private final Set<UUID> talking = new LinkedHashSet<>();
+	private final SpeakingHeads heads = new SpeakingHeads();
 	private Set<UUID> groupMates = Set.of();
 	/** Peers on another Yak VC version we already told the player about this server session. */
 	private final Set<UUID> versionWarned = new HashSet<>();
@@ -242,6 +243,8 @@ public final class GameStateFeeder {
 		step(() -> feedIdentity(minecraft, session));
 		if (session != null) session.tick();
 		else talking.clear();
+		if (session == null) heads.clear();
+		else heads.prune();
 		// Groups last one server session.
 		if (session == null && hadSession) {
 			step(this::leaveGroup);
@@ -676,6 +679,7 @@ public final class GameStateFeeder {
 			case EngineEvent.Peer(UUID uuid, EngineEvent.PeerState state, boolean isVerified) -> {
 				if (state == EngineEvent.PeerState.GONE) {
 					talking.remove(uuid);
+					heads.forget(uuid);
 					peers.remove(uuid);
 					verifiedPeers.remove(uuid);
 				} else {
@@ -692,6 +696,9 @@ public final class GameStateFeeder {
 				else talking.remove(uuid);
 				// DEBUG, because every talk spurt changes it and a long conversation would flood latest.log.
 				YakVcClient.LOGGER.debug("Talking {} {} {}", uuid, name(uuid), isTalking);
+			}
+			case EngineEvent.Speech(UUID uuid, float levelDb, float pitchHz) -> {
+				if (settings.speakingHeads()) heads.speech(uuid, levelDb, pitchHz, System.nanoTime());
 			}
 			case EngineEvent.MicLevel(float db) -> {
 				// Levels only arrive while the microphone (or the dev test tone) delivers audio, so the first one
@@ -811,6 +818,11 @@ public final class GameStateFeeder {
 	/** The other members of our voice group, as of the last tick; empty in no group. */
 	public Set<UUID> groupMates() {
 		return groupMates;
+	}
+
+	/** How talking players' heads move with their voices. */
+	public SpeakingHeads heads() {
+		return heads;
 	}
 
 	/** Who is talking right now, the local player included. */

@@ -123,6 +123,16 @@ pub(crate) fn encode(event: &Event) -> Vec<u8> {
             payload.push(u8::from(*talking));
             YAKVC_EVENT_TALKING
         }
+        Event::Speech {
+            uuid,
+            level_db,
+            pitch_hz,
+        } => {
+            payload.extend(uuid.as_bytes());
+            payload.extend(level_db.to_le_bytes());
+            payload.extend(pitch_hz.unwrap_or(0.0).to_le_bytes());
+            YAKVC_EVENT_SPEECH
+        }
         Event::Invite { from } => {
             payload.extend(from.as_bytes());
             YAKVC_EVENT_INVITE
@@ -264,6 +274,27 @@ mod tests {
         let mut payload = UUID_BYTES.to_vec();
         payload.push(1);
         assert_eq!(encode(&event), record(YAKVC_EVENT_TALKING, &payload));
+    }
+
+    #[test]
+    fn encodes_speech() {
+        let voiced = Event::Speech {
+            uuid: UUID,
+            level_db: -20.5,
+            pitch_hz: Some(140.0),
+        };
+        let mut payload = UUID_BYTES.to_vec();
+        payload.extend((-20.5f32).to_le_bytes());
+        payload.extend(140f32.to_le_bytes());
+        assert_eq!(encode(&voiced), record(YAKVC_EVENT_SPEECH, &payload));
+        let unvoiced = Event::Speech {
+            uuid: UUID,
+            level_db: -20.5,
+            pitch_hz: None,
+        };
+        payload.truncate(UUID_BYTES.len() + 4);
+        payload.extend(0f32.to_le_bytes());
+        assert_eq!(encode(&unvoiced), record(YAKVC_EVENT_SPEECH, &payload));
     }
 
     #[test]

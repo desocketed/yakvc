@@ -22,6 +22,7 @@
 //! | [`YAKVC_EVENT_ERROR`] | message as UTF-8 |
 //! | [`YAKVC_EVENT_INVITE`] | `uuid[16]` of the player who invited us |
 //! | [`YAKVC_EVENT_INVITE_REQUEST`] | `uuid[16]` of the player who asks us to invite them |
+//! | [`YAKVC_EVENT_SPEECH`] | `uuid[16]`, `f32` level in dBFS, `f32` pitch in Hz, 0 when unvoiced; 25 a second while the peer talks |
 //! | [`YAKVC_EVENT_GROUP_NOTICE`] | `u8 YAKVC_GROUP_*`, `uuid[16]` the member it is about, `uuid[16] by` who made the change; all-zero when not applicable |
 
 #![allow(unsafe_code)]
@@ -97,6 +98,8 @@ pub const YAKVC_EVENT_ERROR: u16 = 6;
 pub const YAKVC_EVENT_INVITE: u16 = 7;
 pub const YAKVC_EVENT_GROUP_NOTICE: u16 = 8;
 pub const YAKVC_EVENT_INVITE_REQUEST: u16 = 9;
+/// Added without an ABI bump: older callers skip record types they don't know.
+pub const YAKVC_EVENT_SPEECH: u16 = 10;
 
 /// `uuid` became a group mate.
 pub const YAKVC_GROUP_JOINED: u8 = 0;
