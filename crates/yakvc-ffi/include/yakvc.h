@@ -99,6 +99,11 @@
 #define YAKVC_EVENT_INVITE_REQUEST 9
 
 /**
+ * Added without an ABI bump: older callers skip record types they don't know.
+ */
+#define YAKVC_EVENT_SPEECH 10
+
+/**
  * `uuid` became a group mate.
  */
 #define YAKVC_GROUP_JOINED 0

@@ -29,6 +29,15 @@ pub enum Event {
         uuid: Uuid,
         talking: bool,
     },
+    /// How a talking peer sounds, 25 times a second while it talks, for
+    /// animating it.
+    Speech {
+        uuid: Uuid,
+        /// Level as decoded, in dBFS.
+        level_db: f32,
+        /// The voice's pitch, if voiced.
+        pitch_hz: Option<f32>,
+    },
     /// `from` invited us to its group. Valid for two minutes; [`Engine::accept_invite`](crate::Engine::accept_invite)
     /// joins it.
     Invite {
