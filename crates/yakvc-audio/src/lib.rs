@@ -18,6 +18,7 @@ mod muffle;
 mod receive;
 mod resample;
 mod reverb;
+mod speech;
 mod test_io;
 
 use std::time::Duration;
@@ -30,6 +31,7 @@ pub use crate::mixer::{Acoustics, Mixer, Spatial};
 pub use crate::muffle::Muffle;
 pub use crate::receive::{JitterConfig, Packet, Pulled, ReceiveStream, StreamStats};
 pub use crate::reverb::Reverb;
+pub use crate::speech::{SpeechAnalyser, SpeechFeatures};
 pub use crate::test_io::{
     NullSink, Recording, SilenceSource, TEST_INPUTS, TestSignal, TestSource, ToneSource, WavSource,
     open_test_input,

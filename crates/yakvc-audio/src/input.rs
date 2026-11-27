@@ -5,7 +5,7 @@ use nnnoiseless::DenoiseState;
 use crate::{FRAME_DURATION, MonoFrame};
 
 /// Level reported for digital silence, in dBFS.
-const SILENCE_DB: f32 = -100.0;
+pub(crate) const SILENCE_DB: f32 = -100.0;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct InputConfig {
