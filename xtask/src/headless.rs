@@ -3,8 +3,7 @@
 //! config on Xvfb and falls back to Vulkan, which Mesa's lavapipe provides.
 //!
 //! The renderers come from the flake's locked nixpkgs (`--inputs-from`), not
-//! the registry's channel, so they, and the guide screenshots they produce,
-//! don't drift between runs.
+//! the registry's channel, so they don't drift between runs.
 
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -135,10 +134,8 @@ fn store(packages: &[&str]) -> Result<Vec<std::path::PathBuf>> {
     Ok(paths)
 }
 
-/// `cargo xtask gametest`: the Fabric client gametest, headless. When it
-/// passes, the user guide's screenshots in `docs/guide/` are refreshed from
-/// it, those that look different (`scripts/UpdateGuideScreenshots.java`),
-/// ready to commit. `gradle_args` go to Gradle.
+/// `cargo xtask gametest`: the Fabric client gametest, headless. `gradle_args`
+/// go to Gradle.
 pub(crate) fn gametest(gradle_args: &[String]) -> Result<()> {
     let root = root();
     let display = display()?;
@@ -147,9 +144,5 @@ pub(crate) fn gametest(gradle_args: &[String]) -> Result<()> {
         .args(gradle_args)
         .envs(render_env()?)
         .env("DISPLAY", &display.name)
-        .current_dir(root.join("mod")))?;
-    drop(display);
-    run(Command::new("java")
-        .arg("scripts/UpdateGuideScreenshots.java")
-        .current_dir(&root))
+        .current_dir(root.join("mod")))
 }

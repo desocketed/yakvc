@@ -263,11 +263,6 @@ jobs:
           chmod +x "$GITHUB_WORKSPACE/server/yakvc-server-linux-x86_64"
           ./gradlew runClientGameTest -Pyakvc.prebuiltNatives="$GITHUB_WORKSPACE/target/dist/natives" \
             -Pyakvc.prebuiltServer="$GITHUB_WORKSPACE/server/yakvc-server-linux-x86_64"
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: gametest-screenshots
-          path: mod/build/run/clientGameTest/screenshots/
 
   # The release jar with every platform's natives, the launcher packs and
   # the Mac CLI, merged from both architectures.

@@ -81,15 +81,14 @@ enum Cmd {
         save: Option<PathBuf>,
     },
     /// Everything CI checks on Linux, locally and in order, stopping at the
-    /// first failure. Also refreshes the user guide's screenshots.
+    /// first failure.
     Ci {
         /// Stop before the flake check, release builds, mod and gametest.
         #[arg(long)]
         fast: bool,
     },
     /// The Fabric client gametest with no display or GPU (Xvfb and Mesa's
-    /// software renderers), then the user guide's screenshots refreshed from
-    /// it. Arguments go to Gradle.
+    /// software renderers). Arguments go to Gradle.
     Gametest {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         gradle_args: Vec<String>,

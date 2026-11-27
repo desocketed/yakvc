@@ -107,7 +107,7 @@ pub(crate) fn ci(fast: bool) -> Result<()> {
     crate::dist(None, false)?;
     step("mod: jar manifest");
     check_jar_manifest(&dist_jar()?)?;
-    step("mod: client gametest, and the user guide's screenshots");
+    step("mod: client gametest");
     crate::headless::gametest(&[])?;
 
     step("all checks passed");

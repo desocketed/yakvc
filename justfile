@@ -30,6 +30,6 @@ check:
 ci *flags:
     cargo xtask ci {{flags}}
 
-# The headless client gametest, which also refreshes the guide screenshots.
+# The headless client gametest.
 gametest:
     cargo xtask gametest
